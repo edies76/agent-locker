@@ -1,0 +1,40 @@
+{
+    "policies": [
+        {
+            "id": "policy_file_delete",
+            "tool_pattern": ".*(file|fs|filesystem|storage|disk|FileSystem).*",
+            "condition": ".*(delete|remove|unlink|rmdir|rm|erase|wipe|purge|trash).*",
+            "action": "FORCE_PENDING",
+            "risk_level": "HIGH",
+            "description": "Cualquier borrado de archivo siempre requiere notificacion y aprobacion humana."
+        },
+        {
+            "id": "policy_shell_destructive",
+            "tool_pattern": ".*(bash|shell|exec|terminal|cmd|command|run).*",
+            "condition": ".*(rm |rm -rf|rmdir|del |delete|format|mkfs|dd |shred|wipe).*",
+            "action": "FORCE_PENDING",
+            "risk_level": "HIGH",
+            "description": "Comandos shell destructivos siempre requieren aprobacion."
+        },
+        {
+            "id": "policy_db_destructive",
+            "tool_pattern": "database.*",
+            "condition": ".*(DROP|TRUNCATE|DELETE).*",
+            "action": "FORCE_PENDING",
+            "risk_level": "CRITICAL",
+            "description": "Cualquier borrado en DB requiere firma humana obligatoria."
+        },
+        {
+            "id": "policy_payments",
+            "tool_pattern": ".*(pay|payment|transfer|bank|wallet|stripe).*",
+            "condition": ".*",
+            "action": "FORCE_PENDING",
+            "risk_level": "CRITICAL",
+            "description": "Gestion de dinero siempre requiere autorizacion."
+        }
+    ],
+    "global_config": {
+        "notification_channel": "telegram",
+        "default_risk_level": "LOW"
+    }
+}

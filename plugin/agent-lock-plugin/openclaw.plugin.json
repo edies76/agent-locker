@@ -1,0 +1,11 @@
+{
+    "id": "agent-lock",
+    "name": "agent-lock",
+    "version": "1.0.0",
+    "description": "Agent-Lock Governance Layer",
+    "configSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+    }
+}

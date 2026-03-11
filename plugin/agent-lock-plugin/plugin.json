@@ -1,0 +1,11 @@
+{
+    "name": "agent-lock-plugin",
+    "displayName": "Agent-Lock",
+    "description": "Capa de gobernanza y seguridad: intercepta tool calls, valida intención con Gemini, clasifica riesgo, y requiere aprobación humana para acciones críticas.",
+    "version": "1.0.0",
+    "author": "Agent-Lock",
+    "main": "dist/index.js",
+    "engines": {
+        "openclaw": ">=1.0.0"
+    }
+}
