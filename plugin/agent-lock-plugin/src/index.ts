@@ -1,169 +1,134 @@
 /**
- * Agent-Lock Plugin para OpenClaw
- * Usa el SDK oficial: api.on("before_tool_call") + api.registerTool()
- *
- * Flujo:
- *  LOW risk   → AUTO-APROBADO (pasa sin interrumpir)
- *  HIGH/CRITICAL → Bloquea, backend notifica en Telegram/WhatsApp,
- *                  agente espera hasta que el usuario responda
- *                  (vía botones Telegram o tool agent_lock_respond)
+ * Agent-Lock Plugin — Versión DIAGNÓSTICA con dump completo del evento
  */
+import * as fs from "fs";
 
 const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
-
-// Mapa de promesas pendientes: action_id → resolver
 const pending = new Map<string, (decision: "approve" | "deny") => void>();
+let lastKnownUserMessage = "";
+const DUMP_PATH = "C:\\Users\\ediva\\agent-lock-event-dump.json";
+
+function dumpEvent(label: string, data: any) {
+    try {
+        const entry = `\n\n===== ${label} @ ${new Date().toISOString()} =====\n${JSON.stringify(data, (key, val) => {
+            if (typeof val === "function") return "[Function]";
+            return val;
+        }, 2)}\n`;
+        fs.appendFileSync(DUMP_PATH, entry, "utf-8");
+    } catch (e) {
+        console.log("[Agent-Lock] ⚠️ No se pudo escribir dump:", e);
+    }
+}
 
 async function callBackend(url: string, opts?: RequestInit) {
-    const res = await fetch(url, {
-        headers: { "Content-Type": "application/json" },
-        ...opts,
-    });
+    const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
 }
 
-async function pollStatus(actionId: string, intervalMs = 2000, maxAttempts = 150) {
-    for (let i = 0; i < maxAttempts; i++) {
-        await new Promise((r) => setTimeout(r, intervalMs));
-        // Primero, revisar si el Promise fue resuelto localmente (agent_lock_respond)
-        // (ya estaría resuelto, no llegaríamos aquí)
-        try {
-            const s = await callBackend(`${BACKEND_URL}/status/${actionId}`);
-            if (s.status !== "PENDING") return s;
-        } catch {
-            // backend busy, reintentar
-        }
+function extractUserIntent(event: any): string {
+    const candidates = [
+        event.userIntent, event.userMessage, event.user_intent, event.user_message,
+        event.prompt, event.input, event.message, event.text, event.query,
+        event.context?.userMessage, event.context?.lastUserMessage, event.context?.prompt,
+        event.conversation?.lastUserMessage, event.conversation?.input,
+        event.session?.lastUserMessage,
+    ];
+    for (const c of candidates) {
+        if (typeof c === "string" && c.trim().length > 2) return c.trim();
     }
-    return null; // timeout
+    return lastKnownUserMessage;
 }
-
-// ── Plugin ────────────────────────────────────────────────────────────────────
 
 const plugin = {
     id: "agent-lock",
     name: "Agent-Lock",
-    description:
-        "Governance layer: intercepta tool calls, analiza con Gemini Flash, " +
-        "y pide aprobación humana para acciones HIGH/CRITICAL.",
+    register(api: any) {
 
-    register(api: {
-        on: (event: string, handler: (e: any) => Promise<any>) => void;
-        registerTool?: (spec: {
-            name: string;
-            description: string;
-            inputSchema: object;
-            handler: (args: any) => Promise<any>;
-        }) => void;
-    }) {
-        // ── 1. Registrar tool de respuesta (canal OpenClaw/WhatsApp) ───────────────
-        // Cuando el usuario responde en el chat y el agente llama este tool,
-        // resolvemos la promesa pendiente y la acción original se ejecuta o bloquea.
-        if (api.registerTool) {
-            api.registerTool({
-                name: "agent_lock_respond",
-                description:
-                    "Registra la decisión del usuario para una acción pendiente en Agent-Lock. " +
-                    "Llama este tool cuando el usuario haya respondido SÍ o NO. " +
-                    "Parámetros: action_id (string), decision ('approve' | 'deny').",
-                inputSchema: {
-                    type: "object",
-                    properties: {
-                        action_id: { type: "string", description: "ID de la acción pendiente" },
-                        decision: {
-                            type: "string",
-                            enum: ["approve", "deny"],
-                            description: "Decisión del usuario",
-                        },
-                    },
-                    required: ["action_id", "decision"],
-                },
-                handler: async ({ action_id, decision }: { action_id: string; decision: "approve" | "deny" }) => {
-                    const resolve = pending.get(action_id);
-                    if (resolve) {
-                        resolve(decision);
-                        pending.delete(action_id);
-                        return {
-                            success: true,
-                            message: decision === "approve" ? "✅ Acción aprobada." : "🚫 Acción bloqueada.",
-                        };
+        // Escuchar cualquier evento posible para capturar el mensaje del usuario
+        const userEvents = ["user_message", "message", "input", "prompt", "chat_message", "chat:message"];
+        for (const evtName of userEvents) {
+            try {
+                api.on(evtName, async (event: any) => {
+                    const msg = event.message ?? event.text ?? event.content ?? event.input ?? "";
+                    if (typeof msg === "string" && msg.trim().length > 2) {
+                        lastKnownUserMessage = msg.trim();
+                        console.log(`[Agent-Lock] 📝 Intent capturado via '${evtName}': "${lastKnownUserMessage.slice(0, 60)}"`);
+                        dumpEvent(`USER_EVENT:${evtName}`, event);
                     }
-                    return { success: false, message: "No se encontró acción pendiente con ese ID." };
-                },
-            });
+                    return undefined;
+                });
+            } catch { /* evento no soportado */ }
         }
 
-        // ── 2. Interceptar TODOS los tool calls ───────────────────────────────────
-        api.on("before_tool_call", async (event) => {
-            const toolName: string = event.toolName;
-            const args: Record<string, unknown> = event.args ?? {};
+        api.on("before_tool_call", async (event: any) => {
+            const toolName = event.toolName ?? event.tool_name ?? event.tool ?? "unknown";
+            const args     = event.args ?? event.arguments ?? event.params ?? event.input ?? {};
 
-            // Dejar pasar el tool de respuesta sin análisis
+            // ── DUMP COMPLETO del evento ────────────────────────────────────────
+            dumpEvent(`TOOL_CALL:${toolName}`, {
+                toolName,
+                args,
+                raw_event_keys: Object.keys(event),
+                full_event: event,
+            });
+            console.log(`[Agent-Lock] 🔍 Tool: ${toolName} | Args keys: [${Object.keys(args).join(", ")}] | Intent: "${(extractUserIntent(event)).slice(0, 50)}"`);
+
             if (toolName === "agent_lock_respond") return undefined;
 
-            // ── Llamar al backend ──────────────────────────────────────────────────
+            const userIntent = extractUserIntent(event);
+            
+            // Intentar reconstruir el comando desde cualquier lugar del evento
+            const rawCommand =
+                args.command ?? args.code ?? args.script ?? args.query ??
+                args.statement ?? args.expression ?? args.shell ??
+                (typeof args === "string" ? args : null);
+
             let interceptResult: any;
             try {
                 interceptResult = await callBackend(`${BACKEND_URL}/intercept`, {
                     method: "POST",
                     body: JSON.stringify({
                         tool_name: toolName,
-                        args,
-                        user_intent: event.userIntent ?? "[sesión OpenClaw]",
-                        agent_id: event.agentId ?? "openclaw",
+                        args: typeof args === "object" ? args : { raw: args },
+                        user_intent: userIntent || "",
+                        agent_id: event.agentId ?? event.agent_id ?? "openclaw",
+                        session_key: event.sessionKey ?? event.session_key,
+                        raw_command: rawCommand,
                     }),
                 });
             } catch {
-                // Backend no disponible → fail-open (no interrumpir al agente)
                 console.warn("[Agent-Lock] ⚠️ Backend no disponible — dejando pasar:", toolName);
                 return undefined;
             }
 
-            const { action_id, status, risk_level, analysis } = interceptResult;
-            console.log(`[Agent-Lock] ${toolName} → ${status} (${risk_level})`);
+            const { action_id, status, analysis } = interceptResult;
 
-            // ── AUTO_APPROVED (LOW risk) ───────────────────────────────────────────
-            if (status === "AUTO_APPROVED" || status === "APPROVED") {
-                return undefined;
-            }
+            if (status === "AUTO_APPROVED" || status === "APPROVED") return undefined;
 
-            // ── PENDING: esperar decisión ──────────────────────────────────────────
             if (status === "PENDING") {
-                // Estrategia dual:
-                // A) El backend ya notificó por Telegram con botones inline
-                // B) El agente puede preguntar al usuario en el chat y llamar agent_lock_respond
-                //    → resuelve la promesa local sin esperar polling
-
                 const decision = await new Promise<"approve" | "deny">((resolve) => {
                     pending.set(action_id, resolve);
-
-                    // Racing: polling del backend (por si el usuario respondió en Telegram)
-                    pollStatus(action_id).then((finalStatus) => {
-                        if (!pending.has(action_id)) return; // ya fue resuelto localmente
-                        pending.delete(action_id);
-                        if (!finalStatus || finalStatus.status === "BLOCKED") {
-                            resolve("deny");
-                        } else {
-                            resolve("approve");
-                        }
-                    });
+                    const interval = setInterval(async () => {
+                        try {
+                            const s = await callBackend(`${BACKEND_URL}/status/${action_id}`);
+                            if (s.status !== "PENDING") {
+                                clearInterval(interval);
+                                pending.delete(action_id);
+                                resolve(s.status === "APPROVED" || s.status === "AUTO_APPROVED" ? "approve" : "deny");
+                            }
+                        } catch {}
+                    }, 2000);
                 });
-
-                if (decision === "approve") return undefined;
-                return {
-                    block: true,
-                    blockReason: `🦞 Agent-Lock: acción bloqueada por el usuario. ${analysis}`,
-                };
+                return decision === "approve"
+                    ? undefined
+                    : { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
             }
 
-            // ── BLOCKED directo ───────────────────────────────────────────────────
-            return {
-                block: true,
-                blockReason: `🦞 Agent-Lock bloqueó: ${analysis}`,
-            };
+            return { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
         });
 
-        console.log("🦞 Agent-Lock activo — monitoreando todos los tool calls de OpenClaw");
+        console.log(`🦞 Agent-Lock activo | Dump en: ${DUMP_PATH}`);
     },
 };
 

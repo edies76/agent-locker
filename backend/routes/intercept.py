@@ -3,8 +3,8 @@ POST /intercept
 
 Punto de entrada principal: el plugin de OpenClaw llama este endpoint
 cuando intercepta un tool call. El backend:
-1. Valida la intención con Gemini Flash
-2. Clasifica el riesgo
+1. Valida la intención con Gemini Flash (si hay user_intent real)
+2. Clasifica el riesgo (reglas + contenido + Gemini + políticas)
 3. Si LOW → aprueba automáticamente con token Auth0
 4. Si HIGH/CRITICAL → manda notificación Telegram y pone en PENDING
 """
@@ -31,7 +31,8 @@ logger = logging.getLogger("agent-lock.intercept")
 
 @router.post("/intercept", response_model=InterceptResponse)
 async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
-    logger.info(f"⚡ Intercept | tool={payload.tool_name} | intent='{payload.user_intent[:60]}'")
+    intent_preview = payload.user_intent[:80] if payload.user_intent else "(vacío)"
+    logger.info(f"⚡ Intercept | tool={payload.tool_name} | intent='{intent_preview}'")
 
     # ── 1. Validar intención con Gemini ───────────────────────────────────────
     intent_result = await validate_intent(
@@ -41,6 +42,8 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         raw_command=payload.raw_command,
     )
 
+    gemini_tag = "🧠 Gemini" if intent_result.gemini_used else "📋 Reglas"
+
     # ── 2. Clasificar riesgo ──────────────────────────────────────────────────
     risk_level = classify_risk(
         tool_name=payload.tool_name,
@@ -49,7 +52,10 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         intent_result=intent_result,
     )
 
-    logger.info(f"🎯 Riesgo={risk_level.value} | Intent score={intent_result.score:.2f}")
+    logger.info(
+        f"🎯 Riesgo={risk_level.value} | Score={intent_result.score:.2f} | "
+        f"Motor={gemini_tag} | Contradicciones={len(intent_result.contradictions)}"
+    )
 
     # ── 3. Crear la acción pendiente ──────────────────────────────────────────
     action = PendingAction(
@@ -72,7 +78,7 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         action.auth_token = auth_token
         store.save(action)
         write_log(action)
-        logger.info(f"✅ Auto-aprobado (LOW) | action_id={action.action_id}")
+        logger.info(f"✅ Auto-aprobado (LOW) | action_id={action.action_id} | tool={payload.tool_name}")
         return InterceptResponse(
             action_id=action.action_id,
             status=ActionStatus.AUTO_APPROVED,
@@ -95,7 +101,10 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         analysis=intent_result.analysis,
     )
 
-    logger.info(f"⏳ Esperando aprobación | action_id={action.action_id} | riesgo={risk_level.value}")
+    logger.info(
+        f"⏳ Esperando aprobación | action_id={action.action_id} | "
+        f"riesgo={risk_level.value} | tool={payload.tool_name}"
+    )
     return InterceptResponse(
         action_id=action.action_id,
         status=ActionStatus.PENDING,

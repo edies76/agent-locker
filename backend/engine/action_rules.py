@@ -1,123 +1,104 @@
 """
 Action Rules — Tabla de clasificación de riesgo por herramienta y patrón de comando.
 
-Lógica:
-- Se evalúa el tool_name y el raw_command/args contra patrones regex
-- El nivel más alto que coincide gana
-- Las reglas se pueden extender fácilmente
+Filosofía de diseño:
+- Solo es CRITICAL lo que destruye datos o expone secretos.
+- Solo es HIGH lo que modifica datos de forma irreversible.
+- Todo lo demás es LOW (leer, listar, buscar, navegar, escribir archivos de código, etc.)
+- El default para herramientas desconocidas es LOW. La escalación la decide Gemini + políticas.
 """
 import re
 from models import RiskLevel
 
 # ── Patrones de riesgo crítico ────────────────────────────────────────────────
+# Solo cosas verdaderamente destructivas o que exponen secretos.
 CRITICAL_PATTERNS = [
     # SQL destructivo
     r"\bDROP\b",
     r"\bTRUNCATE\b",
     r"\bDELETE\b\s+FROM",
-    r"\bALTER\b\s+TABLE",
 
     # Shell destructivo
     r"rm\s+-rf",
     r"rmdir\s+/s",
-    r"format\b",
     r"del\s+/[fqsS]",
-    r"shutdown",
-    r"reboot",
+    r"\bshred\b",
+    r"\bwipe\b",
+    r"\bmkfs\b",
 
-    # Código arbitrario
+    # Infraestructura destructiva
+    r"docker\s+rm",
+    r"kubectl\s+delete",
+    r"terraform\s+destroy",
+
+    # Exposición de secretos (solo escritura/envío, no lectura de .env)
+    r"(password|secret|api.?key)\s*=\s*\S+",
+]
+
+# ── Patrones de riesgo alto ───────────────────────────────────────────────────
+# Cosas que modifican datos pero no los destruyen completamente.
+HIGH_PATTERNS = [
+    # SQL modificador
+    r"\bALTER\b\s+TABLE",
+
+    # Producción
+    r"\bdeploy\b",
+    r"\bprod(uction)?\b",
+
+    # Código arbitrario peligroso
     r"\beval\s*\(",
     r"\bexec\s*\(",
     r"\bsubprocess\b",
     r"\bos\.system\b",
     r"__import__",
 
-    # Producción / infraestructura
-    r"\bprod(uction)?\b",
-    r"\bdeploy\b",
-    r"docker\s+rm",
-    r"kubectl\s+delete",
-    r"terraform\s+destroy",
-
-    # Credenciales / secretos
-    r"(password|secret|token|api.?key)\s*=",
-    r"\.env",
-    r"credentials",
-]
-
-# ── Patrones de riesgo alto ───────────────────────────────────────────────────
-HIGH_PATTERNS = [
-    # SQL modificador
-    r"\bINSERT\b",
-    r"\bUPDATE\b",
-    r"\bMERGE\b",
-    r"\bREPLACE\b",
-
-    # Archivos (escritura)
-    r"write_?file",
-    r"save_?file",
-    r"open\(.*['\"]w['\"]",
-    r"shutil\.copy",
-    r"shutil\.move",
-
-    # Git modificador
-    r"git\s+(push|commit|merge|rebase|reset)",
-
-    # Red (POST/PUT/DELETE)
-    r"\b(POST|PUT|PATCH|DELETE)\b",
-
-    # Permisos
-    r"chmod",
-    r"chown",
-]
-
-# ── Patrones de riesgo bajo (read-only / seguro) ──────────────────────────────
-LOW_PATTERNS = [
-    r"\bSELECT\b",
-    r"\bSHOW\b",
-    r"\bDESCRIBE\b",
-    r"\bEXPLAIN\b",
-    r"read_?file",
-    r"list_?files",
-    r"\bls\b",
-    r"\bdir\b",
-    r"\bcat\b",
-    r"\becho\b",
-    r"\bcurl\b.*-[Gg]\b",
-    r"\bGET\b",
-    r"\bping\b",
-    r"git\s+(log|status|diff|fetch|pull)",
+    # Apagado de sistema
+    r"\bshutdown\b",
+    r"\breboot\b",
 ]
 
 # ── Herramientas clasificadas por defecto ─────────────────────────────────────
+# La mayoría son LOW. Solo las verdaderamente peligrosas son altas.
 TOOL_RISK_MAP: dict[str, RiskLevel] = {
-    # Bajo riesgo por defecto
+    # ── Bajo riesgo (lectura, escritura normal, navegación) ──
     "read_file": RiskLevel.LOW,
     "list_files": RiskLevel.LOW,
     "search_files": RiskLevel.LOW,
     "web_search": RiskLevel.LOW,
     "get_weather": RiskLevel.LOW,
-    "database.query": RiskLevel.HIGH,  # Depende del contenido → se eleva si aplica
+    "write_file": RiskLevel.LOW,
+    "edit_file": RiskLevel.LOW,
+    "create_file": RiskLevel.LOW,
+    "send_email": RiskLevel.LOW,
+    "http_request": RiskLevel.LOW,
+    "browser.click": RiskLevel.LOW,
+    "browser.open": RiskLevel.LOW,
+    "browser.navigate": RiskLevel.LOW,
+    "database.query": RiskLevel.LOW,
+    "database.read": RiskLevel.LOW,
+    "database.insert": RiskLevel.LOW,
+    "database.update": RiskLevel.LOW,
+    "git_commit": RiskLevel.LOW,
+    "git_push": RiskLevel.LOW,
 
-    # Alto riesgo por defecto
-    "write_file": RiskLevel.HIGH,
-    "send_email": RiskLevel.HIGH,
-    "http_request": RiskLevel.HIGH,
-    "browser.click": RiskLevel.HIGH,
+    # ── Alto riesgo (ejecución de código arbitrario) ──
+    "execute_code": RiskLevel.HIGH,
+    "run_command": RiskLevel.HIGH,
+    "bash": RiskLevel.HIGH,
+    "terminal": RiskLevel.HIGH,
 
-    # Crítico por defecto
-    "execute_code": RiskLevel.CRITICAL,
-    "run_command": RiskLevel.CRITICAL,
-    "bash": RiskLevel.CRITICAL,
-    "terminal": RiskLevel.CRITICAL,
+    # ── Crítico (borrado explícito) ──
     "delete_file": RiskLevel.CRITICAL,
+    "rm": RiskLevel.CRITICAL,
+    "database.delete": RiskLevel.CRITICAL,
 }
 
 
 def classify_by_content(text: str) -> RiskLevel | None:
-    """Analiza el texto de un comando/argumento y retorna su nivel de riesgo, o None si no hay match."""
-    text_upper = text.upper()
-
+    """
+    Analiza el texto de un comando/argumento y retorna su nivel de riesgo.
+    Retorna None si no hay ningún patrón peligroso detectado.
+    """
     for pattern in CRITICAL_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return RiskLevel.CRITICAL
@@ -126,25 +107,28 @@ def classify_by_content(text: str) -> RiskLevel | None:
         if re.search(pattern, text, re.IGNORECASE):
             return RiskLevel.HIGH
 
-    for pattern in LOW_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return RiskLevel.LOW
-
+    # No detectamos nada → None (no Low, porque Low no necesita match)
     return None
 
 
 def get_tool_default_risk(tool_name: str) -> RiskLevel:
-    """Retorna el nivel de riesgo por defecto de una herramienta conocida."""
-    # Buscar coincidencia exacta primero
+    """
+    Retorna el nivel de riesgo por defecto de una herramienta.
+    
+    CAMBIO IMPORTANTE: el default ahora es LOW, no HIGH.
+    Herramientas desconocidas se tratan como seguras a menos que
+    el contenido de sus args o Gemini digan lo contrario.
+    """
+    # Coincidencia exacta
     if tool_name in TOOL_RISK_MAP:
         return TOOL_RISK_MAP[tool_name]
 
-    # Buscar por prefijo/substring
+    # Coincidencia por substring para herramientas de borrado
     tool_lower = tool_name.lower()
-    if any(k in tool_lower for k in ["delete", "remove", "drop", "destroy", "exec", "run", "bash"]):
+    if any(k in tool_lower for k in ["delete", "remove", "drop", "destroy"]):
         return RiskLevel.CRITICAL
-    if any(k in tool_lower for k in ["write", "create", "update", "send", "post", "modify"]):
+    if any(k in tool_lower for k in ["exec", "run", "bash", "shell"]):
         return RiskLevel.HIGH
 
-    # Por defecto: HIGH (mejor pedir permiso que arrepentirse)
-    return RiskLevel.HIGH
+    # DEFAULT: LOW — dejamos que Gemini y las políticas escalen si es necesario
+    return RiskLevel.LOW
