@@ -61,14 +61,23 @@ def classify_risk(
     # ── 1. Riesgo base del tool ───────────────────────────────────────────────
     tool_risk = get_tool_default_risk(tool_name)
 
-    # ── 2. Riesgo por contenido de args ───────────────────────────────────────
+    # ── 2. Riesgo por contenido de los args ───────────────────────────────────
     content_risk = classify_by_content(combined_text)
-    
-    # Si el contenido es peligroso, tomar el máximo entre herramienta y contenido
-    if content_risk is not None:
-        base_risk = _max_risk(tool_risk, content_risk)
-    else:
+
+    if content_risk is None:
+        # Sin match de contenido → usar el riesgo del tool tal cual
         base_risk = tool_risk
+    elif content_risk == RiskLevel.LOW:
+        # Contenido explícitamente seguro (echo, Write-Host, ls, etc.)
+        # → baja el riesgo del tool si era HIGH (exec con echo no es peligroso)
+        # → respeta CRITICAL del tool (delete_file con echo sigue siendo CRITICAL)
+        if tool_risk == RiskLevel.HIGH:
+            base_risk = RiskLevel.LOW
+        else:
+            base_risk = tool_risk
+    else:
+        # Contenido peligroso → tomar el máximo entre tool y contenido
+        base_risk = _max_risk(tool_risk, content_risk)
 
     # ── 3. Ajuste por Gemini ──────────────────────────────────────────────────
     # Solo escalamos si Gemini tiene información suficiente para decidir.
