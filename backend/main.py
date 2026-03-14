@@ -1,10 +1,10 @@
 """
 Agent-Lock — FastAPI Application Entrypoint
 
-Inicia el backend con:
-- Bot de Telegram en background (polling)
-- Todos los routers
-- CORS habilitado para el plugin de OpenClaw
+Starts the backend with:
+- Telegram Bot in background (polling)
+- All routers
+- CORS enabled for the OpenClaw plugin
 """
 import logging
 import asyncio
@@ -21,7 +21,7 @@ from routes.logs import router as logs_router
 import notifications.telegram_bot as tg_bot
 import store
 
-# ── Logging setup ─────────────────────────────────────────────────────────────
+# ── Logging Setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -31,10 +31,10 @@ logger = logging.getLogger("agent-lock")
 settings = get_settings()
 
 
-# ── Lifespan: arrancar/parar bot Telegram ─────────────────────────────────────
+# ── Lifespan: Start/Stop Telegram Bot ─────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Registrar el callback de aprobación en el bot
+    # Register the approval callback in the bot
     async def _handle_approval(action_id: str, decision: str) -> None:
         from models import ApprovalRequest, ApprovalDecision
         from routes.approve import approve_action
@@ -43,29 +43,29 @@ async def lifespan(app: FastAPI):
 
     tg_bot.set_approve_callback(_handle_approval)
 
-    # Iniciar bot en background
+    # Start bot in background
     await tg_bot.start_bot_polling()
-    logger.info("🦞 Agent-Lock backend iniciado")
+    logger.info("🦞 Agent-Lock backend started")
     logger.info(f"🌐 URL: {settings.backend_url}")
 
-    yield  # ← app corriendo
+    yield  # ← app running
 
-    # Apagar bot limpiamente
+    # Shutdown bot cleanly
     await tg_bot.stop_bot()
-    logger.info("Agent-Lock apagado.")
+    logger.info("Agent-Lock shut down.")
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Agent-Lock",
-    description="La capa de gobernanza para agentes de IA",
+    description="Governance layer for AI agents",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En producción: reemplazar con la URL del plugin
+    allow_origins=["*"],  # Production: replace with the plugin URL
     allow_methods=["*"],
     allow_headers=["*"],
 )

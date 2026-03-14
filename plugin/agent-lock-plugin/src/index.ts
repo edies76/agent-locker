@@ -1,24 +1,24 @@
 /**
- * Agent-Lock Plugin para OpenClaw
+ * Agent-Lock Plugin for OpenClaw
  *
- * NOTA SOBRE USER INTENT:
- * El evento before_tool_call de OpenClaw solo contiene { toolName, params }.
- * El mensaje del usuario NO es parte del evento. Intentamos capturarlo
- * registrando handlers para todas las variantes posibles de eventos de mensaje.
+ * NOTE ON USER INTENT:
+ * OpenClaw's before_tool_call event only contains { toolName, params }.
+ * The user message is NOT part of the event. We attempt to capture it
+ * by registering handlers for all possible message event variants.
  */
 
 const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
 
-// Cache: sesión → último mensaje del usuario
+// Cache: session → latest user message
 const intentCache = new Map<string, string>();
-let intentGlobal = ""; // Fallback sin sessionKey
+let intentGlobal = ""; // Fallback without sessionKey
 
 function store(key: string, msg: string) {
     if (!msg || msg.trim().length < 3) return;
     const clean = msg.trim();
     intentCache.set(key, clean);
     intentGlobal = clean;
-    console.log(`[Agent-Lock] 📝 Intent capturado: "${clean.slice(0, 80)}"`);
+    console.log(`[Agent-Lock] 📝 Intent captured: "${clean.slice(0, 80)}"`);
 }
 
 function getIntent(key: string): string {
@@ -43,13 +43,13 @@ async function get(url: string) {
     return r.json();
 }
 
-// ── Extrae sessionKey de un contexto de evento ────────────────────────────────
+// ── Extracts sessionKey from an event context ─────────────────────────────────
 function sessionOf(ctx: any): string {
     return ctx?.sessionKey ?? ctx?.session_key ?? ctx?.sessionId ??
            ctx?.session?.id ?? ctx?.session?.key ?? "default";
 }
 
-// ── Extrae texto de un objeto de mensaje ─────────────────────────────────────
+// ── Extracts text from a message object ──────────────────────────────────────
 function bodyOf(msg: any): string {
     if (!msg) return "";
     if (typeof msg === "string") return msg;
@@ -58,7 +58,7 @@ function bodyOf(msg: any): string {
 
 export default function register(api: any) {
 
-    // ── Estrategia 1: api.onMessage (SDK oficial) ────────────────────────────
+    // ── Strategy 1: api.onMessage (Official SDK) ─────────────────────────────
     if (typeof api.onMessage === "function") {
         api.onMessage((ctx: any) => {
             store(sessionOf(ctx), bodyOf(ctx.message ?? ctx));
@@ -66,7 +66,7 @@ export default function register(api: any) {
         console.log("[Agent-Lock] ✅ api.onMessage OK");
     }
 
-    // ── Estrategia 2: api.on con múltiples nombres de evento ─────────────────
+    // ── Strategy 2: api.on with multiple event names ──────────────────────────
     const msgEvents = [
         "message", "user_message", "chat_message", "chat:message",
         "input", "user_input", "prompt", "before_completion",
@@ -78,15 +78,15 @@ export default function register(api: any) {
                 const text = bodyOf(ctx?.message ?? ctx?.input ?? ctx);
                 if (text) {
                     store(sessionOf(ctx), text);
-                    console.log(`[Agent-Lock] ✅ Evento '${evtName}' recibido`);
+                    console.log(`[Agent-Lock] ✅ Event '${evtName}' received`);
                 }
                 return undefined;
             });
-        } catch { /* evento no soportado */ }
+        } catch { /* unsupported event */ }
     }
 
-    // ── Estrategia 3: api.registerPlugin con before_prompt_build ────────────
-    // Según los docs, este hook tiene ctx.session.messages[] con el historial
+    // ── Strategy 3: api.registerPlugin with before_prompt_build ─────────────
+    // According to docs, this hook has ctx.session.messages[] with history
     if (typeof api.registerPlugin === "function") {
         api.registerPlugin({
             id: "agent-lock",
@@ -99,7 +99,7 @@ export default function register(api: any) {
                         .find((m: any) => m.role === "user" || m.type === "user");
                     const text = bodyOf(lastUser ?? null);
                     store(sessionOf(ctx), text);
-                    return undefined; // no modifica el prompt
+                    return undefined; // does not modify the prompt
                 },
                 before_model_call: async (ctx: any) => {
                     const messages: any[] = ctx?.messages ?? ctx?.session?.messages ?? [];
@@ -112,20 +112,20 @@ export default function register(api: any) {
                 },
             },
         });
-        console.log("[Agent-Lock] ✅ api.registerPlugin OK (before_prompt_build hook activo)");
+        console.log("[Agent-Lock] ✅ api.registerPlugin OK (before_prompt_build hook active)");
     } else {
-        console.log("[Agent-Lock] ⚠️ api.registerPlugin no disponible en esta versión de OpenClaw");
+        console.log("[Agent-Lock] ⚠️ api.registerPlugin not available in this OpenClaw version");
     }
 
-    // ── Estrategia 4: tool de respuesta manual ───────────────────────────────
+    // ── Strategy 4: manual response tool ──────────────────────────────────────
     if (typeof api.registerTool === "function") {
         api.registerTool({
             name: "agent_lock_respond",
-            description: "Registra la decisión del usuario para una acción pendiente de Agent-Lock.",
+            description: "Records the user's decision for a pending Agent-Lock action.",
             inputSchema: {
                 type: "object",
                 properties: {
-                    action_id: { type: "string", description: "ID de la acción pendiente" },
+                    action_id: { type: "string", description: "ID of the pending action" },
                     decision: { type: "string", enum: ["approve", "deny"] },
                 },
                 required: ["action_id", "decision"],
@@ -140,18 +140,18 @@ export default function register(api: any) {
                 if (resolve) {
                     resolve(decision);
                     pending.delete(action_id);
-                    return { success: true, message: decision === "approve" ? "✅ Aprobado." : "🚫 Bloqueado." };
+                    return { success: true, message: decision === "approve" ? "✅ Approved." : "🚫 Blocked." };
                 }
-                return { success: false, message: "Acción no encontrada." };
+                return { success: false, message: "Action not found." };
             },
         });
-        console.log("[Agent-Lock] ✅ tool agent_lock_respond registrada");
+        console.log("[Agent-Lock] ✅ agent_lock_respond tool registered");
     }
 
-    // ── Interceptar tool calls ────────────────────────────────────────────────
+    // ── Intercept tool calls ──────────────────────────────────────────────────
     api.on("before_tool_call", async (event: any) => {
         const toolName: string = event.toolName ?? event.tool_name ?? "unknown";
-        // OpenClaw pone los args en event.PARAMS (confirmado por dump)
+        // OpenClaw puts args in event.params (binary confirm by dump)
         const args: Record<string, unknown> = event.params ?? event.args ?? {};
 
         if (toolName === "agent_lock_respond") return undefined;
@@ -180,7 +180,7 @@ export default function register(api: any) {
                 raw_command: rawCommand,
             });
         } catch {
-            console.warn(`[Agent-Lock] ⚠️ Backend no disponible — dejando pasar: ${toolName}`);
+            console.warn(`[Agent-Lock] ⚠️ Backend unavailable — skipping check: ${toolName}`);
             return undefined;
         }
 
@@ -204,11 +204,11 @@ export default function register(api: any) {
                 }, 2000);
             });
             if (decision === "approve") return undefined;
-            return { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
+            return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
         }
 
-        return { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
+        return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
     });
 
-    console.log("🦞 Agent-Lock activo | backend=" + BACKEND_URL);
+    console.log("🦞 Agent-Lock active | backend=" + BACKEND_URL);
 }

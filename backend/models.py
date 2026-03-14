@@ -18,39 +18,39 @@ class ActionStatus(str, Enum):
     AUTO_APPROVED = "AUTO_APPROVED"
 
 
-# ── Payload del plugin de OpenClaw → Backend ──────────────────────────────────
+# ── OpenClaw Plugin → Backend Payload ─────────────────────────────────────────
 
 class ToolCallRequest(BaseModel):
-    """Payload que llega desde el plugin de OpenClaw cuando intercepta un tool call."""
-    tool_name: str = Field(..., description="Nombre de la herramienta que el agente quiere ejecutar")
-    args: dict[str, Any] = Field(default_factory=dict, description="Argumentos de la herramienta")
-    user_intent: str = Field(..., description="La instrucción original del usuario al agente")
-    agent_id: Optional[str] = Field(None, description="ID del agente (si está disponible)")
-    session_key: Optional[str] = Field(None, description="Clave de sesión de OpenClaw")
-    raw_command: Optional[str] = Field(None, description="El comando exacto como string, si aplica")
+    """Payload arriving from the OpenClaw plugin when it intercepts a tool call."""
+    tool_name: str = Field(..., description="Name of the tool the agent wants to execute")
+    args: dict[str, Any] = Field(default_factory=dict, description="Arguments of the tool")
+    user_intent: str = Field(..., description="The original user instruction to the agent")
+    agent_id: Optional[str] = Field(None, description="Agent ID (if available)")
+    session_key: Optional[str] = Field(None, description="OpenClaw session key")
+    raw_command: Optional[str] = Field(None, description="The exact command as a string, if applicable")
 
 
-# ── Respuesta del Backend → Plugin ────────────────────────────────────────────
+# ── Backend → Plugin Response ─────────────────────────────────────────────────
 
 class InterceptResponse(BaseModel):
-    """Respuesta inmediata al plugin tras recibir el intercept."""
-    action_id: str = Field(..., description="ID único de esta acción para polling")
+    """Immediate response to the plugin after receiving the intercept."""
+    action_id: str = Field(..., description="Unique ID of this action for polling")
     status: ActionStatus
     risk_level: RiskLevel
-    intent_score: float = Field(..., ge=0.0, le=1.0, description="0=no coincide, 1=coincide perfectamente")
-    analysis: str = Field(..., description="Explicación legible del análisis")
-    auth_token: Optional[str] = Field(None, description="Token Auth0 de mínimos permisos (solo si AUTO_APPROVED)")
+    intent_score: float = Field(..., ge=0.0, le=1.0, description="0=no match, 1=perfect match")
+    analysis: str = Field(..., description="Readable explanation of the analysis")
+    auth_token: Optional[str] = Field(None, description="Minimum permission Auth0 token (only if AUTO_APPROVED)")
 
 
 class StatusResponse(BaseModel):
-    """Respuesta al plugin en el polling de estado."""
+    """Plugin response during status polling."""
     action_id: str
     status: ActionStatus
-    auth_token: Optional[str] = Field(None, description="Token Auth0 inyectable (solo si APPROVED)")
+    auth_token: Optional[str] = Field(None, description="Injectable Auth0 token (only if APPROVED)")
     decided_at: Optional[datetime] = None
 
 
-# ── Aprobación ────────────────────────────────────────────────────────────────
+# ── Approval ─────────────────────────────────────────────────────────────────
 
 class ApprovalDecision(str, Enum):
     YES = "YES"
@@ -61,7 +61,7 @@ class ApprovalRequest(BaseModel):
     decision: ApprovalDecision
 
 
-# ── Estado interno de acciones pendientes ─────────────────────────────────────
+# ── Internal State of Pending Actions ─────────────────────────────────────────
 
 class PendingAction(BaseModel):
     action_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -80,7 +80,7 @@ class PendingAction(BaseModel):
     auth_token: Optional[str] = None
 
 
-# ── Registro de Audit Log ─────────────────────────────────────────────────────
+# ── Audit Log Record ──────────────────────────────────────────────────────────
 
 class AuditLog(BaseModel):
     action_id: str
