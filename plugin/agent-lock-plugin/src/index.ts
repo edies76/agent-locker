@@ -3,19 +3,31 @@
  *
  * NOTE ON USER INTENT:
  * OpenClaw's before_tool_call event only contains { toolName, params }.
- * The user message is NOT part of the event. We attempt to capture it
- * by registering handlers for all possible message event variants.
+ * The user message is NOT available directly in the event, BUT it may still
+ * be reachable through nested properties like event.session, event.context,
+ * event.request, etc. We use a multi-strategy approach:
+ *
+ * Strategy 1 — api.onMessage: fires before any tool call.
+ * Strategy 2 — api.on() with all known event names.
+ * Strategy 3 — api.registerPlugin hooks (before_prompt_build / before_model_call).
+ * Strategy 4 — agent_lock_respond tool for in-chat decisions.
+ * Strategy 5 — Deep-search of the event object itself inside before_tool_call
+ *              (catches cases where strategies 1-3 haven't fired yet).
+ *
+ * A message is only silently dropped if it is completely empty.
  */
 
 const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
 
 // Cache: session → latest user message
 const intentCache = new Map<string, string>();
-let intentGlobal = ""; // Fallback without sessionKey
+let intentGlobal = ""; // Global fallback when sessionKey is unavailable
 
 function store(key: string, msg: string) {
-    if (!msg || msg.trim().length < 3) return;
+    if (!msg || msg.trim().length < 1) return; // Accept any non-empty message
     const clean = msg.trim();
+    // Only update if the new message is different (avoid duplicates in logs)
+    if (intentCache.get(key) === clean && intentGlobal === clean) return;
     intentCache.set(key, clean);
     intentGlobal = clean;
     console.log(`[Agent-Lock] 📝 Intent captured: "${clean.slice(0, 80)}"`);
@@ -53,7 +65,66 @@ function sessionOf(ctx: any): string {
 function bodyOf(msg: any): string {
     if (!msg) return "";
     if (typeof msg === "string") return msg;
-    return msg.body ?? msg.text ?? msg.content ?? msg.message ?? msg.input ?? "";
+    // Covers all known OpenClaw message field names
+    return (
+        msg.body ?? msg.text ?? msg.content ?? msg.message ??
+        msg.input ?? msg.prompt ?? msg.query ?? msg.value ?? ""
+    );
+}
+
+/**
+ * Strategy 5: Deep-search an arbitrary event/context object for a user message.
+ * We traverse up to MAX_DEPTH levels deep looking for known text fields,
+ * prioritising objects that also have role==='user' or type==='user'.
+ *
+ * @param obj   - Object to search.
+ * @param depth - Current recursion depth.
+ * @param seen  - WeakSet to track visited objects and prevent infinite cycles.
+ *                A new WeakSet is created per top-level call.
+ */
+function _deepFindUserMessage(obj: any, depth = 0, seen = new WeakSet<object>()): string {
+    const MAX_DEPTH = 6;
+    if (depth > MAX_DEPTH || !obj || typeof obj !== "object") return "";
+    if (seen.has(obj)) return "";
+    seen.add(obj);
+
+    // If this node looks like a user message, extract and return its text
+    const role: string = (obj.role ?? obj.type ?? "").toLowerCase();
+    if (role === "user" || role === "human") {
+        const text = bodyOf(obj);
+        if (text) return text;
+    }
+
+    // If it has an array of messages, find the last user entry first
+    for (const key of ["messages", "history", "turns", "chat"]) {
+        const arr = obj[key];
+        if (Array.isArray(arr) && arr.length > 0) {
+            const lastUser = [...arr].reverse().find(
+                (m: any) => (m?.role ?? m?.type ?? "").toLowerCase() === "user" ||
+                             (m?.role ?? m?.type ?? "").toLowerCase() === "human"
+            );
+            if (lastUser) {
+                const text = bodyOf(lastUser);
+                if (text) return text;
+            }
+            // Fallback: last element of the array
+            const lastText = bodyOf(arr[arr.length - 1]);
+            if (lastText) return lastText;
+        }
+    }
+
+    // Check direct text-like fields on this node
+    const directText = bodyOf(obj);
+    if (directText && directText.length > 2) return directText;
+
+    // Recurse into child objects, passing the same seen set
+    for (const val of Object.values(obj)) {
+        if (val && typeof val === "object") {
+            const found = _deepFindUserMessage(val, depth + 1, seen);
+            if (found) return found;
+        }
+    }
+    return "";
 }
 
 export default function register(api: any) {
@@ -151,12 +222,38 @@ export default function register(api: any) {
     // ── Intercept tool calls ──────────────────────────────────────────────────
     api.on("before_tool_call", async (event: any) => {
         const toolName: string = event.toolName ?? event.tool_name ?? "unknown";
-        // OpenClaw puts args in event.params (binary confirm by dump)
+        // OpenClaw puts args in event.params (confirmed by production testing)
         const args: Record<string, unknown> = event.params ?? event.args ?? {};
 
         if (toolName === "agent_lock_respond") return undefined;
 
         const sessionKey = sessionOf(event);
+
+        // ── Strategy 5: Deep-search event object for user message ─────────────
+        // This fires even when no prior message hook captured the intent.
+        // We clear the WeakSet before each search to allow re-traversal.
+        try {
+            // Probe known top-level fields that might hold session context
+            const contextSources = [
+                event.session,
+                event.context,
+                event.request,
+                event.metadata,
+                event.input,
+                event.state,
+                event,           // last resort: the event itself
+            ];
+            for (const src of contextSources) {
+                if (!src || typeof src !== "object") continue;
+                // Each call creates a fresh WeakSet via default parameter
+                const found = _deepFindUserMessage(src);
+                if (found) {
+                    store(sessionKey, found);
+                    break;
+                }
+            }
+        } catch { /* never block tool interception due to strategy 5 errors */ }
+
         const userIntent = getIntent(sessionKey);
 
         const rawCommand =
@@ -164,9 +261,13 @@ export default function register(api: any) {
             typeof args.code === "string" ? args.code :
             typeof args.script === "string" ? args.script : undefined;
 
+        const intentPreview = userIntent
+            ? `"${userIntent.slice(0, 60)}"`
+            : "(not captured — Gemini semantic validation will be skipped)";
+
         console.log(
             `[Agent-Lock] 🔍 ${toolName}(${(rawCommand ?? JSON.stringify(args)).slice(0, 80)}) ` +
-            `| intent: "${userIntent.slice(0, 60)}"`
+            `| intent: ${intentPreview}`
         );
 
         let result: any;

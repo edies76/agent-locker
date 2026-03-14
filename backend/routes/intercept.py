@@ -31,12 +31,14 @@ logger = logging.getLogger("agent-lock.intercept")
 
 @router.post("/intercept", response_model=InterceptResponse)
 async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
-    intent_preview = payload.user_intent[:80] if payload.user_intent else "(empty)"
+    # Normalize user_intent: treat None as empty string so downstream code is always str-safe
+    user_intent: str = (payload.user_intent or "").strip()
+    intent_preview = user_intent[:80] if user_intent else "(not captured)"
     logger.info(f"⚡ Intercept | tool={payload.tool_name} | intent='{intent_preview}'")
 
     # ── 1. Validate intent with Gemini ────────────────────────────────────────
     intent_result = await validate_intent(
-        user_intent=payload.user_intent,
+        user_intent=user_intent,
         tool_name=payload.tool_name,
         args=payload.args,
         raw_command=payload.raw_command,
@@ -61,7 +63,7 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
     action = PendingAction(
         tool_name=payload.tool_name,
         args=payload.args,
-        user_intent=payload.user_intent,
+        user_intent=user_intent,
         agent_id=payload.agent_id,
         session_key=payload.session_key,
         raw_command=payload.raw_command,
@@ -95,7 +97,7 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         action_id=action.action_id,
         tool_name=payload.tool_name,
         args=payload.args,
-        user_intent=payload.user_intent,
+        user_intent=user_intent,
         risk_level=risk_level,
         intent_score=intent_result.score,
         analysis=intent_result.analysis,

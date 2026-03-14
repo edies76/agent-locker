@@ -1,5 +1,12 @@
 # 🛡️ Agent-Lock Architecture
 
+> [!IMPORTANT]
+> **Contribution Rule — English Only**
+> All contributors editing this file (or any file in this repository) **must write
+> all content in English** — code, comments, documentation, commit messages, and
+> variable names. Pull requests containing Spanish (or any other language) will be
+> rejected until corrected.
+
 Agent-Lock is a **governance and security layer** designed to intercept, validate, and authorize actions from AI agents (initially focused on OpenClaw).
 
 ## 1. Overview
@@ -113,8 +120,10 @@ These details were discovered by analyzing real OpenClaw behavior in production:
 | **Missing User Intent** | The `before_tool_call` event DOES NOT include the original user message. It must be captured separately. |
 | **`api.onMessage(ctx)`** | Hook that triggers when a message arrives at the gateway. Contains `ctx.message.body` and `ctx.sessionKey`. Correct method for capturing user prompt. |
 | **`hooks.before_prompt_build(ctx)`** | Lifecycle hook with access to `ctx.session.messages[]`. Allows filtering by `role === "user"` and reading full history. |
+| **Strategy 5 — Deep Search** | As a last resort inside `before_tool_call`, the plugin recursively traverses `event.session`, `event.context`, `event.request`, `event.metadata`, and the event itself looking for `role=\"user\"` nodes or text fields. This ensures Gemini always receives the user message even when prior hooks didn't fire. |
 | **`exec` Tool Name** | OpenClaw uses `exec` as a generic tool for shell commands. The actual command is in `params.command`. |
 | **Telegram 409 Conflict** | If OpenClaw and Agent-Lock share the same Telegram bot token, `getUpdates` conflicts. Solution: use separate bots. |
+| **`user_intent` Optional** | The backend `ToolCallRequest` model sets `user_intent` as `Optional[str]` (defaults to `""`). If empty, the intent validator skips Gemini and returns a neutral score (0.85), relying solely on static rules. |
 
 ---
 
@@ -129,4 +138,4 @@ These details were discovered by analyzing real OpenClaw behavior in production:
 - **Auth0:** Configured with API `https://agent-lock-api` and scopes `read:files`, `write:db`, `admin:execute`, etc.
 
 ---
-*Documentation updated March 13, 2026.*
+*Documentation updated March 13, 2026. All editing must be done in English.*

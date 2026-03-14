@@ -24,7 +24,10 @@ class ToolCallRequest(BaseModel):
     """Payload arriving from the OpenClaw plugin when it intercepts a tool call."""
     tool_name: str = Field(..., description="Name of the tool the agent wants to execute")
     args: dict[str, Any] = Field(default_factory=dict, description="Arguments of the tool")
-    user_intent: str = Field(..., description="The original user instruction to the agent")
+    user_intent: Optional[str] = Field(
+        default="",
+        description="The original user instruction to the agent. Empty if not captured.",
+    )
     agent_id: Optional[str] = Field(None, description="Agent ID (if available)")
     session_key: Optional[str] = Field(None, description="OpenClaw session key")
     raw_command: Optional[str] = Field(None, description="The exact command as a string, if applicable")
