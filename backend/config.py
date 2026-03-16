@@ -18,11 +18,11 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-    # Servidor
+    # Server
     backend_port: int = 8000
     backend_url: str = "http://localhost:8000"
 
-    # Seguridad
+    # Security
     secret_key: str = "dev-secret-key-change-in-production"
 
     # Logs

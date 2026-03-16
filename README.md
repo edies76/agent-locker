@@ -1,10 +1,10 @@
 # 🦞 Agent-Lock for OpenClaw
 
-Agent-Lock is a security and governance middleware designed to intercept and approve tool calls made by **OpenClaw** agents. If an AI agent attempts a high-risk or destructive action (like dropping a database, wiping files, or executing dangerous shell commands), Agent-Lock halts the execution, pings you on Telegram (or WhatsApp), and waits for your human-in-the-loop approval.
+Agent-Lock is a security and governance middleware designed to intercept and approve tool calls made by **OpenClaw** agents. If an AI agent attempts a high-risk or destructive action (like dropping a database, wiping files, or executing dangerous shell commands), Agent-Lock halts the execution, pings you on Telegram, and waits for your human-in-the-loop approval.
 
 ## 🚀 How to Start
 
-There are two main components: the **Backend** (Python) that handles the analysis and notifications, and the **Plugin** (TypeScript) that integrates natively with OpenClaw.
+There are two main components: the **Backend** (Python) that handles analysis and notifications, and the **Plugin** (TypeScript) that integrates natively with OpenClaw.
 
 ### 1. Requirements
 
@@ -29,7 +29,7 @@ There are two main components: the **Backend** (Python) that handles the analysi
    - Edit `.env` to include your Telegram Bot Token, Chat ID, and Gemini API keys.
 
 3. **Install Dependencies & Install the Plugin:**
-   - Open a PowerShell as Administrator (if needed) from the project root.
+   - Open a PowerShell as Administrator from the project root.
    - Run the installer script, which builds the OpenClaw plugin and installs it natively into your `~/.openclaw/extensions/agent-lock` folder:
      ```powershell
      .\install-plugin.ps1
@@ -37,7 +37,7 @@ There are two main components: the **Backend** (Python) that handles the analysi
 
 ### 3. Running the System
 
-Every time you want to use the agent with human-in-the-loop protection:
+To use the agent with human-in-the-loop protection:
 
 **Terminal 1: Start the Backend Layer**
 From the project root:
@@ -65,7 +65,7 @@ For example, this policy explicitly blocks file deletions until human approval:
   "condition": ".*(delete|remove|unlink|rmdir|rm|erase|wipe|purge|trash).*",
   "action": "FORCE_PENDING",
   "risk_level": "HIGH",
-  "description": "Cualquier borrado de archivo siempre requiere notificación y aprobación humana."
+  "description": "Any file deletion always requires notification and human approval."
 }
 ```
 
@@ -75,5 +75,5 @@ For example, this policy explicitly blocks file deletions until human approval:
 2. Our native OpenClaw extension intercepts the tool trigger before it executes.
 3. It sends the details to the Python backend.
 4. If it triggers a policy (or Gemini flags the prompt as risky), the execution is paused (`PENDING`).
-5. A nice alert arrives in your DM on Telegram containing the risk analysis.
+5. A detailed alert arrives in your Telegram DM containing the risk analysis.
 6. You reply ✅ "Approve" or ❌ "Reject", and OpenClaw resumes or blocks the tool operation instantly.

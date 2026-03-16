@@ -1,8 +1,8 @@
 """
 GET /status/{action_id}
 
-El plugin de OpenClaw hace polling a este endpoint cada 2 segundos
-mientras espera la decisión del usuario en Telegram.
+The OpenClaw plugin polls this endpoint every 2 seconds
+while waiting for the user's decision on Telegram.
 """
 import logging
 from fastapi import APIRouter, HTTPException
@@ -17,7 +17,7 @@ logger = logging.getLogger("agent-lock.status")
 async def get_status(action_id: str) -> StatusResponse:
     action = store.get(action_id)
     if not action:
-        raise HTTPException(status_code=404, detail=f"Acción '{action_id}' no encontrada.")
+        raise HTTPException(status_code=404, detail=f"Action '{action_id}' not found.")
 
     return StatusResponse(
         action_id=action.action_id,

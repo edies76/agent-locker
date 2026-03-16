@@ -1,13 +1,13 @@
 """
-Risk Classifier — Combina reglas de herramienta + análisis Gemini + políticas
-para decidir el nivel de riesgo final.
+Risk Classifier — Combines tool rules + Gemini analysis + policies
+to decide the final risk level.
 
-Filosofía:
-- El riesgo base viene de la herramienta y el contenido de los args.
-- Gemini puede ESCALAR el riesgo si detecta contradicciones reales.
-- Gemini NO debería escalar cosas normales. Solo escala si el score es
-  realmente bajo (<0.3) y hay contradicciones explícitas.
-- Las políticas manuales (policies.json) son el override final.
+Philosophy:
+- Base risk comes from the tool and argument content.
+- Gemini can ESCALATE risk if it detects real contradictions.
+- Gemini SHOULD NOT escalate normal things. Only escalates if the score is
+  really low (<0.3) and there are explicit contradictions.
+- Manual policies (policies.json) are the final override.
 """
 from __future__ import annotations
 
@@ -38,14 +38,14 @@ def classify_risk(
     intent_result: ValidationResult,
 ) -> RiskLevel:
     """
-    Pipeline de clasificación de riesgo:
+    Risk classification pipeline:
     
-    0. Políticas manuales (override absoluto)
-    1. Riesgo base por herramienta
-    2. Riesgo por contenido de los argumentos
-    3. Ajuste por Gemini (solo escala si hay contradicciones REALES)
+    0. Manual policies (absolute override)
+    1. Base risk by tool
+    2. Risk by argument content
+    3. Gemini adjustment (only escalates if there are REAL contradictions)
     """
-    # ── 0. POLÍTICAS MANUALES (Override absoluto) ─────────────────────────────
+    # ── 0. MANUAL POLICIES (Absolute override) ───────────────────────────────
     policies = _load_policies()
     combined_text = _flatten_args(args)
     if raw_command:
@@ -60,32 +60,38 @@ def classify_risk(
         except re.error:
             continue
 
-    # ── 1. Riesgo base del tool ───────────────────────────────────────────────
+    # ── 1. Tool base risk ────────────────────────────────────────────────────
     tool_risk = get_tool_default_risk(tool_name)
 
-    # ── 2. Riesgo por contenido de los args ───────────────────────────────────
+    # ── 2. Risk by argument content ──────────────────────────────────────────
     content_risk = classify_by_content(combined_text)
 
     if content_risk is None:
-        # Sin match de contenido → usar el riesgo del tool tal cual
+        # No content match → use tool risk as is
         base_risk = tool_risk
     elif content_risk == RiskLevel.LOW:
-        # Contenido explícitamente seguro (echo, Write-Host, ls, etc.)
-        # → baja el riesgo del tool si era HIGH (exec con echo no es peligroso)
-        # → respeta CRITICAL del tool (delete_file con echo sigue siendo CRITICAL)
+        # Explicitly safe content (echo, Write-Host, ls, etc.)
+        # → downgrades risk if it was HIGH (exec with echo is not dangerous)
+        # → respects tool's CRITICAL (delete_file with echo is still CRITICAL)
         if tool_risk == RiskLevel.HIGH:
             base_risk = RiskLevel.LOW
         else:
             base_risk = tool_risk
     else:
-        # Contenido peligroso → tomar el máximo entre tool y contenido
+        # Dangerous content → take the maximum of tool and content
         base_risk = _max_risk(tool_risk, content_risk)
 
-    # ── 3. Ajuste por Gemini ──────────────────────────────────────────────────
-    # Solo escalamos si Gemini tiene información suficiente para decidir.
-    # Si no hay user_intent real (score genérico), NO escalamos.
-    if intent_result.contradictions and intent_result.score < 0.3:
-        # Gemini encontró contradicciones reales y tiene alta confianza de mismatch
+    # ── 3. Gemini adjustment ───────────────────────────────────────────────────
+    # MODE A (compare): escalate if Gemini found explicit contradictions AND score < 0.3.
+    # MODE B (intrinsic): escalate if the command is intrinsically dangerous (score < 0.3),
+    #   even when contradictions list is empty (there is no user intent to contradict).
+    intrinsic_dangerous = (
+        intent_result.mode == "intrinsic" and intent_result.score < 0.3
+    )
+    explicit_contradiction = (
+        intent_result.contradictions and intent_result.score < 0.3
+    )
+    if intrinsic_dangerous or explicit_contradiction:
         base_risk = _escalate(base_risk)
 
     return base_risk

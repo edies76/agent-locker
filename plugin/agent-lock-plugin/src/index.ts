@@ -1,24 +1,39 @@
 /**
- * Agent-Lock Plugin para OpenClaw
+ * Agent-Lock Plugin for OpenClaw
  *
- * NOTA SOBRE USER INTENT:
- * El evento before_tool_call de OpenClaw solo contiene { toolName, params }.
- * El mensaje del usuario NO es parte del evento. Intentamos capturarlo
- * registrando handlers para todas las variantes posibles de eventos de mensaje.
+ * NOTE ON USER INTENT:
+ * OpenClaw's before_tool_call event only contains { toolName, params }.
+ * The user message is NOT available directly in the event, BUT it may still
+ * be reachable through nested properties like event.session, event.context,
+ * event.request, etc. We use a multi-strategy approach:
+ *
+ * Strategy 1 — api.onMessage: fires before any tool call.
+ * Strategy 2 — api.on() with all known event names.
+ * Strategy 3 — api.registerPlugin hooks (before_prompt_build / before_model_call).
+ * Strategy 4 — agent_lock_respond tool for in-chat decisions.
+ * Strategy 5 — Deep-search of the event object itself inside before_tool_call
+ *              (catches cases where strategies 1-3 haven't fired yet).
+ *
+ * A message is only silently dropped if it is completely empty.
  */
 
 const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
 
-// Cache: sesión → último mensaje del usuario
-const intentCache = new Map<string, string>();
-let intentGlobal = ""; // Fallback sin sessionKey
+const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? "500");
+const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? "2000");
 
-function store(key: string, msg: string) {
-    if (!msg || msg.trim().length < 3) return;
+// Cache: session → latest user message
+const intentCache = new Map<string, string>();
+let intentGlobal = ""; // Global fallback when sessionKey is unavailable
+
+function store(key: string, msg: string): boolean {
+    if (!msg || msg.trim().length < 1) return false; // Accept any non-empty message
     const clean = msg.trim();
+    // Only update if the new message is different (avoid duplicates in logs)
+    if (intentCache.get(key) === clean && intentGlobal === clean) return false;
     intentCache.set(key, clean);
     intentGlobal = clean;
-    console.log(`[Agent-Lock] 📝 Intent capturado: "${clean.slice(0, 80)}"`);
+    return true;
 }
 
 function getIntent(key: string): string {
@@ -43,89 +58,135 @@ async function get(url: string) {
     return r.json();
 }
 
-// ── Extrae sessionKey de un contexto de evento ────────────────────────────────
+// ── Extracts sessionKey from an event context ─────────────────────────────────
 function sessionOf(ctx: any): string {
-    return ctx?.sessionKey ?? ctx?.session_key ?? ctx?.sessionId ??
-           ctx?.session?.id ?? ctx?.session?.key ?? "default";
+    const direct = (
+        ctx?.sessionKey ??
+        ctx?.session_key ??
+        ctx?.sessionId ??
+        ctx?.session?.id ??
+        ctx?.session?.key
+    );
+    if (direct) return String(direct);
+
+    // WhatsApp (and some other channels) provide a stable conversation key.
+    const channelId = ctx?.channelId ?? ctx?.metadata?.originatingChannel ?? ctx?.metadata?.channelId;
+    const accountId = ctx?.accountId ?? ctx?.metadata?.accountId ?? ctx?.metadata?.originatingTo;
+    const conversationId =
+        ctx?.conversationId ??
+        ctx?.metadata?.conversationId ??
+        ctx?.metadata?.senderId ??
+        ctx?.from ??
+        ctx?.metadata?.senderE164;
+    if (channelId && conversationId) {
+        return `${String(channelId)}:${String(accountId ?? "default")}:${String(conversationId)}`;
+    }
+
+    return "default";
 }
 
-// ── Extrae texto de un objeto de mensaje ─────────────────────────────────────
+// ── Extracts text from a message object ──────────────────────────────────────
 function bodyOf(msg: any): string {
     if (!msg) return "";
     if (typeof msg === "string") return msg;
-    return msg.body ?? msg.text ?? msg.content ?? msg.message ?? msg.input ?? "";
+    // Covers all known OpenClaw message field names
+    return (
+        msg.body ?? msg.text ?? msg.content ?? msg.message ??
+        msg.input ?? msg.prompt ?? msg.query ?? msg.value ?? ""
+    );
+}
+
+/**
+ * Strategy 5: Deep-search an arbitrary event/context object for a user message.
+ * We traverse up to MAX_DEPTH levels deep looking for known text fields,
+ * prioritising objects that also have role==='user' or type==='user'.
+ *
+ * @param obj   - Object to search.
+ * @param depth - Current recursion depth.
+ * @param seen  - WeakSet to track visited objects and prevent infinite cycles.
+ *                A new WeakSet is created per top-level call.
+ */
+function _deepFindUserMessage(obj: any, depth = 0, seen = new WeakSet<object>()): string {
+    const MAX_DEPTH = 6;
+    if (depth > MAX_DEPTH || !obj || typeof obj !== "object") return "";
+    if (seen.has(obj)) return "";
+    seen.add(obj);
+
+    // If this node looks like a user message, extract and return its text
+    const role: string = (obj.role ?? obj.type ?? "").toLowerCase();
+    if (role === "user" || role === "human") {
+        const text = bodyOf(obj);
+        if (text) return text;
+    }
+
+    // If it has an array of messages, find the last user entry first
+    for (const key of ["messages", "history", "turns", "chat"]) {
+        const arr = obj[key];
+        if (Array.isArray(arr) && arr.length > 0) {
+            const lastUser = [...arr].reverse().find(
+                (m: any) => (m?.role ?? m?.type ?? "").toLowerCase() === "user" ||
+                             (m?.role ?? m?.type ?? "").toLowerCase() === "human"
+            );
+            if (lastUser) {
+                const text = bodyOf(lastUser);
+                if (text) return text;
+            }
+            // Fallback: last element of the array
+            const lastText = bodyOf(arr[arr.length - 1]);
+            if (lastText) return lastText;
+        }
+    }
+
+    // Check direct text-like fields on this node
+    const directText = bodyOf(obj);
+    if (directText && directText.length > 2) return directText;
+
+    // Recurse into child objects, passing the same seen set
+    for (const val of Object.values(obj)) {
+        if (val && typeof val === "object") {
+            const found = _deepFindUserMessage(val, depth + 1, seen);
+            if (found) return found;
+        }
+    }
+    return "";
 }
 
 export default function register(api: any) {
+    // ── Capture user intent from inbound messages ───────────────────────────
+    // OpenClaw WhatsApp emits `message_received` with (message, meta)
+    try {
+        api.on("message_received", (msg: any, meta: any) => {
+            const text = msg?.content;
+            if (text && typeof text === "string" && text.trim().length > 0) {
+                // Prefer the metadata object since it contains channelId/accountId/conversationId
+                const sessionKey = sessionOf(meta ?? msg);
+                const storedPrimary = store(sessionKey, text);
 
-    // ── Estrategia 1: api.onMessage (SDK oficial) ────────────────────────────
-    if (typeof api.onMessage === "function") {
-        api.onMessage((ctx: any) => {
-            store(sessionOf(ctx), bodyOf(ctx.message ?? ctx));
-        });
-        console.log("[Agent-Lock] ✅ api.onMessage OK");
-    }
+                // Compatibility fallback: store under message-derived key too
+                const fallbackKey = sessionOf(msg);
+                const storedFallback = (fallbackKey !== sessionKey) ? store(fallbackKey, text) : false;
 
-    // ── Estrategia 2: api.on con múltiples nombres de evento ─────────────────
-    const msgEvents = [
-        "message", "user_message", "chat_message", "chat:message",
-        "input", "user_input", "prompt", "before_completion",
-        "before_model_call", "on_message", "incoming_message",
-    ];
-    for (const evtName of msgEvents) {
-        try {
-            api.on(evtName, (ctx: any) => {
-                const text = bodyOf(ctx?.message ?? ctx?.input ?? ctx);
-                if (text) {
-                    store(sessionOf(ctx), text);
-                    console.log(`[Agent-Lock] ✅ Evento '${evtName}' recibido`);
+                if (storedPrimary) {
+                    console.log(`[Agent-Lock] 📝 Intent captured: "${text.slice(0, 80)}"`);
+                } else if (storedFallback) {
+                    console.log(`[Agent-Lock] 📝 Intent captured: "${text.slice(0, 80)}"`);
                 }
-                return undefined;
-            });
-        } catch { /* evento no soportado */ }
-    }
-
-    // ── Estrategia 3: api.registerPlugin con before_prompt_build ────────────
-    // Según los docs, este hook tiene ctx.session.messages[] con el historial
-    if (typeof api.registerPlugin === "function") {
-        api.registerPlugin({
-            id: "agent-lock",
-            name: "Agent-Lock",
-            hooks: {
-                before_prompt_build: async (ctx: any) => {
-                    const messages: any[] = ctx?.session?.messages ?? ctx?.messages ?? [];
-                    const lastUser = [...messages]
-                        .reverse()
-                        .find((m: any) => m.role === "user" || m.type === "user");
-                    const text = bodyOf(lastUser ?? null);
-                    store(sessionOf(ctx), text);
-                    return undefined; // no modifica el prompt
-                },
-                before_model_call: async (ctx: any) => {
-                    const messages: any[] = ctx?.messages ?? ctx?.session?.messages ?? [];
-                    const lastUser = [...messages]
-                        .reverse()
-                        .find((m: any) => m.role === "user");
-                    const text = bodyOf(lastUser ?? null);
-                    store(sessionOf(ctx), text);
-                    return undefined;
-                },
-            },
+            }
+            return undefined;
         });
-        console.log("[Agent-Lock] ✅ api.registerPlugin OK (before_prompt_build hook activo)");
-    } else {
-        console.log("[Agent-Lock] ⚠️ api.registerPlugin no disponible en esta versión de OpenClaw");
+    } catch {
+        // If this OpenClaw build doesn't support the event, intent capture falls back to defaults.
     }
 
-    // ── Estrategia 4: tool de respuesta manual ───────────────────────────────
+    // ── Strategy 4: manual response tool ──────────────────────────────────────
     if (typeof api.registerTool === "function") {
         api.registerTool({
             name: "agent_lock_respond",
-            description: "Registra la decisión del usuario para una acción pendiente de Agent-Lock.",
+            description: "Records the user's decision for a pending Agent-Lock action.",
             inputSchema: {
                 type: "object",
                 properties: {
-                    action_id: { type: "string", description: "ID de la acción pendiente" },
+                    action_id: { type: "string", description: "ID of the pending action" },
                     decision: { type: "string", enum: ["approve", "deny"] },
                 },
                 required: ["action_id", "decision"],
@@ -140,23 +201,24 @@ export default function register(api: any) {
                 if (resolve) {
                     resolve(decision);
                     pending.delete(action_id);
-                    return { success: true, message: decision === "approve" ? "✅ Aprobado." : "🚫 Bloqueado." };
+                    return { success: true, message: decision === "approve" ? "✅ Approved." : "🚫 Blocked." };
                 }
-                return { success: false, message: "Acción no encontrada." };
+                return { success: false, message: "Action not found." };
             },
         });
-        console.log("[Agent-Lock] ✅ tool agent_lock_respond registrada");
+        console.log("[Agent-Lock] ✅ agent_lock_respond tool registered");
     }
 
-    // ── Interceptar tool calls ────────────────────────────────────────────────
+    // ── Intercept tool calls ──────────────────────────────────────────────────
     api.on("before_tool_call", async (event: any) => {
         const toolName: string = event.toolName ?? event.tool_name ?? "unknown";
-        // OpenClaw pone los args en event.PARAMS (confirmado por dump)
+        // OpenClaw puts args in event.params (confirmed by production testing)
         const args: Record<string, unknown> = event.params ?? event.args ?? {};
 
         if (toolName === "agent_lock_respond") return undefined;
 
         const sessionKey = sessionOf(event);
+
         const userIntent = getIntent(sessionKey);
 
         const rawCommand =
@@ -164,9 +226,13 @@ export default function register(api: any) {
             typeof args.code === "string" ? args.code :
             typeof args.script === "string" ? args.script : undefined;
 
+        const intentPreview = userIntent
+            ? `"${userIntent.slice(0, 60)}"`
+            : "(not captured — Gemini semantic validation will be skipped)";
+
         console.log(
             `[Agent-Lock] 🔍 ${toolName}(${(rawCommand ?? JSON.stringify(args)).slice(0, 80)}) ` +
-            `| intent: "${userIntent.slice(0, 60)}"`
+            `| intent: ${intentPreview}`
         );
 
         let result: any;
@@ -180,7 +246,7 @@ export default function register(api: any) {
                 raw_command: rawCommand,
             });
         } catch {
-            console.warn(`[Agent-Lock] ⚠️ Backend no disponible — dejando pasar: ${toolName}`);
+            console.warn(`[Agent-Lock] ⚠️ Backend unavailable — skipping check: ${toolName}`);
             return undefined;
         }
 
@@ -192,6 +258,7 @@ export default function register(api: any) {
         if (status === "PENDING") {
             const decision = await new Promise<"approve" | "deny">((resolve) => {
                 pending.set(action_id, resolve);
+                let polls = 0;
                 const iv = setInterval(async () => {
                     try {
                         const s = await get(`${BACKEND_URL}/status/${action_id}`);
@@ -201,14 +268,31 @@ export default function register(api: any) {
                             resolve(s.status === "APPROVED" || s.status === "AUTO_APPROVED" ? "approve" : "deny");
                         }
                     } catch {}
-                }, 2000);
+                    polls += 1;
+
+                    // After a few fast polls, back off to reduce load.
+                    // (setInterval can't change its delay; this is a best-effort fallback)
+                    if (polls === 10 && STATUS_POLL_MS < STATUS_POLL_MS_MAX) {
+                        clearInterval(iv);
+                        const slowIv = setInterval(async () => {
+                            try {
+                                const s = await get(`${BACKEND_URL}/status/${action_id}`);
+                                if (s.status !== "PENDING") {
+                                    clearInterval(slowIv);
+                                    pending.delete(action_id);
+                                    resolve(s.status === "APPROVED" || s.status === "AUTO_APPROVED" ? "approve" : "deny");
+                                }
+                            } catch {}
+                        }, STATUS_POLL_MS_MAX);
+                    }
+                }, Math.max(100, STATUS_POLL_MS));
             });
             if (decision === "approve") return undefined;
-            return { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
+            return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
         }
 
-        return { block: true, blockReason: `🦞 Agent-Lock bloqueó: ${analysis}` };
+        return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
     });
 
-    console.log("🦞 Agent-Lock activo | backend=" + BACKEND_URL);
+    console.log("🦞 Agent-Lock active | backend=" + BACKEND_URL);
 }

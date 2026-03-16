@@ -1,26 +1,25 @@
 """
-Action Rules — Tabla de clasificación de riesgo por herramienta y patrón de comando.
+Action Rules — Risk classification table by tool and command pattern.
 
-Filosofía:
-- Solo es CRITICAL lo que destruye datos o expone secretos.
-- Solo es HIGH lo que ejecuta código arbitrario / modifica infra.
-- LOW_SHELL_PATTERNS: si el CONTENIDO del comando es claramente seguro,
-  baja el riesgo aunque la herramienta sea "exec" o "bash".
-- Default para herramientas desconocidas: LOW.
+Philosophy:
+- Only CRITICAL: Items that destroy data or expose secrets.
+- Only HIGH: Items that execute arbitrary code / modify infrastructure.
+- LOW_SHELL_PATTERNS: If command CONTENT is clearly safe, 
+  downgrade risk even if the tool is "exec" or "bash".
+- Default for unknown tools: LOW.
 """
 from __future__ import annotations
 import re
 from models import RiskLevel
 
-
-# ── Patrones de riesgo crítico ────────────────────────────────────────────────
+# ── Critical Risk Patterns ───────────────────────────────────────────────────
 CRITICAL_PATTERNS = [
-    # SQL destructivo
+    # Destructive SQL
     r"\bDROP\b",
     r"\bTRUNCATE\b",
     r"\bDELETE\b\s+FROM",
 
-    # Shell destructivo
+    # Destructive Shell
     r"rm\s+-rf",
     r"rmdir\s+/s",
     r"del\s+/[fqsS]",
@@ -28,22 +27,22 @@ CRITICAL_PATTERNS = [
     r"\bwipe\b",
     r"\bmkfs\b",
 
-    # Infraestructura destructiva
+    # Destructive Infrastructure
     r"docker\s+rm",
     r"kubectl\s+delete",
     r"terraform\s+destroy",
 
-    # Exposición de secretos
+    # Secret Exposure
     r"(password|secret|api.?key)\s*=\s*\S+",
 ]
 
-# ── Patrones de riesgo alto ───────────────────────────────────────────────────
+# ── High Risk Patterns ────────────────────────────────────────────────────────
 HIGH_PATTERNS = [
     r"\bALTER\b\s+TABLE",
     r"\bdeploy\b",
     r"\bprod(uction)?\b",
     r"\beval\s*\(",
-    r"\bexec\s*\(",        # exec() como función Python/JS, no el tool exec de OpenClaw
+    r"\bexec\s*\(",        # exec() as a Python/JS function, not the OpenClaw tool
     r"\bsubprocess\b",
     r"\bos\.system\b",
     r"__import__",
@@ -51,16 +50,18 @@ HIGH_PATTERNS = [
     r"\breboot\b",
 ]
 
-# ── Patrones de bajo riesgo (comandos shell seguros / display) ────────────────
-# Si el CONTENIDO del comando coincide con esto, se considera seguro
-# aunque la herramienta sea "exec" o "bash".
+# ── Low Risk Patterns (Safe shell commands / Display) ────────────────────────
+# If command CONTENT matches these, it's considered safe
+# even if the tool is "exec" or "bash".
 LOW_SHELL_PATTERNS = [
-    # PowerShell — solo display o lectura
+    # PowerShell — Display and read-only
     r"\bWrite-Host\b",
     r"\bWrite-Output\b",
     r"\bWrite-Verbose\b",
     r"\bWrite-Debug\b",
-    r"\bGet-\w+",              # Cualquier Get-* de PS es solo lectura
+    r"\bGet-\w+",              # Any PS Get-* is read-only
+    r"\bGetFolderPath\s*\(",   # [Environment]::GetFolderPath('Desktop')
+    r"\[Environment\]::GetFolderPath\s*\(",
     r"\bTest-\w+",             # Test-Path, Test-Connection, etc.
     r"\bResolve-\w+",          # Resolve-Path, Resolve-DnsName, etc.
     r"\bSelect-\w+",           # Select-Object, Select-String, etc.
@@ -72,22 +73,22 @@ LOW_SHELL_PATTERNS = [
     r"\bConvertFrom-\w+",      # ConvertFrom-Json, etc.
     r"\bImport-\w+",           # Import-Csv, Import-Module
     r"\bExport-\w+",           # Export-Csv, etc.
-    r"\bSet-Location\b",       # cd equivalente en PS
+    r"\bSet-Location\b",       # cd equivalent in PS
     r"\bPush-Location\b",
     r"\bPop-Location\b",
-    # PS — creación/escritura de archivos (equivalente a write_file, que ya es LOW)
-    r"\bNew-Item\b",           # Crea archivos o carpetas
-    r"\bNew-Object\b",         # Crea objetos .NET, no destructivo
-    r"\bSet-Content\b",        # Escribe en archivo (equivalente a write_file)
-    r"\bAdd-Content\b",        # Añade al final de un archivo
-    r"\bOut-File\b",           # Redirige output a archivo
-    r"\bCopy-Item\b",          # Copia archivos (no destruye el original)
-    r"\bRename-Item\b",        # Renombra (borderline pero no crítico)
-    r"\bMove-Item\b",          # Mueve (no destruye datos)
-    r"\bInvoke-WebRequest\b",  # HTTP request (ya es LOW como http_request)
+    # PS — File creation/writing (equivalent to write_file, already LOW)
+    r"\bNew-Item\b",           # Creates files or folders
+    r"\bNew-Object\b",         # Creates .NET objects, non-destructive
+    r"\bSet-Content\b",        # Writes to file (equivalent to write_file)
+    r"\bAdd-Content\b",        # Appends to a file
+    r"\bOut-File\b",           # Redirects output to file
+    r"\bCopy-Item\b",          # Copies files (non-destructive)
+    r"\bRename-Item\b",        # Renames (borderline but non-critical)
+    r"\bMove-Item\b",          # Moves (no data loss)
+    r"\bInvoke-WebRequest\b",  # HTTP request (already LOW as http_request)
     r"\bInvoke-RestMethod\b",  # REST API call
 
-    # Bash/cmd — display, navegación y escritura normal
+    # Bash/cmd — Display, navigation, and normal writing
     r"^\s*echo\b",
     r"^\s*printf\b",
     r"^\s*print\b",
@@ -99,15 +100,15 @@ LOW_SHELL_PATTERNS = [
     r"^\s*type\b",
     r"^\s*cd\b",
     r"^\s*find\b",
-    r"^\s*mkdir\b",            # Crear carpeta
-    r"^\s*touch\b",            # Crear archivo vacío
-    r"^\s*cp\b",               # Copiar
-    r"^\s*mv\b",               # Mover
+    r"^\s*mkdir\b",            # Create folder
+    r"^\s*touch\b",            # Create empty file
+    r"^\s*cp\b",               # Copy
+    r"^\s*mv\b",               # Move
     r"\bconsole\.log\b",
     r"^\s*python\b.*print",
     r"^\s*node\b.*console",
 
-    # Red (solo lectura)
+    # Network (Read-only)
     r"^\s*ping\b",
     r"\bcurl\b.+-[Gg]\b",
     r"\bgit\s+(log|status|diff|fetch|pull|branch|show|stash list)\b",
@@ -115,16 +116,16 @@ LOW_SHELL_PATTERNS = [
     r"\bnpm\s+(list|ls|view|info|audit|outdated)\b",
     r"\bpip\b.*(list|show|freeze|check)\b",
 
-    # SQL lectura
+    # Read SQL
     r"\bSELECT\b",
     r"\bSHOW\b",
     r"\bDESCRIBE\b",
     r"\bEXPLAIN\b",
 ]
 
-# ── Herramientas clasificadas por defecto ─────────────────────────────────────
+# ── Tool Default Risk Mapping ────────────────────────────────────────────────
 TOOL_RISK_MAP: dict[str, RiskLevel] = {
-    # Bajo riesgo
+    # Low Risk
     "read_file":       RiskLevel.LOW,
     "list_files":      RiskLevel.LOW,
     "search_files":    RiskLevel.LOW,
@@ -145,14 +146,14 @@ TOOL_RISK_MAP: dict[str, RiskLevel] = {
     "git_commit":      RiskLevel.LOW,
     "git_push":        RiskLevel.LOW,
 
-    # Alto riesgo — ejecución de código arbitrario
-    "exec":            RiskLevel.HIGH,   # Tool de OpenClaw para shell (se puede bajar por contenido)
+    # High Risk — Arbitrary code execution
+    "exec":            RiskLevel.HIGH,   # OpenClaw tool for shell (content can downgrade)
     "execute_code":    RiskLevel.HIGH,
     "run_command":     RiskLevel.HIGH,
     "bash":            RiskLevel.HIGH,
     "terminal":        RiskLevel.HIGH,
 
-    # Crítico — borrado explícito
+    # Critical — Explicit deletion
     "delete_file":     RiskLevel.CRITICAL,
     "rm":              RiskLevel.CRITICAL,
     "database.delete": RiskLevel.CRITICAL,
@@ -161,13 +162,13 @@ TOOL_RISK_MAP: dict[str, RiskLevel] = {
 
 def classify_by_content(text: str) -> RiskLevel | None:
     """
-    Analiza el texto y retorna el nivel de riesgo según el contenido.
+    Analyzes text and returns the risk level based on content.
 
-    Orden de evaluación:
-    1. CRITICAL  → si hay algo destructivo → retorna CRITICAL
-    2. HIGH      → si hay algo peligroso   → retorna HIGH
-    3. LOW       → si es explícitamente seguro → retorna LOW  (baja el riesgo del tool!)
-    4. None      → sin match, dejar que el default del tool decida
+    Evaluation Order:
+    1. CRITICAL  → if destructive content → returns CRITICAL
+    2. HIGH      → if dangerous content    → returns HIGH
+    3. LOW       → if explicitly safe content → returns LOW (downgrades tool risk!)
+    4. None      → no match, let the tool default decide
     """
     for pattern in CRITICAL_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
@@ -177,7 +178,7 @@ def classify_by_content(text: str) -> RiskLevel | None:
         if re.search(pattern, text, re.IGNORECASE):
             return RiskLevel.HIGH
 
-    # Si el contenido es explícitamente seguro, BAJA el riesgo
+    # If content is explicitly safe, DOWNGRADE risk
     for pattern in LOW_SHELL_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
             return RiskLevel.LOW
@@ -186,7 +187,7 @@ def classify_by_content(text: str) -> RiskLevel | None:
 
 
 def get_tool_default_risk(tool_name: str) -> RiskLevel:
-    """Retorna el riesgo base de una herramienta. Default: LOW."""
+    """Returns the base risk of a tool. Default: LOW."""
     if tool_name in TOOL_RISK_MAP:
         return TOOL_RISK_MAP[tool_name]
 

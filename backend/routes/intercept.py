@@ -1,14 +1,16 @@
 """
 POST /intercept
 
-Punto de entrada principal: el plugin de OpenClaw llama este endpoint
-cuando intercepta un tool call. El backend:
-1. Valida la intención con Gemini Flash (si hay user_intent real)
-2. Clasifica el riesgo (reglas + contenido + Gemini + políticas)
-3. Si LOW → aprueba automáticamente con token Auth0
-4. Si HIGH/CRITICAL → manda notificación Telegram y pone en PENDING
-"""
+Main entry point: the OpenClaw plugin calls this endpoint
+when it intercepts a tool call. The backend:
 
+1. Validates with Gemini (ALWAYS runs — two modes):
+   - MODE A (user_intent present): compare user instruction vs agent action.
+   - MODE B (no user_intent):      intrinsic safety analysis of the command itself.
+2. Classifies risk (rules + content + Gemini + policies).
+3. If LOW  → automatically approves with Auth0 token.
+4. If HIGH/CRITICAL → sends Telegram notification and sets to PENDING.
+"""
 import logging
 from datetime import datetime, timezone
 
@@ -20,7 +22,7 @@ from models import (
     ActionStatus,
     PendingAction,
 )
-from engine.intent_validator import validate_intent
+from engine.intent_validator import validate_intent, ValidationResult
 from engine.risk_classifier import classify_risk
 from auth.token_vault import request_token
 from notifications.telegram_bot import send_approval_request
@@ -34,20 +36,48 @@ logger = logging.getLogger("agent-lock.intercept")
 
 @router.post("/intercept", response_model=InterceptResponse)
 async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
-    intent_preview = payload.user_intent[:80] if payload.user_intent else "(vacío)"
+    # Normalize user_intent: treat None as empty string so downstream code is always str-safe
+    user_intent: str = (payload.user_intent or "").strip()
+    intent_preview = user_intent[:80] if user_intent else "(not captured)"
     logger.info(f"⚡ Intercept | tool={payload.tool_name} | intent='{intent_preview}'")
 
-    # ── 1. Validar intención con Gemini ───────────────────────────────────────
-    intent_result = await validate_intent(
-        user_intent=payload.user_intent,
+    # ── 1. Fast path: rules-only preclassification ───────────────────────────
+    # Goal: Agent-Lock should be a security layer, not a latency tax.
+    # If rules/content clearly indicate LOW risk, skip Gemini entirely.
+    rules_only = ValidationResult(
+        score=1.0,
+        analysis="Rules-only fast path",
+        contradictions=[],
+        gemini_used=False,
+        mode="rules",
+    )
+
+    preliminary_risk = classify_risk(
         tool_name=payload.tool_name,
         args=payload.args,
         raw_command=payload.raw_command,
+        intent_result=rules_only,
     )
 
-    gemini_tag = "🧠 Gemini" if intent_result.gemini_used else "📋 Reglas"
+    if preliminary_risk == RiskLevel.LOW:
+        intent_result = rules_only
+    else:
+        # ── Gemini only when necessary (HIGH/CRITICAL or ambiguous) ──────────
+        intent_result = await validate_intent(
+            user_intent=user_intent,
+            tool_name=payload.tool_name,
+            args=payload.args,
+            raw_command=payload.raw_command,
+        )
 
-    # ── 2. Clasificar riesgo ──────────────────────────────────────────────────
+    mode_labels = {
+        "compare":   "🧠 Gemini/Compare",
+        "intrinsic": "🔍 Gemini/Intrinsic",
+        "rules":     "📋 Rules",
+    }
+    gemini_tag = mode_labels.get(intent_result.mode, "📋 Rules")
+
+    # ── 2. Classify risk (may include Gemini adjustment) ─────────────────────
     risk_level = classify_risk(
         tool_name=payload.tool_name,
         args=payload.args,
@@ -56,15 +86,15 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
     )
 
     logger.info(
-        f"🎯 Riesgo={risk_level.value} | Score={intent_result.score:.2f} | "
-        f"Motor={gemini_tag} | Contradicciones={len(intent_result.contradictions)}"
+        f"🎯 Risk={risk_level.value} | Score={intent_result.score:.2f} | "
+        f"Engine={gemini_tag} | Contradictions={len(intent_result.contradictions)}"
     )
 
-    # ── 3. Crear la acción pendiente ──────────────────────────────────────────
+    # ── 3. Create pending action ──────────────────────────────────────────────
     action = PendingAction(
         tool_name=payload.tool_name,
         args=payload.args,
-        user_intent=payload.user_intent,
+        user_intent=user_intent,
         agent_id=payload.agent_id,
         session_key=payload.session_key,
         raw_command=payload.raw_command,
@@ -73,7 +103,7 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         analysis=intent_result.analysis,
     )
 
-    # ── 4. LOW → auto-aprobar ─────────────────────────────────────────────────
+    # ── 4. LOW → Auto-approve ─────────────────────────────────────────────────
     if risk_level == RiskLevel.LOW:
         auth_token = await request_token(payload.tool_name, payload.args, risk_level)
         action.status = ActionStatus.AUTO_APPROVED
@@ -81,9 +111,7 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         action.auth_token = auth_token
         store.save(action)
         write_log(action)
-        logger.info(
-            f"✅ Auto-aprobado (LOW) | action_id={action.action_id} | tool={payload.tool_name}"
-        )
+        logger.info(f"✅ Auto-approved (LOW) | action_id={action.action_id} | tool={payload.tool_name}")
         return InterceptResponse(
             action_id=action.action_id,
             status=ActionStatus.AUTO_APPROVED,
@@ -93,22 +121,22 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
             auth_token=auth_token,
         )
 
-    # ── 5. HIGH/CRITICAL → notificar y dejar en PENDING ──────────────────────
+    # ── 5. HIGH/CRITICAL → Notify and set to PENDING ─────────────────────────
     store.save(action)
 
     await send_approval_request(
         action_id=action.action_id,
         tool_name=payload.tool_name,
         args=payload.args,
-        user_intent=payload.user_intent,
+        user_intent=user_intent,
         risk_level=risk_level,
         intent_score=intent_result.score,
         analysis=intent_result.analysis,
     )
 
     logger.info(
-        f"⏳ Esperando aprobación | action_id={action.action_id} | "
-        f"riesgo={risk_level.value} | tool={payload.tool_name}"
+        f"⏳ Waiting for approval | action_id={action.action_id} | "
+        f"risk={risk_level.value} | tool={payload.tool_name}"
     )
     return InterceptResponse(
         action_id=action.action_id,
