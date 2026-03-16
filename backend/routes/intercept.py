@@ -1,12 +1,15 @@
 """
 POST /intercept
 
-Main entry point: the OpenClaw plugin calls this endpoint 
+Main entry point: the OpenClaw plugin calls this endpoint
 when it intercepts a tool call. The backend:
-1. Validates intent with Gemini Flash (if real user_intent is available)
-2. Classifies risk (rules + content + Gemini + policies)
-3. If LOW → automatically approves with Auth0 token
-4. If HIGH/CRITICAL → sends Telegram notification and sets to PENDING
+
+1. Validates with Gemini (ALWAYS runs — two modes):
+   - MODE A (user_intent present): compare user instruction vs agent action.
+   - MODE B (no user_intent):      intrinsic safety analysis of the command itself.
+2. Classifies risk (rules + content + Gemini + policies).
+3. If LOW  → automatically approves with Auth0 token.
+4. If HIGH/CRITICAL → sends Telegram notification and sets to PENDING.
 """
 import logging
 from datetime import datetime, timezone
@@ -17,7 +20,7 @@ from models import (
     ToolCallRequest, InterceptResponse,
     ActionStatus, PendingAction,
 )
-from engine.intent_validator import validate_intent
+from engine.intent_validator import validate_intent, ValidationResult
 from engine.risk_classifier import classify_risk
 from auth.token_vault import request_token
 from notifications.telegram_bot import send_approval_request
@@ -36,17 +39,43 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
     intent_preview = user_intent[:80] if user_intent else "(not captured)"
     logger.info(f"⚡ Intercept | tool={payload.tool_name} | intent='{intent_preview}'")
 
-    # ── 1. Validate intent with Gemini ────────────────────────────────────────
-    intent_result = await validate_intent(
-        user_intent=user_intent,
+    # ── 1. Fast path: rules-only preclassification ───────────────────────────
+    # Goal: Agent-Lock should be a security layer, not a latency tax.
+    # If rules/content clearly indicate LOW risk, skip Gemini entirely.
+    rules_only = ValidationResult(
+        score=1.0,
+        analysis="Rules-only fast path",
+        contradictions=[],
+        gemini_used=False,
+        mode="rules",
+    )
+
+    preliminary_risk = classify_risk(
         tool_name=payload.tool_name,
         args=payload.args,
         raw_command=payload.raw_command,
+        intent_result=rules_only,
     )
 
-    gemini_tag = "🧠 Gemini" if intent_result.gemini_used else "📋 Rules"
+    if preliminary_risk == RiskLevel.LOW:
+        intent_result = rules_only
+    else:
+        # ── Gemini only when necessary (HIGH/CRITICAL or ambiguous) ──────────
+        intent_result = await validate_intent(
+            user_intent=user_intent,
+            tool_name=payload.tool_name,
+            args=payload.args,
+            raw_command=payload.raw_command,
+        )
 
-    # ── 2. Classify risk ──────────────────────────────────────────────────────
+    mode_labels = {
+        "compare":   "🧠 Gemini/Compare",
+        "intrinsic": "🔍 Gemini/Intrinsic",
+        "rules":     "📋 Rules",
+    }
+    gemini_tag = mode_labels.get(intent_result.mode, "📋 Rules")
+
+    # ── 2. Classify risk (may include Gemini adjustment) ─────────────────────
     risk_level = classify_risk(
         tool_name=payload.tool_name,
         args=payload.args,

@@ -80,10 +80,16 @@ def classify_risk(
         base_risk = _max_risk(tool_risk, content_risk)
 
     # ── 3. Gemini adjustment ───────────────────────────────────────────────────
-    # We only escalate if Gemini has enough information to decide.
-    # If there is no real user_intent (generic score), we DO NOT escalate.
-    if intent_result.contradictions and intent_result.score < 0.3:
-        # Gemini found real contradictions and has high mismatch confidence
+    # MODE A (compare): escalate if Gemini found explicit contradictions AND score < 0.3.
+    # MODE B (intrinsic): escalate if the command is intrinsically dangerous (score < 0.3),
+    #   even when contradictions list is empty (there is no user intent to contradict).
+    intrinsic_dangerous = (
+        intent_result.mode == "intrinsic" and intent_result.score < 0.3
+    )
+    explicit_contradiction = (
+        intent_result.contradictions and intent_result.score < 0.3
+    )
+    if intrinsic_dangerous or explicit_contradiction:
         base_risk = _escalate(base_risk)
 
     return base_risk

@@ -18,7 +18,7 @@ class ActionStatus(str, Enum):
     AUTO_APPROVED = "AUTO_APPROVED"
 
 
-# ── OpenClaw Plugin → Backend Payload ─────────────────────────────────────────
+# ── OpenClaw Plugin → Backend Payload ───────────────────────────────────────
 
 class ToolCallRequest(BaseModel):
     """Payload arriving from the OpenClaw plugin when it intercepts a tool call."""
@@ -33,7 +33,7 @@ class ToolCallRequest(BaseModel):
     raw_command: Optional[str] = Field(None, description="The exact command as a string, if applicable")
 
 
-# ── Backend → Plugin Response ─────────────────────────────────────────────────
+# ── Backend → Plugin Response ───────────────────────────────────────────────
 
 class InterceptResponse(BaseModel):
     """Immediate response to the plugin after receiving the intercept."""
@@ -53,7 +53,7 @@ class StatusResponse(BaseModel):
     decided_at: Optional[datetime] = None
 
 
-# ── Approval ─────────────────────────────────────────────────────────────────
+# ── Approval ────────────────────────────────────────────────────────────────
 
 class ApprovalDecision(str, Enum):
     YES = "YES"
@@ -64,7 +64,7 @@ class ApprovalRequest(BaseModel):
     decision: ApprovalDecision
 
 
-# ── Internal State of Pending Actions ─────────────────────────────────────────
+# ── Internal State of Pending Actions ───────────────────────────────────────
 
 class PendingAction(BaseModel):
     action_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -83,7 +83,7 @@ class PendingAction(BaseModel):
     auth_token: Optional[str] = None
 
 
-# ── Audit Log Record ──────────────────────────────────────────────────────────
+# ── Audit Log Record ────────────────────────────────────────────────────────
 
 class AuditLog(BaseModel):
     action_id: str
@@ -97,3 +97,8 @@ class AuditLog(BaseModel):
     analysis: str
     decision: ActionStatus
     decided_at: Optional[datetime]
+    
+    # Internal validation flag from the HMAC signature
+    # Pydantic doesn't serialize fields starting with "_" by default,
+    # so we use an alias or specify it explicitly. But for simplicity:
+    signature_valid: Optional[bool] = Field(None, alias="_signature_valid")

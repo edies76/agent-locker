@@ -59,6 +59,8 @@ LOW_SHELL_PATTERNS = [
     r"\bWrite-Verbose\b",
     r"\bWrite-Debug\b",
     r"\bGet-\w+",              # Any PS Get-* is read-only
+    r"\bGetFolderPath\s*\(",   # [Environment]::GetFolderPath('Desktop')
+    r"\[Environment\]::GetFolderPath\s*\(",
     r"\bTest-\w+",             # Test-Path, Test-Connection, etc.
     r"\bResolve-\w+",          # Resolve-Path, Resolve-DnsName, etc.
     r"\bSelect-\w+",           # Select-Object, Select-String, etc.

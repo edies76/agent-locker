@@ -12,6 +12,7 @@ from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 from config import get_settings
 from models import RiskLevel
+import store
 
 logger = logging.getLogger("agent-lock.telegram")
 settings = get_settings()
@@ -43,6 +44,7 @@ def _build_message(
     intent_score: float,
     analysis: str,
 ) -> str:
+    summary = _summarize_action(tool_name, args)
     risk_emoji = _risk_emoji(risk_level)
     risk_label = {RiskLevel.LOW: "Low", RiskLevel.HIGH: "High", RiskLevel.CRITICAL: "CRITICAL"}[risk_level]
     score_pct = int(intent_score * 100)
@@ -51,24 +53,15 @@ def _build_message(
     filled = int(intent_score * 8)
     score_bar = "🟦" * filled + "⬜" * (8 - filled)
 
-    # Format args cleanly
-    args_lines = []
-    for k, v in args.items():
-        v_str = str(_e(str(v)))
-        if len(v_str) > 80:
-            v_str = f"{v_str[:77]}..."
-        args_lines.append(f"   <b>{_e(k)}:</b> <code>{v_str}</code>")
-    args_formatted = "\n".join(args_lines) if args_lines else "   (no arguments)"
-
     return (
         f"🦞 <b>Agent-Lock</b> — Approval required\n"
         f"\n"
         f"💬 <b>You said:</b>\n"
         f"   <i>{_e(user_intent)}</i>\n"
         f"\n"
-        f"⚙️ <b>The agent wants to execute:</b>\n"
+        f"⚙️ <b>The agent wants to:</b>\n"
+        f"   <b>{_e(summary)}</b>\n"
         f"   <code>{_e(tool_name)}</code>\n"
-        f"{args_formatted}\n"
         f"\n"
         f"{risk_emoji} <b>Risk Level:</b> {risk_label}\n"
         f"🎯 <b>Match Score:</b> {score_bar} {score_pct}%\n"
@@ -79,6 +72,39 @@ def _build_message(
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>Do you authorize this action?</b>"
     )
+
+
+def _summarize_action(tool_name: str, args: dict) -> str:
+    t = (tool_name or "").lower()
+    if t == "exec":
+        cmd = args.get("command") or args.get("cmd") or args.get("code") or args.get("script")
+        if isinstance(cmd, str) and cmd.strip():
+            first = cmd.strip().splitlines()[0]
+            if len(first) > 80:
+                first = first[:77] + "..."
+            return f"Run a shell command: {first}"
+        return "Run a shell command"
+
+    if "write" in t and "path" in args:
+        return f"Write file: {args.get('path')}"
+    if "delete" in t and "path" in args:
+        return f"Delete file: {args.get('path')}"
+    if "read" in t and "path" in args:
+        return f"Read file: {args.get('path')}"
+    return "Execute a tool action"
+
+
+def _format_details(action_id: str, tool_name: str, args: dict) -> str:
+    lines = [f"ℹ️ <b>Details</b>", f"<b>Action ID:</b> <code>{_e(action_id)}</code>", f"<b>Tool:</b> <code>{_e(tool_name)}</code>", ""]
+    if not args:
+        lines.append("(no args)")
+        return "\n".join(lines)
+    for k, v in args.items():
+        v_str = str(_e(str(v)))
+        if len(v_str) > 500:
+            v_str = f"{v_str[:497]}..."
+        lines.append(f"<b>{_e(k)}:</b> <code>{v_str}</code>")
+    return "\n".join(lines)
 
 
 async def send_approval_request(
@@ -105,6 +131,7 @@ async def send_approval_request(
             [
                 InlineKeyboardButton("✅ YES, execute", callback_data=f"YES:{action_id}"),
                 InlineKeyboardButton("❌ NO, block", callback_data=f"NO:{action_id}"),
+                InlineKeyboardButton("ℹ️ Details", callback_data=f"DETAILS:{action_id}"),
             ]
         ])
 
@@ -152,6 +179,19 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     decision, action_id = parts
+
+    if decision == "DETAILS":
+        action = store.get(action_id)
+        tool = action.tool_name if action else "unknown"
+        args = action.args if action else {}
+        try:
+            await query.message.reply_text(
+                text=_format_details(action_id, tool, args),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return
     decision_text = "✅ Authorized" if decision == "YES" else "❌ Blocked"
 
     try:
