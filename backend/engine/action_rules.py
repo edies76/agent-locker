@@ -8,8 +8,10 @@ Filosofía:
   baja el riesgo aunque la herramienta sea "exec" o "bash".
 - Default para herramientas desconocidas: LOW.
 """
+from __future__ import annotations
 import re
 from models import RiskLevel
+
 
 # ── Patrones de riesgo crítico ────────────────────────────────────────────────
 CRITICAL_PATTERNS = [

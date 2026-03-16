@@ -10,6 +10,7 @@ Flujo:
 La idea fundamental: el agente NUNCA ve las credenciales reales.
 Solo recibe un token efímero con los permisos mínimos para UNA operación específica.
 """
+from __future__ import annotations
 import httpx
 import logging
 from config import get_settings

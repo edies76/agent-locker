@@ -18,6 +18,7 @@ import logging
 import httpx
 from dataclasses import dataclass, field
 from config import get_settings
+from typing import Optional
 
 logger = logging.getLogger("agent-lock.intent-validator")
 settings = get_settings()
@@ -75,7 +76,7 @@ async def validate_intent(
     user_intent: str,
     tool_name: str,
     args: dict,
-    raw_command: str | None = None,
+    raw_command: Optional[str] = None,
 ) -> ValidationResult:
     """
     Valida la intención del usuario contra la acción del agente.

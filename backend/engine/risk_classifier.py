@@ -9,6 +9,8 @@ Filosofía:
   realmente bajo (<0.3) y hay contradicciones explícitas.
 - Las políticas manuales (policies.json) son el override final.
 """
+from __future__ import annotations
+
 import json
 import os
 import re

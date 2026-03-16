@@ -8,14 +8,17 @@ cuando intercepta un tool call. El backend:
 3. Si LOW → aprueba automáticamente con token Auth0
 4. Si HIGH/CRITICAL → manda notificación Telegram y pone en PENDING
 """
+
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
 from models import (
-    ToolCallRequest, InterceptResponse,
-    ActionStatus, PendingAction,
+    ToolCallRequest,
+    InterceptResponse,
+    ActionStatus,
+    PendingAction,
 )
 from engine.intent_validator import validate_intent
 from engine.risk_classifier import classify_risk
@@ -78,7 +81,9 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         action.auth_token = auth_token
         store.save(action)
         write_log(action)
-        logger.info(f"✅ Auto-aprobado (LOW) | action_id={action.action_id} | tool={payload.tool_name}")
+        logger.info(
+            f"✅ Auto-aprobado (LOW) | action_id={action.action_id} | tool={payload.tool_name}"
+        )
         return InterceptResponse(
             action_id=action.action_id,
             status=ActionStatus.AUTO_APPROVED,
