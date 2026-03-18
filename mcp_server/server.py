@@ -31,10 +31,7 @@ from .validator import validate_tool_call
 
 
 # Initialize FastMCP server
-mcp = FastMCP(
-    "Agent-Lock",
-    version="0.1.0",
-)
+mcp = FastMCP("Agent-Lock", json_response=True)
 
 
 # Global state
