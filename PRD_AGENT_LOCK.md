@@ -184,9 +184,93 @@ Agent-Lock:
 | Phase | Features |
 |---|---|
 | MVP (Hackathon) | OpenClaw plugin + Auth0 Vault + Intent validation + Telegram notifications |
-| Phase 2 | Support for AutoGPT, other agents + Web dashboard + Policy engine |
+| Phase 2 | **MCP Server for Claude/ChatGPT** + Web dashboard + Policy engine |
 | Phase 3 | Enterprise features: SSO, compliance reports, team management |
 | Phase 4 | AI-powered alternative suggestions + Anomaly detection |
+
+---
+
+## 10.5. MCP Integration: Agent-Lock for Claude & ChatGPT
+
+### What is MCP?
+
+**MCP (Model Context Protocol)** is an open standard created by Anthropic for connecting AI assistants to external tools and data sources. It solves the "N×M" integration problem by providing a universal protocol.
+
+Key concepts:
+- **MCP Server**: Exposes tools, resources, and prompts to AI clients
+- **MCP Client**: Claude Desktop, ChatGPT, or any AI application that connects to MCP servers
+- **Tool**: A function the AI can call (e.g., `read_file`, `execute_command`, `query_database`)
+
+### The Opportunity
+
+Claude Desktop and ChatGPT now support MCP servers. Users can connect these AI assistants to local tools (filesystem, databases, APIs) without custom integrations.
+
+**Problem**: These tools have the same risks as OpenClaw agents—destructive operations, secret exposure, unintended actions.
+
+**Solution**: Agent-Lock as an **MCP Gateway/Proxy** that intercepts tool calls before they reach the actual servers.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     USER'S COMPUTER                          │
+│                                                              │
+│  ┌──────────────┐     ┌─────────────────────────────────┐   │
+│  │ Claude       │     │     Agent-Lock MCP Server       │   │
+│  │ Desktop /    │────▶│  ┌─────────────────────────┐    │   │
+│  │ ChatGPT      │     │  │ Risk Classification     │    │   │
+│  └──────────────┘     │  │ Intent Validation       │    │   │
+│                       │  │ Approval (Telegram)     │    │   │
+│                       │  └──────────┬──────────────┘    │   │
+│                       │             │                    │   │
+│                       │  ┌──────────▼──────────────┐    │   │
+│                       │  │ Allow / Block / Pending │    │   │
+│                       │  └──────────┬──────────────┘    │   │
+│                       └─────────────┼────────────────────┘   │
+│                                     │                        │
+│                       ┌─────────────▼────────────────────┐   │
+│                       │      Target MCP Servers         │   │
+│                       │  ┌────────┐ ┌────────┐ ┌─────┐ │   │
+│                       │  │Filesys.│ │GitHub  │ │DB   │ │   │
+│                       │  └────────┘ └────────┘ └─────┘ │   │
+│                       └─────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. User configures Claude Desktop to use Agent-Lock as an MCP server
+2. Agent-Lock proxies all tool calls to other MCP servers (filesystem, GitHub, etc.)
+3. Before each tool call:
+   - Risk classification (LOW/HIGH/CRITICAL)
+   - Intent validation (if user message available)
+   - Approval request via Telegram for HIGH/CRITICAL
+4. Tool call is allowed, blocked, or pending approval
+
+### Implementation Plan
+
+| Step | Description |
+|---|---|
+| 1 | Create MCP Server skeleton in Python using `mcp` SDK |
+| 2 | Implement tool proxy pattern (receive → validate → forward) |
+| 3 | Reuse existing backend: risk classifier, intent validator, Telegram bot |
+| 4 | Add configuration for target MCP servers (filesystem, GitHub, etc.) |
+| 5 | Package as installable MCP server for Claude Desktop |
+| 6 | Document setup: Claude Desktop config, Telegram setup, policies |
+
+### Benefits
+
+- **Same governance layer** for Claude, ChatGPT, and OpenClaw
+- **One approval flow** (Telegram) for all AI assistants
+- **Unified audit log** across platforms
+- **Consistent risk policies** regardless of which AI is used
+
+### Technical Notes
+
+- MCP uses JSON-RPC 2.0 over stdio or SSE
+- Tools are defined with JSON Schema for input validation
+- Agent-Lock MCP Server will expose the same tools as target servers, but wrapped with validation
+- For Claude Desktop: config in `claude_desktop_config.json`
 
 ---
 
