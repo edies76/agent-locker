@@ -14,7 +14,7 @@ when it intercepts a tool call. The backend:
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from models import (
     ToolCallRequest,
@@ -35,7 +35,7 @@ logger = logging.getLogger("agent-lock.intercept")
 
 
 @router.post("/intercept", response_model=InterceptResponse)
-async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
+async def intercept_tool_call(payload: ToolCallRequest, request: Request) -> InterceptResponse:
     # Normalize user_intent: treat None as empty string so downstream code is always str-safe
     user_intent: str = (payload.user_intent or "").strip()
     intent_preview = user_intent[:80] if user_intent else "(not captured)"
@@ -101,11 +101,17 @@ async def intercept_tool_call(payload: ToolCallRequest) -> InterceptResponse:
         risk_level=risk_level,
         intent_score=intent_result.score,
         analysis=intent_result.analysis,
+        subject_token=payload.subject_token or getattr(request.state, "subject_token", None),
     )
 
     # ── 4. LOW → Auto-approve ─────────────────────────────────────────────────
     if risk_level == RiskLevel.LOW:
-        auth_token = await request_token(payload.tool_name, payload.args, risk_level)
+        auth_token = await request_token(
+            payload.tool_name,
+            payload.args,
+            risk_level,
+            subject_token=action.subject_token,
+        )
         action.status = ActionStatus.AUTO_APPROVED
         action.decided_at = datetime.now(timezone.utc)
         action.auth_token = auth_token

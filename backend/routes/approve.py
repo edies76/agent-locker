@@ -35,7 +35,12 @@ async def approve_action(action_id: str, body: ApprovalRequest) -> StatusRespons
 
     if body.decision == ApprovalDecision.YES:
         # Request minimum permission Auth0 token
-        auth_token = await request_token(action.tool_name, action.args, action.risk_level)
+        auth_token = await request_token(
+            action.tool_name,
+            action.args,
+            action.risk_level,
+            subject_token=getattr(action, "subject_token", None),
+        )
         action.status = ActionStatus.APPROVED
         action.auth_token = auth_token
         logger.info(f"✅ APPROVED by user | action_id={action_id} | tool={action.tool_name}")

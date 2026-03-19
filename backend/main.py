@@ -14,10 +14,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
+from auth.middleware import AuthContextMiddleware
 from routes.intercept import router as intercept_router
 from routes.status import router as status_router
 from routes.approve import router as approve_router
 from routes.logs import router as logs_router
+from routes.auth import router as auth_router
 import notifications.telegram_bot as tg_bot
 import store
 
@@ -70,11 +72,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(AuthContextMiddleware)
+
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(intercept_router, tags=["Intercept"])
 app.include_router(status_router, tags=["Status"])
 app.include_router(approve_router, tags=["Approve"])
 app.include_router(logs_router, tags=["Logs"])
+app.include_router(auth_router, tags=["Auth"])
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────

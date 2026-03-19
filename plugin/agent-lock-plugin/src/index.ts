@@ -43,9 +43,13 @@ function getIntent(key: string): string {
 const pending = new Map<string, (d: "approve" | "deny") => void>();
 
 async function post(url: string, body: unknown) {
+    const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN;
     const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            ...(extraAuth ? { "Authorization": `Bearer ${extraAuth}` } : {}),
+        },
         body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -244,6 +248,7 @@ export default function register(api: any) {
                 agent_id: "openclaw",
                 session_key: sessionKey,
                 raw_command: rawCommand,
+                subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN,
             });
         } catch {
             console.warn(`[Agent-Lock] ❌ Backend unavailable — blocking tool: ${toolName}`);
