@@ -31,6 +31,10 @@ class ToolCallRequest(BaseModel):
     agent_id: Optional[str] = Field(None, description="Agent ID (if available)")
     session_key: Optional[str] = Field(None, description="OpenClaw session key")
     raw_command: Optional[str] = Field(None, description="The exact command as a string, if applicable")
+    subject_token: Optional[str] = Field(
+        default=None,
+        description="End-user or composite (sub+act) bearer token for token-exchange.",
+    )
 
 
 # ── Backend → Plugin Response ───────────────────────────────────────────────
@@ -81,6 +85,7 @@ class PendingAction(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     decided_at: Optional[datetime] = None
     auth_token: Optional[str] = None
+    subject_token: Optional[str] = None
 
 
 # ── Audit Log Record ────────────────────────────────────────────────────────

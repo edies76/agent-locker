@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     auth0_client_id: str = ""
     auth0_client_secret: str = ""
     auth0_audience: str = "https://agent-lock-api"
+    auth0_callback_url: str = "http://localhost:8000/auth/callback"
+    auth0_scope: str = "openid profile email offline_access"
 
     # Telegram
     telegram_bot_token: str = ""
@@ -24,6 +26,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = "dev-secret-key-change-in-production"
+    session_cookie_name: str = "agent_lock_session"
 
     # Logs
     audit_log_path: str = "./logs/audit.jsonl"

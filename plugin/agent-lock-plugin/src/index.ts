@@ -43,9 +43,13 @@ function getIntent(key: string): string {
 const pending = new Map<string, (d: "approve" | "deny") => void>();
 
 async function post(url: string, body: unknown) {
+    const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN;
     const r = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            ...(extraAuth ? { "Authorization": `Bearer ${extraAuth}` } : {}),
+        },
         body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -244,14 +248,38 @@ export default function register(api: any) {
                 agent_id: "openclaw",
                 session_key: sessionKey,
                 raw_command: rawCommand,
+                subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN,
             });
         } catch {
-            console.warn(`[Agent-Lock] ⚠️ Backend unavailable — skipping check: ${toolName}`);
-            return undefined;
+            console.warn(`[Agent-Lock] ❌ Backend unavailable — blocking tool: ${toolName}`);
+            return { block: true, blockReason: "🦞 Agent-Lock backend unavailable — action blocked (fail-closed)." };
         }
 
-        const { action_id, status, analysis } = result;
+        const { action_id, status, analysis, auth_token } = result;
         console.log(`[Agent-Lock] → ${status} | ${String(analysis).slice(0, 80)}`);
+
+        // If the backend already returned an injectable Auth0 token (AUTO_APPROVED path),
+        // attach it to the tool call so downstream integrations (e.g. Gmail) can rely
+        // on Agent-Lock-managed authentication instead of their own OAuth plugins.
+        if (auth_token && typeof auth_token === "string" && auth_token.length > 0) {
+            const token = auth_token;
+            const params = (event.params ?? event.args ?? {}) as any;
+            const headers = (params.headers ?? {}) as any;
+
+            // Standard Authorization header for HTTP / Gmail-style tools.
+            headers["Authorization"] = `Bearer ${token}`;
+
+            // Expose multiple canonical fields for tools that expect a token parameter.
+            params.headers = headers;
+            params.authToken = token;
+            params.auth_token = token;
+            params.access_token = token;
+            params.__agent_lock_token = token;
+
+            event.params = params;
+
+            console.log("[Agent-Lock] 🔑 Auth token injected into tool params (AUTO_APPROVED).");
+        }
 
         if (status === "AUTO_APPROVED" || status === "APPROVED") return undefined;
 
@@ -265,7 +293,28 @@ export default function register(api: any) {
                         if (s.status !== "PENDING") {
                             clearInterval(iv);
                             pending.delete(action_id);
-                            resolve(s.status === "APPROVED" || s.status === "AUTO_APPROVED" ? "approve" : "deny");
+                            // If the action is now approved, inject the token (if any) before resuming.
+                            if (s.status === "APPROVED" || s.status === "AUTO_APPROVED") {
+                                const token = s.auth_token as string | undefined;
+                                if (token && typeof token === "string" && token.length > 0) {
+                                    const params = (event.params ?? event.args ?? {}) as any;
+                                    const headers = (params.headers ?? {}) as any;
+
+                                    headers["Authorization"] = `Bearer ${token}`;
+                                    params.headers = headers;
+                                    params.authToken = token;
+                                    params.auth_token = token;
+                                    params.access_token = token;
+                                    params.__agent_lock_token = token;
+
+                                    event.params = params;
+
+                                    console.log("[Agent-Lock] 🔑 Auth token injected into tool params (APPROVED).");
+                                }
+                                resolve("approve");
+                            } else {
+                                resolve("deny");
+                            }
                         }
                     } catch {}
                     polls += 1;

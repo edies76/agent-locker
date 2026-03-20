@@ -66,7 +66,12 @@ def get_scope_for_tool(tool_name: str, args: dict, risk_level: RiskLevel) -> str
     return base_scope
 
 
-async def request_token(tool_name: str, args: dict, risk_level: RiskLevel) -> str | None:
+async def request_token(
+    tool_name: str,
+    args: dict,
+    risk_level: RiskLevel,
+    subject_token: str | None = None,
+) -> str | None:
     """
     Solicita un token de mínimos permisos a Auth0 Token Vault.
     
@@ -84,13 +89,25 @@ async def request_token(tool_name: str, args: dict, risk_level: RiskLevel) -> st
 
     token_url = f"https://{settings.auth0_domain}/oauth/token"
 
-    payload = {
-        "grant_type": "client_credentials",
-        "client_id": settings.auth0_client_id,
-        "client_secret": settings.auth0_client_secret,
-        "audience": audience,
-        "scope": scope,
-    }
+    if subject_token:
+        payload = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": settings.auth0_client_id,
+            "client_secret": settings.auth0_client_secret,
+            "audience": audience,
+            "scope": scope,
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        }
+    else:
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": settings.auth0_client_id,
+            "client_secret": settings.auth0_client_secret,
+            "audience": audience,
+            "scope": scope,
+        }
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
