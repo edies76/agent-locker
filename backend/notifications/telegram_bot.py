@@ -6,7 +6,9 @@ Uses HTML parse_mode (more robust than MarkdownV2 for dynamic content).
 
 
 import logging
+import os
 from html import escape
+from pathlib import Path
 from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -21,6 +23,69 @@ settings = get_settings()
 
 _approve_callback = None
 _bot_app: Optional[Application] = None
+_lock_file: Optional[Path] = None
+_lock_owner: bool = False
+
+
+def _pid_is_running(pid: int) -> bool:
+    """Best-effort process existence check."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_poll_lock() -> bool:
+    """Ensure only one local backend instance polls Telegram updates."""
+    global _lock_file, _lock_owner
+
+    lock_dir = Path(__file__).resolve().parents[1] / "logs"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    _lock_file = lock_dir / "telegram_poll.lock"
+
+    # If lock exists, verify if owning PID is still alive.
+    if _lock_file.exists():
+        try:
+            pid_text = _lock_file.read_text(encoding="utf-8").strip()
+            existing_pid = int(pid_text) if pid_text else -1
+        except Exception:
+            existing_pid = -1
+
+        if _pid_is_running(existing_pid):
+            logger.warning(
+                "Telegram polling lock is already held by PID=%s. "
+                "Skipping polling in this instance.",
+                existing_pid,
+            )
+            return False
+
+        # Stale lock: remove and continue.
+        try:
+            _lock_file.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Could not remove stale Telegram lock file: %s", _lock_file)
+            return False
+
+    try:
+        _lock_file.write_text(str(os.getpid()), encoding="utf-8")
+        _lock_owner = True
+        return True
+    except Exception as e:
+        logger.warning("Could not create Telegram polling lock file: %s", e)
+        return False
+
+
+def _release_poll_lock() -> None:
+    global _lock_owner
+    if _lock_owner and _lock_file:
+        try:
+            _lock_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    _lock_owner = False
 
 
 def set_approve_callback(cb):
@@ -107,6 +172,49 @@ def _format_details(action_id: str, tool_name: str, args: dict) -> str:
             v_str = f"{v_str[:497]}..."
         lines.append(f"<b>{_e(k)}:</b> <code>{v_str}</code>")
     return "\n".join(lines)
+
+
+async def send_auth_required_notification(
+    action_id: str,
+    tool_name: str,
+    login_url: str,
+) -> bool:
+    """Notifies user when authentication is required to execute a tool."""
+    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        logger.warning("Telegram not configured. Auth notification will not be sent.")
+        return False
+
+    try:
+        bot = Bot(token=settings.telegram_bot_token)
+        message = (
+            f"🔐 <b>Authentication Required</b>\n"
+            f"\n"
+            f"The agent wants to execute:\n"
+            f"   <code>{_e(tool_name)}</code>\n"
+            f"\n"
+            f"To proceed, you need to connect your account:\n"
+            f"\n"
+            f"👉 <a href='{_e(login_url)}'>Click here to log in</a>\n"
+            f"\n"
+            f"After logging in, the action will retry automatically."
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔐 Connect Account", url=login_url)]
+        ])
+
+        await bot.send_message(
+            chat_id=settings.telegram_chat_id,
+            text=message,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        logger.info(f"Auth required notification sent to Telegram | action_id={action_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error sending Telegram auth notification: {e}")
+        return False
 
 
 async def send_approval_request(
@@ -216,6 +324,10 @@ async def start_bot_polling() -> None:
         logger.warning("TELEGRAM_BOT_TOKEN not configured. Telegram bot disabled.")
         return
 
+    if not _acquire_poll_lock():
+        logger.warning("Telegram polling disabled in this process to avoid 409 conflict.")
+        return
+
     _bot_app = (
         Application.builder()
         .token(settings.telegram_bot_token)
@@ -237,3 +349,4 @@ async def stop_bot() -> None:
         await _bot_app.stop()
         await _bot_app.shutdown()
         logger.info("Telegram bot stopped.")
+    _release_poll_lock()

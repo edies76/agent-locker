@@ -1,199 +1,317 @@
 """
-Tool Call Validator for Agent-Lock MCP Server.
+Tool Call Validator for Agent-Lock MCP Gateway.
 
-Integrates with the existing Agent-Lock backend for:
-- Risk classification
-- Intent validation
-- Approval workflow
+Calls the Agent-Lock backend (/intercept) to validate every tool call,
+then polls /status/{action_id} until the human decides or the timeout expires.
+
+Flow:
+    1. POST /intercept
+           → risk classification (Gemini + rules + policies)
+           → if LOW  → AUTO_APPROVED immediately
+           → if HIGH/CRITICAL → PENDING (Telegram notification sent by backend)
+    2. Poll GET /status/{action_id}  (exponential backoff, max 10 s between polls)
+           → APPROVED  → execute tool
+           → BLOCKED   → return blocked decision
+           → timeout   → return timeout decision  (fail-closed)
 """
 
+from __future__ import annotations
+
 import asyncio
-import hashlib
-import time
-import uuid
+import logging
 from typing import Any
 
 import httpx
 
 from .config import AgentLockMCPConfig
 
+logger = logging.getLogger("agent-lock.mcp.validator")
 
-# Risk classification patterns (mirrored from backend/action_rules.py)
-CRITICAL_PATTERNS = [
-    "rm -rf",
-    "rm -r",
-    "del /s",
-    "format",
-    "mkfs",
-    "dd if=",
-    "shutdown",
-    "reboot",
-    "halt",
-    "poweroff",
-    "DROP TABLE",
-    "DROP DATABASE",
-    "TRUNCATE",
-    "DELETE FROM",
-    "GRANT ALL",
-    "chmod 777",
-    "chown root",
-    "> /dev/sd",
-    "os.system",
-    "subprocess.call",
-    "eval(",
-    "exec(",
-    "__import__",
-]
-
-HIGH_PATTERNS = [
-    "sudo",
-    "apt install",
-    "yum install",
-    "brew install",
-    "npm install -g",
-    "pip install",
-    "git push",
-    "git reset --hard",
-    "curl -X POST",
-    "curl -X PUT",
-    "curl -X DELETE",
-    "wget",
-    "scp",
-    "rsync",
-    "ssh",
-    "docker run",
-    "docker exec",
-    "kubectl",
-    "helm",
-    "terraform apply",
-    "ansible-playbook",
-    "write_file",
-    "create_file",
-    "delete_file",
-    "move_file",
-    "copy_file",
-    "execute_command",
-    "run_shell",
-    "bash -c",
-    "powershell -c",
-]
-
-# Tools that are generally safe
-SAFE_TOOLS = [
-    "read_file",
-    "list_directory",
-    "get_file_info",
-    "search_files",
-    "read_resource",
-    "get_status",
-    "list_tools",
-    "list_servers",
-]
+# ── Polling configuration ─────────────────────────────────────────────────────
+_POLL_INITIAL: float = 2.0  # first poll interval (seconds)
+_POLL_MAX: float = 10.0  # maximum poll interval after backoff
+_POLL_BACKOFF: float = 1.5  # multiplier applied after each poll
+_DEFAULT_TIMEOUT: float = 300.0  # 5 minutes
 
 
-def classify_risk(tool_name: str, arguments: dict[str, Any]) -> str:
-    """
-    Classify the risk level of a tool call.
-    
-    Returns: "LOW", "HIGH", or "CRITICAL"
-    """
-    # Check if tool is in safe list
-    if tool_name in SAFE_TOOLS:
-        return "LOW"
-    
-    # Convert arguments to string for pattern matching
-    args_str = str(arguments).lower()
-    tool_str = tool_name.lower()
-    combined = f"{tool_str} {args_str}"
-    
-    # Check for critical patterns
-    for pattern in CRITICAL_PATTERNS:
-        if pattern.lower() in combined:
-            return "CRITICAL"
-    
-    # Check for high-risk patterns
-    for pattern in HIGH_PATTERNS:
-        if pattern.lower() in combined:
-            return "HIGH"
-    
-    # Default to HIGH for any write/execute operations
-    if any(word in tool_name.lower() for word in ["write", "create", "delete", "execute", "run", "send", "post", "put"]):
-        return "HIGH"
-    
-    # Default to LOW for read-only operations
-    return "LOW"
+# ── Public interface ──────────────────────────────────────────────────────────
 
 
-async def validate_tool_call(
+async def validate_and_wait(
     server_name: str,
     tool_name: str,
     arguments: dict[str, Any],
     config: AgentLockMCPConfig,
+    timeout: float = _DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """
-    Validate a tool call through the Agent-Lock backend.
-    
-    Returns:
-        {
-            "risk_level": "LOW" | "HIGH" | "CRITICAL",
-            "decision": "approved" | "blocked" | "pending",
-            "reason": str,
-            "action_id": str (if pending),
-        }
+    Validate a tool call via the Agent-Lock backend and wait for a decision.
+
+    Parameters
+    ----------
+    server_name : str
+        Name of the target MCP server (e.g. "filesystem", "github").
+    tool_name : str
+        Name of the tool being called (e.g. "read_file").
+    arguments : dict
+        Tool arguments.
+    config : AgentLockMCPConfig
+        Gateway configuration (backend URL, policy flags, etc.)
+    timeout : float
+        Maximum seconds to wait for a human approval before giving up.
+
+    Returns
+    -------
+    dict with keys:
+        decision    : "approved" | "blocked" | "timeout"
+        risk_level  : "LOW" | "HIGH" | "CRITICAL" | "UNKNOWN"
+        reason      : human-readable explanation
+        action_id   : str | None
+        auth_token  : str | None   (set when approved via Auth0 Token Vault)
     """
-    # Step 1: Classify risk locally
-    risk_level = classify_risk(tool_name, arguments)
-    
-    # Step 2: Check if auto-approve is enabled for LOW risk
-    if risk_level == "LOW" and config.auto_approve_low_risk:
-        return {
-            "risk_level": risk_level,
-            "decision": "approved",
-            "reason": "Auto-approved: LOW risk operation",
-        }
-    
-    # Step 3: For HIGH/CRITICAL, check with backend
-    action_id = str(uuid.uuid4())
-    
-    # Try to call the backend for full validation
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{config.backend_url}/intercept",
-                json={
-                    "action_id": action_id,
-                    "tool": f"{server_name}.{tool_name}",
-                    "args": arguments,
-                    "user_intent": None,  # MCP doesn't have user intent readily available
-                    "agent_id": "mcp-client",
-                    "platform": "mcp",
-                },
-                timeout=30.0,
+    # The backend identifies the tool as  "{server_name}__{tool_name}"
+    full_tool_name = f"{server_name}__{tool_name}"
+
+    # ── Step 1: POST /intercept ───────────────────────────────────────────────
+    intercept_result = await _call_intercept(full_tool_name, arguments, config)
+    if intercept_result.get("_error"):
+        return _blocked(
+            risk_level="UNKNOWN",
+            reason=intercept_result["_error"],
+        )
+
+    status = intercept_result.get("status", "")
+    risk_level: str = intercept_result.get("risk_level", "UNKNOWN")
+    analysis: str = intercept_result.get("analysis", "")
+    action_id: str | None = intercept_result.get("action_id")
+
+    logger.info(
+        f"intercept: tool={full_tool_name} | status={status} | "
+        f"risk={risk_level} | action_id={action_id}"
+    )
+
+    # ── Step 2: AUTO_APPROVED (LOW risk fast path) ────────────────────────────
+    if status == "AUTO_APPROVED":
+        logger.info(f"✅ Auto-approved (LOW risk) | action_id={action_id}")
+        return _approved(
+            risk_level=risk_level,
+            reason=analysis,
+            action_id=action_id,
+            auth_token=intercept_result.get("auth_token"),
+        )
+
+    # ── Step 3: PENDING → poll until decided ─────────────────────────────────
+    if status == "PENDING":
+        if action_id is None:
+            return _blocked(
+                risk_level=risk_level,
+                reason="Backend returned PENDING but no action_id — cannot poll.",
             )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "risk_level": result.get("risk_level", risk_level),
-                    "decision": result.get("status", "pending"),
-                    "reason": result.get("reason", ""),
-                    "action_id": action_id,
-                }
-    except Exception as e:
-        print(f"[Validator] Backend error: {e}")
-    
-    # Step 4: If backend unavailable, use local rules
-    if risk_level == "CRITICAL":
-        return {
-            "risk_level": risk_level,
-            "decision": "blocked",
-            "reason": "CRITICAL risk operation blocked by policy",
-        }
-    
-    # HIGH risk requires approval
+
+        logger.info(
+            f"⏳ Waiting for Telegram approval | action_id={action_id} | "
+            f"risk={risk_level} | timeout={timeout}s"
+        )
+        return await _poll_until_decided(
+            action_id=action_id,
+            risk_level=risk_level,
+            config=config,
+            timeout=timeout,
+        )
+
+    # ── Step 4: Any other status (BLOCKED, etc.) ──────────────────────────────
+    logger.info(f"🚫 Blocked by backend policy | status={status} | risk={risk_level}")
+    return _blocked(
+        risk_level=risk_level,
+        reason=analysis or f"Blocked by backend (status={status})",
+        action_id=action_id,
+    )
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+async def _call_intercept(
+    full_tool_name: str,
+    arguments: dict[str, Any],
+    config: AgentLockMCPConfig,
+) -> dict[str, Any]:
+    """
+    POST /intercept to the Agent-Lock backend.
+
+    Returns the raw response JSON on success, or a dict with "_error" key
+    on failure so callers can distinguish network errors from backend errors.
+
+    NOTE: The correct field names expected by ToolCallRequest are:
+        tool_name   (not "tool")
+        args        (not "arguments")
+        user_intent (not None — use "" so the backend runs Gemini Intrinsic mode)
+        agent_id    (informational string)
+    """
+    payload = {
+        "tool_name": full_tool_name,
+        "args": arguments,
+        "user_intent": "",  # MCP context has no user message; backend uses Gemini Intrinsic mode
+        "agent_id": "mcp-gateway",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{config.backend_url}/intercept",
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    except httpx.ConnectError:
+        msg = (
+            f"Cannot connect to Agent-Lock backend at {config.backend_url}. "
+            "Make sure the backend is running (`python agent-lock.py start`). "
+            "Action blocked (fail-closed)."
+        )
+        logger.error(msg)
+        return {"_error": msg}
+
+    except httpx.TimeoutException:
+        msg = f"Timeout calling {config.backend_url}/intercept. Action blocked (fail-closed)."
+        logger.error(msg)
+        return {"_error": msg}
+
+    except httpx.HTTPStatusError as exc:
+        msg = (
+            f"Backend /intercept returned HTTP {exc.response.status_code}: "
+            f"{exc.response.text[:200]}. Action blocked."
+        )
+        logger.error(msg)
+        return {"_error": msg}
+
+    except Exception as exc:
+        msg = (
+            f"Unexpected error calling /intercept: {exc}. Action blocked (fail-closed)."
+        )
+        logger.error(msg)
+        return {"_error": msg}
+
+
+async def _poll_until_decided(
+    action_id: str,
+    risk_level: str,
+    config: AgentLockMCPConfig,
+    timeout: float,
+) -> dict[str, Any]:
+    """
+    Poll GET /status/{action_id} with exponential backoff until the human
+    approves or blocks the action, or the timeout is reached.
+
+    Backoff schedule:
+        poll 1 → wait 2 s
+        poll 2 → wait 3 s
+        poll 3 → wait 4.5 s
+        ...
+        poll N → wait 10 s  (capped at _POLL_MAX)
+    """
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    interval = _POLL_INITIAL
+
+    poll_count = 0
+    while loop.time() < deadline:
+        await asyncio.sleep(interval)
+        poll_count += 1
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{config.backend_url}/status/{action_id}")
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            logger.warning(f"Status poll #{poll_count} failed (will retry): {exc}")
+            # Don't grow the interval on network errors — retry soon.
+            interval = min(interval, _POLL_INITIAL)
+            continue
+
+        current_status: str = data.get("status", "PENDING")
+
+        if current_status == "APPROVED":
+            auth_token: str | None = data.get("auth_token")
+            logger.info(
+                f"✅ Approved by user via Telegram | action_id={action_id} | "
+                f"poll_count={poll_count}"
+            )
+            return _approved(
+                risk_level=risk_level,
+                reason="Approved by user via Telegram",
+                action_id=action_id,
+                auth_token=auth_token,
+            )
+
+        if current_status == "BLOCKED":
+            logger.info(
+                f"🚫 Blocked by user via Telegram | action_id={action_id} | "
+                f"poll_count={poll_count}"
+            )
+            return _blocked(
+                risk_level=risk_level,
+                reason="Blocked by user via Telegram",
+                action_id=action_id,
+            )
+
+        # Still PENDING — grow the interval (exponential backoff, capped)
+        interval = min(interval * _POLL_BACKOFF, _POLL_MAX)
+        remaining = max(0.0, deadline - loop.time())
+        logger.debug(
+            f"  poll #{poll_count} → still PENDING | "
+            f"next_in={interval:.1f}s | remaining={remaining:.0f}s"
+        )
+
+    # ── Timeout ───────────────────────────────────────────────────────────────
+    logger.warning(
+        f"⏱️ Approval timeout after {timeout}s | action_id={action_id} | "
+        f"poll_count={poll_count}"
+    )
     return {
+        "decision": "timeout",
         "risk_level": risk_level,
-        "decision": "pending",
-        "reason": f"{risk_level} risk operation requires approval",
+        "reason": (
+            f"No Telegram response received within {int(timeout)} seconds. "
+            "Action cancelled (fail-closed). "
+            "You can still approve via Telegram and retry the request."
+        ),
         "action_id": action_id,
+        "auth_token": None,
+    }
+
+
+# ── Result constructors ───────────────────────────────────────────────────────
+
+
+def _approved(
+    *,
+    risk_level: str,
+    reason: str,
+    action_id: str | None = None,
+    auth_token: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "decision": "approved",
+        "risk_level": risk_level,
+        "reason": reason,
+        "action_id": action_id,
+        "auth_token": auth_token,
+    }
+
+
+def _blocked(
+    *,
+    risk_level: str,
+    reason: str,
+    action_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "decision": "blocked",
+        "risk_level": risk_level,
+        "reason": reason,
+        "action_id": action_id,
+        "auth_token": None,
     }

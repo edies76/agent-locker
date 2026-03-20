@@ -51,6 +51,39 @@ TOOL_SCOPE_MAP: dict[str, str] = {
 }
 
 
+# Tools that should only run with an authenticated end-user context.
+# Local filesystem/shell actions are intentionally excluded.
+USER_AUTH_REQUIRED_TOOLS = {
+    "send_email",
+    "http_request",
+}
+
+
+USER_AUTH_REQUIRED_KEYWORDS = (
+    "email",
+    "gmail",
+    "mail",
+    "calendar",
+    "drive",
+    "slack",
+    "notion",
+)
+
+
+def requires_user_auth(tool_name: str, args: dict) -> bool:
+    """Returns True when a tool should require an authenticated end-user token."""
+    t = (tool_name or "").strip().lower()
+
+    if t in USER_AUTH_REQUIRED_TOOLS:
+        return True
+
+    # Heuristic for integrations that are not mapped explicitly yet.
+    if any(k in t for k in USER_AUTH_REQUIRED_KEYWORDS):
+        return True
+
+    return False
+
+
 def get_scope_for_tool(tool_name: str, args: dict, risk_level: RiskLevel) -> str:
     """Determina el scope mínimo necesario para una herramienta."""
     base_scope = TOOL_SCOPE_MAP.get(tool_name, "read:generic")

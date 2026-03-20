@@ -23,5 +23,6 @@ async def get_status(action_id: str) -> StatusResponse:
         action_id=action.action_id,
         status=action.status,
         auth_token=action.auth_token,
+        login_url=action.login_url,
         decided_at=action.decided_at,
     )

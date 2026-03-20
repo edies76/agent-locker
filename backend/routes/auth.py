@@ -37,14 +37,32 @@ async def login() -> RedirectResponse:
 
 
 @router.get("/callback")
-async def callback(request: Request, code: str, state: str | None = None):
+async def callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+):
     """
     Handles Auth0 redirect and exchanges the authorization code for tokens.
     Stores session server-side and issues a session cookie.
     """
+    if error:
+        return JSONResponse(
+            {
+                "error": error,
+                "error_description": error_description,
+            },
+            status_code=400,
+        )
+
     cookie_state = request.cookies.get("agent_lock_state")
     if not cookie_state or not state or cookie_state != state:
         return JSONResponse({"error": "invalid_state"}, status_code=400)
+
+    if not code:
+        return JSONResponse({"error": "missing_code"}, status_code=400)
 
     token_url = f"https://{settings.auth0_domain}/oauth/token"
     payload = {

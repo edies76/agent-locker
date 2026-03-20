@@ -24,10 +24,11 @@ from models import (
 )
 from engine.intent_validator import validate_intent, ValidationResult
 from engine.risk_classifier import classify_risk
-from auth.token_vault import request_token
-from notifications.telegram_bot import send_approval_request
+from auth.token_vault import request_token, requires_user_auth
+from notifications.telegram_bot import send_approval_request, send_auth_required_notification
 from audit.audit_logger import write_log
 from models import RiskLevel
+from config import get_settings
 import store
 
 router = APIRouter()
@@ -103,6 +104,29 @@ async def intercept_tool_call(payload: ToolCallRequest, request: Request) -> Int
         analysis=intent_result.analysis,
         subject_token=payload.subject_token or getattr(request.state, "subject_token", None),
     )
+
+    # Tools tied to user-owned integrations must have end-user auth context.
+    if requires_user_auth(payload.tool_name, payload.args) and not action.subject_token:
+        login_url = f"{get_settings().backend_url}/auth/login"
+        action.status = ActionStatus.AUTH_REQUIRED
+        action.login_url = login_url
+        store.save(action)
+
+        await send_auth_required_notification(
+            action_id=action.action_id,
+            tool_name=payload.tool_name,
+            login_url=login_url,
+        )
+
+        logger.info(f"🔐 Auth required | action_id={action.action_id} | tool={payload.tool_name}")
+        return InterceptResponse(
+            action_id=action.action_id,
+            status=ActionStatus.AUTH_REQUIRED,
+            risk_level=risk_level,
+            intent_score=intent_result.score,
+            analysis="User authentication required to proceed",
+            login_url=login_url,
+        )
 
     # ── 4. LOW → Auto-approve ─────────────────────────────────────────────────
     if risk_level == RiskLevel.LOW:

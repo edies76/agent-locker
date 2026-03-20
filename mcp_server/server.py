@@ -1,269 +1,510 @@
 """
-Agent-Lock MCP Server
+Agent-Lock MCP Gateway — Complete Implementation
 
-An MCP server that acts as a gateway/proxy for other MCP servers,
-adding governance through risk classification, intent validation, and approvals.
+Acts as an MCP proxy between Claude Desktop / ChatGPT and any target MCP server,
+adding a full governance layer before every tool call.
+
+Architecture:
+    Claude Desktop ──► Agent-Lock MCP Gateway ──► Target MCP Servers
+                               │
+                               ▼
+                    POST /intercept  (backend)
+                        ↓ Gemini + Risk Classifier
+                        ↓ Telegram notification  (HIGH / CRITICAL)
+                    GET  /status polling
+                        ↓ APPROVED → execute on target server
+                        ↓ BLOCKED  → return error to Claude
+
+Tool naming convention:
+    {server_name}__{tool_name}
+    e.g.  filesystem__read_file   github__create_issue
+
+Management tools (always available):
+    agent_lock__status        — gateway health + config summary
+    agent_lock__list_servers  — connected target servers
 
 Usage:
-    # Run with stdio transport (for Claude Desktop)
-    uv run mcp_server/server.py
-    
-    # Run with HTTP transport (for testing)
-    uv run mcp_server/server.py --transport http
+    # stdio transport  (Claude Desktop)
+    python -m mcp_server
 
-Configuration:
-    Set AGENT_LOCK_MCP_CONFIG env var to point to config JSON file.
-    Default: ~/.agent-lock/mcp_config.json
+    # HTTP transport  (testing / ChatGPT)
+    python -m mcp_server --transport http --port 8001
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 import sys
-from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP, Context
+import mcp.types as types
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
 
-from .config import AgentLockMCPConfig, TargetServer
+from .config import AgentLockMCPConfig, load_config
 from .proxy import ToolProxy
-from .validator import validate_tool_call
+from .validator import validate_and_wait
+
+# ── Logging (stderr so it doesn't pollute the stdio MCP stream) ───────────────
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("agent-lock.mcp.server")
+
+# Separator between server name and tool name in the MCP tool namespace
+TOOL_SEP = "__"
+# Reserved prefix for Agent-Lock's own management tools
+MGMT_PREFIX = "agent_lock__"
 
 
-# Initialize FastMCP server
-mcp = FastMCP("Agent-Lock", json_response=True)
+# ── Management tool definitions ───────────────────────────────────────────────
 
 
-# Global state
-config: AgentLockMCPConfig | None = None
-tool_proxy: ToolProxy | None = None
+def _management_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="agent_lock__status",
+            description=(
+                "Get Agent-Lock MCP Gateway status: version, connected target servers, "
+                "backend URL, and current policy settings."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(
+            name="agent_lock__list_servers",
+            description=(
+                "List all configured target MCP servers, showing name, enabled flag, "
+                "connection status, and the command used to launch each one."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+    ]
 
 
-def load_config() -> AgentLockMCPConfig:
-    """Load configuration from file or create default."""
-    config_path = os.environ.get(
-        "AGENT_LOCK_MCP_CONFIG",
-        str(Path.home() / ".agent-lock" / "mcp_config.json")
-    )
-    
-    path = Path(config_path)
-    if path.exists():
-        print(f"[Agent-Lock] Loading config from {path}", file=sys.stderr)
-        return AgentLockMCPConfig.from_file(path)
-    else:
-        print(f"[Agent-Lock] Config not found at {path}, using defaults", file=sys.stderr)
-        # Create default config file
-        default_config = AgentLockMCPConfig()
-        default_config.to_file(path)
-        print(f"[Agent-Lock] Created default config at {path}", file=sys.stderr)
-        return default_config
+async def _handle_management(
+    name: str,
+    config: AgentLockMCPConfig,
+    proxy: ToolProxy,
+) -> list[types.TextContent]:
+    """Dispatch Agent-Lock management tool calls."""
 
-
-@mcp.tool()
-async def execute_tool(
-    server_name: str,
-    tool_name: str,
-    arguments: dict[str, Any],
-    ctx: Context,
-) -> dict[str, Any]:
-    """
-    Execute a tool on a target MCP server after validation.
-    
-    This is the main entry point for all tool calls through Agent-Lock.
-    It will:
-    1. Validate the tool call (risk classification, intent check)
-    2. Request approval if needed (via Telegram)
-    3. Forward to target server if approved
-    4. Return the result
-    
-    Args:
-        server_name: Name of the target MCP server (e.g., "filesystem", "github")
-        tool_name: Name of the tool to call (e.g., "read_file", "create_issue")
-        arguments: Arguments to pass to the tool
-        ctx: MCP context (injected automatically)
-    
-    Returns:
-        Tool execution result or error message
-    """
-    global tool_proxy, config
-    
-    if tool_proxy is None:
-        return {"error": "Agent-Lock not initialized"}
-    
-    # Log the incoming tool call
-    await ctx.info(f"Tool call: {server_name}.{tool_name}")
-    
-    # Validate the tool call
-    validation = await validate_tool_call(
-        server_name=server_name,
-        tool_name=tool_name,
-        arguments=arguments,
-        config=config,
-    )
-    
-    risk_level = validation.get("risk_level", "HIGH")
-    decision = validation.get("decision", "pending")
-    
-    # Log risk level
-    await ctx.info(f"Risk level: {risk_level}, Decision: {decision}")
-    
-    # Handle based on decision
-    if decision == "blocked":
-        return {
-            "error": "Tool call blocked by Agent-Lock",
-            "reason": validation.get("reason", "Risk too high"),
-            "risk_level": risk_level,
+    if name == "agent_lock__status":
+        connected = proxy.get_server_names()
+        payload = {
+            "name": "Agent-Lock MCP Gateway",
+            "version": "1.0.0",
+            "backend_url": config.backend_url,
+            "target_servers": {
+                "configured": len(config.target_servers),
+                "connected": len(connected),
+                "names": connected,
+            },
+            "policies": {
+                "auto_approve_low_risk": config.auto_approve_low_risk,
+                "require_approval_for_high": config.require_approval_for_high,
+                "require_approval_for_critical": config.require_approval_for_critical,
+                "approval_timeout_seconds": config.approval_timeout_seconds,
+            },
         }
-    
-    if decision == "pending":
-        # Request approval via Telegram
-        await ctx.info("Requesting approval via Telegram...")
-        # TODO: Integrate with Telegram bot from backend
-        # For now, return pending status
-        return {
-            "status": "pending_approval",
-            "message": "Approval request sent to Telegram. Waiting for user decision...",
-            "action_id": validation.get("action_id"),
-        }
-    
-    # Decision is "approved" - execute the tool
-    if decision == "approved":
-        await ctx.info(f"Executing {server_name}.{tool_name}...")
-        
-        result = await tool_proxy.execute_tool(
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(payload, indent=2, ensure_ascii=False),
+            )
+        ]
+
+    if name == "agent_lock__list_servers":
+        connected = proxy.get_server_names()
+        servers = []
+        for s in config.target_servers:
+            servers.append(
+                {
+                    "name": s.name,
+                    "enabled": s.enabled,
+                    "connected": s.name in connected,
+                    "command": f"{s.command} {' '.join(s.args)}".strip(),
+                }
+            )
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps({"servers": servers}, indent=2, ensure_ascii=False),
+            )
+        ]
+
+    return [
+        types.TextContent(
+            type="text",
+            text=f"❌ Unknown management tool: {name}",
+        )
+    ]
+
+
+# ── Core server builder ───────────────────────────────────────────────────────
+
+
+def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
+    """
+    Wire up the low-level MCP Server with list_tools and call_tool handlers.
+
+    Using the low-level mcp.server.Server (not FastMCP) gives us full control
+    over dynamic tool discovery: we forward the real schemas of every target
+    tool so Claude sees the correct argument types at all times.
+    """
+    server = Server("agent-lock")
+
+    # ── list_tools ────────────────────────────────────────────────────────────
+    @server.list_tools()
+    async def handle_list_tools() -> list[types.Tool]:
+        tools: list[types.Tool] = []
+
+        # Proxied tools — one entry per tool in each connected target server
+        all_tools = await proxy.list_all_tools()
+        for server_name, server_tools in all_tools.items():
+            for tool in server_tools:
+                raw_name: str = tool.get("name", "")
+                if not raw_name:
+                    continue
+                proxied_name = f"{server_name}{TOOL_SEP}{raw_name}"
+                tools.append(
+                    types.Tool(
+                        name=proxied_name,
+                        description=(
+                            f"[{server_name}] "
+                            f"{tool.get('description', 'No description available.')}"
+                        ),
+                        inputSchema=tool.get(
+                            "inputSchema",
+                            {"type": "object", "properties": {}},
+                        ),
+                    )
+                )
+
+        # Agent-Lock management tools (always present)
+        tools.extend(_management_tools())
+
+        logger.info(
+            f"list_tools → {len(tools)} tools "
+            f"({len(tools) - len(_management_tools())} proxied, "
+            f"{len(_management_tools())} management)"
+        )
+        return tools
+
+    # ── call_tool ─────────────────────────────────────────────────────────────
+    @server.call_tool()
+    async def handle_call_tool(
+        name: str,
+        arguments: dict[str, Any] | None,
+    ) -> list[types.TextContent]:
+        args: dict[str, Any] = arguments or {}
+        logger.info(f"call_tool: {name}  args_keys={list(args.keys())}")
+
+        # ── Management tools ──────────────────────────────────────────────────
+        if name.startswith(MGMT_PREFIX):
+            return await _handle_management(name, config, proxy)
+
+        # ── Proxied tools ─────────────────────────────────────────────────────
+        if TOOL_SEP not in name:
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        f"❌ Unknown tool: '{name}'.\n"
+                        "Call `agent_lock__list_servers` to see available servers, "
+                        "or `agent_lock__status` for gateway info."
+                    ),
+                )
+            ]
+
+        server_name, tool_name = name.split(TOOL_SEP, 1)
+
+        # ── 1. Validate via backend (risk + optional Telegram approval) ───────
+        logger.info(f"Validating {server_name}.{tool_name} ...")
+        validation = await validate_and_wait(
             server_name=server_name,
             tool_name=tool_name,
-            arguments=arguments,
+            arguments=args,
+            config=config,
         )
-        
-        return result
-    
-    return {"error": "Unknown decision state"}
+
+        decision = validation.get("decision", "blocked")
+        risk_level = validation.get("risk_level", "UNKNOWN")
+        reason = validation.get("reason", "")
+        action_id = validation.get("action_id")
+
+        logger.info(
+            f"Decision={decision} | risk={risk_level} | "
+            f"action_id={action_id} | reason={reason[:80]}"
+        )
+
+        # ── Blocked ───────────────────────────────────────────────────────────
+        if decision == "blocked":
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        "🦞 **Agent-Lock blocked this action**\n\n"
+                        f"- **Tool:** `{server_name}.{tool_name}`\n"
+                        f"- **Risk level:** `{risk_level}`\n"
+                        f"- **Reason:** {reason}\n"
+                        f"- **Action ID:** `{action_id or 'N/A'}`"
+                    ),
+                )
+            ]
+
+        # ── Approval timeout ──────────────────────────────────────────────────
+        if decision == "timeout":
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        "⏱️ **Approval timeout — action cancelled**\n\n"
+                        f"- **Tool:** `{server_name}.{tool_name}`\n"
+                        f"- **Action ID:** `{action_id or 'N/A'}`\n\n"
+                        "No response was received within the allowed window. "
+                        "You can still approve via Telegram and retry the request."
+                    ),
+                )
+            ]
+
+        # ── Unexpected state guard ────────────────────────────────────────────
+        if decision != "approved":
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        f"❌ Unexpected validation state: `{decision}`. "
+                        "Action not executed."
+                    ),
+                )
+            ]
+
+        # ── 2. Execute on target server ───────────────────────────────────────
+        logger.info(f"Executing {server_name}.{tool_name} ...")
+        result = await proxy.execute_tool(server_name, tool_name, args)
+
+        if not result.get("success"):
+            return [
+                types.TextContent(
+                    type="text",
+                    text=(
+                        f"❌ Execution error on `{server_name}.{tool_name}`:\n"
+                        f"{result.get('error', 'Unknown error')}"
+                    ),
+                )
+            ]
+
+        # ── 3. Normalise target server result to MCP TextContent ──────────────
+        raw = result.get("result", {})
+        return _normalise_result(raw)
+
+    return server
 
 
-@mcp.tool()
-async def list_available_tools(ctx: Context) -> dict[str, Any]:
+def _normalise_result(raw: Any) -> list[types.TextContent]:
     """
-    List all available tools from all connected target MCP servers.
-    
-    Returns:
-        Dictionary mapping server names to their available tools
+    Convert whatever the target MCP server returned into a list of TextContent.
+
+    Target servers can return:
+      - {"content": [{"type": "text", "text": "..."}]}  ← standard MCP
+      - {"content": [{"type": "resource", ...}]}
+      - A plain string
+      - A plain dict / list
     """
-    global tool_proxy
-    
-    if tool_proxy is None:
-        return {"error": "Agent-Lock not initialized"}
-    
-    tools = await tool_proxy.list_all_tools()
-    return {"servers": tools}
+    if isinstance(raw, str):
+        return [types.TextContent(type="text", text=raw)]
+
+    if isinstance(raw, dict):
+        content = raw.get("content")
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(item.get("text", ""))
+                    else:
+                        parts.append(json.dumps(item, ensure_ascii=False))
+                else:
+                    parts.append(str(item))
+            return [types.TextContent(type="text", text="\n".join(parts))]
+        # Plain dict with no content key
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(raw, indent=2, ensure_ascii=False),
+            )
+        ]
+
+    if isinstance(raw, list):
+        return [
+            types.TextContent(
+                type="text",
+                text=json.dumps(raw, indent=2, ensure_ascii=False),
+            )
+        ]
+
+    return [types.TextContent(type="text", text=str(raw))]
 
 
-@mcp.tool()
-async def list_servers(ctx: Context) -> dict[str, Any]:
+# ── Server lifecycle ──────────────────────────────────────────────────────────
+
+
+async def run_server(config: AgentLockMCPConfig) -> None:
     """
-    List all configured target MCP servers.
-    
-    Returns:
-        List of server names and their status
+    Initialise target-server connections, build the MCP server,
+    and run the stdio transport loop.
     """
-    global config
-    
-    if config is None:
-        return {"error": "Agent-Lock not initialized"}
-    
-    servers = []
-    for server in config.target_servers:
-        servers.append({
-            "name": server.name,
-            "enabled": server.enabled,
-            "command": server.command,
-        })
-    
-    return {"servers": servers}
+    logger.info("🦞 Agent-Lock MCP Gateway starting ...")
+
+    # Connect to all enabled target servers in parallel
+    proxy = ToolProxy(config.target_servers)
+    await proxy.initialize()
+
+    connected = proxy.get_server_names()
+    logger.info(
+        f"Target servers: {len(connected)}/{len(config.target_servers)} connected "
+        f"→ {connected}"
+    )
+
+    server = _build_server(config, proxy)
+
+    logger.info(f"🦞 Agent-Lock MCP Gateway ready  | backend={config.backend_url}")
+
+    try:
+        # stdio transport — standard for Claude Desktop
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    finally:
+        logger.info("Shutting down proxy connections ...")
+        await proxy.shutdown()
+        logger.info("Agent-Lock MCP Gateway stopped.")
 
 
-@mcp.resource("agent-lock://status")
-def get_status() -> str:
-    """Get Agent-Lock MCP Server status."""
-    global config, tool_proxy
-    
-    status = {
-        "name": "Agent-Lock MCP Server",
-        "version": "0.1.0",
-        "config_loaded": config is not None,
-        "proxy_ready": tool_proxy is not None,
-        "target_servers": len(config.target_servers) if config else 0,
-        "backend_url": config.backend_url if config else None,
-    }
-    
-    return json.dumps(status, indent=2)
-
-
-@mcp.resource("agent-lock://config")
-def get_config() -> str:
-    """Get current Agent-Lock configuration."""
-    global config
-    
-    if config is None:
-        return json.dumps({"error": "Config not loaded"})
-    
-    return json.dumps({
-        "backend_url": config.backend_url,
-        "auto_approve_low_risk": config.auto_approve_low_risk,
-        "require_approval_for_high": config.require_approval_for_high,
-        "require_approval_for_critical": config.require_approval_for_critical,
-        "target_servers": [
-            {"name": s.name, "enabled": s.enabled}
-            for s in config.target_servers
-        ],
-    }, indent=2)
-
-
-async def initialize() -> None:
-    """Initialize Agent-Lock MCP Server."""
-    global config, tool_proxy
-    
-    print("[Agent-Lock] Initializing...", file=sys.stderr)
-    
-    # Load configuration
-    config = load_config()
-    
-    # Initialize tool proxy
-    tool_proxy = ToolProxy(config.target_servers)
-    await tool_proxy.initialize()
-    
-    print(f"[Agent-Lock] Initialized with {len(config.target_servers)} target servers", file=sys.stderr)
+# ── CLI entry point ───────────────────────────────────────────────────────────
 
 
 def main() -> None:
-    """Main entry point."""
+    """
+    Entry point for `python -m mcp_server` and the `__main__.py` shim.
+
+    Supports two transports:
+      --transport stdio   (default) — for Claude Desktop
+      --transport http    — for testing / ChatGPT plugins
+    """
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Agent-Lock MCP Server")
+
+    parser = argparse.ArgumentParser(
+        description="Agent-Lock MCP Gateway — governance layer for Claude Desktop & ChatGPT",
+    )
     parser.add_argument(
         "--transport",
         choices=["stdio", "http"],
         default="stdio",
-        help="Transport protocol to use",
+        help="Transport to use (default: stdio for Claude Desktop)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port for HTTP transport",
+        default=8001,
+        help="Port for HTTP transport (default: 8001)",
     )
-    
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to mcp_config.json (default: ~/.agent-lock/mcp_config.json)",
+    )
     args = parser.parse_args()
-    
-    # Run initialization before server starts
-    asyncio.run(initialize())
-    
+
+    config = load_config(args.config)
+
+    logger.info(
+        f"Config: {len(config.target_servers)} target servers | "
+        f"backend={config.backend_url}"
+    )
+
     if args.transport == "stdio":
-        # stdio transport for Claude Desktop
-        mcp.run()
+        try:
+            asyncio.run(run_server(config))
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user.")
     else:
-        # HTTP transport for testing
-        mcp.run(transport="streamable-http", port=args.port)
+        # HTTP / streamable-http transport (for development / ChatGPT testing)
+        # Re-use FastMCP's HTTP runner since the low-level Server doesn't ship one.
+        # We wrap our existing logic inside a minimal FastMCP app.
+        _run_http(config, args.port)
+
+
+def _run_http(config: AgentLockMCPConfig, port: int) -> None:
+    """
+    Run Agent-Lock as an HTTP MCP server for testing or ChatGPT integration.
+
+    We spin up the full async runtime first (to connect to target servers),
+    then hand off to FastMCP's HTTP transport.
+    """
+    from mcp.server.fastmcp import FastMCP  # noqa: F401
+
+    logger.info(f"Starting HTTP transport on port {port} ...")
+
+    # We need the proxy to be initialised before FastMCP starts serving.
+    proxy_holder: dict[str, ToolProxy] = {}
+
+    async def _init() -> None:
+        p = ToolProxy(config.target_servers)
+        await p.initialize()
+        proxy_holder["proxy"] = p
+
+    asyncio.run(_init())
+    proxy = proxy_holder["proxy"]
+
+    fmcp = FastMCP("agent-lock", json_response=True)
+
+    @fmcp.tool()
+    async def execute_tool(
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute a tool on a target MCP server after Agent-Lock validation."""
+        from .validator import validate_and_wait as _vaw
+
+        validation = await _vaw(server_name, tool_name, arguments, config)
+        if validation["decision"] != "approved":
+            return {
+                "blocked": True,
+                "decision": validation["decision"],
+                "risk_level": validation.get("risk_level"),
+                "reason": validation.get("reason"),
+            }
+        result = await proxy.execute_tool(server_name, tool_name, arguments)
+        return result
+
+    @fmcp.tool()
+    async def list_available_tools() -> dict[str, Any]:
+        """List all tools from all connected target MCP servers."""
+        return {"servers": await proxy.list_all_tools()}
+
+    @fmcp.tool()
+    async def gateway_status() -> dict[str, Any]:
+        """Agent-Lock gateway status."""
+        return {
+            "backend_url": config.backend_url,
+            "connected_servers": proxy.get_server_names(),
+        }
+
+    import os
+
+    os.environ.setdefault("FASTMCP_PORT", str(port))
+    fmcp.run(transport="sse")
 
 
 if __name__ == "__main__":

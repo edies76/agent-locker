@@ -16,6 +16,7 @@ class ActionStatus(str, Enum):
     APPROVED = "APPROVED"
     BLOCKED = "BLOCKED"
     AUTO_APPROVED = "AUTO_APPROVED"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
 
 
 # ── OpenClaw Plugin → Backend Payload ───────────────────────────────────────
@@ -47,6 +48,7 @@ class InterceptResponse(BaseModel):
     intent_score: float = Field(..., ge=0.0, le=1.0, description="0=no match, 1=perfect match")
     analysis: str = Field(..., description="Readable explanation of the analysis")
     auth_token: Optional[str] = Field(None, description="Minimum permission Auth0 token (only if AUTO_APPROVED)")
+    login_url: Optional[str] = Field(None, description="Login URL if AUTH_REQUIRED")
 
 
 class StatusResponse(BaseModel):
@@ -54,6 +56,7 @@ class StatusResponse(BaseModel):
     action_id: str
     status: ActionStatus
     auth_token: Optional[str] = Field(None, description="Injectable Auth0 token (only if APPROVED)")
+    login_url: Optional[str] = Field(None, description="Login URL if AUTH_REQUIRED")
     decided_at: Optional[datetime] = None
 
 
@@ -86,6 +89,7 @@ class PendingAction(BaseModel):
     decided_at: Optional[datetime] = None
     auth_token: Optional[str] = None
     subject_token: Optional[str] = None
+    login_url: Optional[str] = None
 
 
 # ── Audit Log Record ────────────────────────────────────────────────────────

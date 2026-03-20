@@ -1,38 +1,73 @@
-# Agent-Lock MCP Server
+# Agent-Lock MCP Gateway
 
-MCP (Model Context Protocol) server that acts as a **governance gateway** for Claude Desktop, ChatGPT, and other MCP clients.
+MCP (Model Context Protocol) server that acts as a **governance gateway** for Claude Desktop, ChatGPT, and any other MCP-compatible client.
 
 ## What This Does
 
-Agent-Lock MCP Server sits between your AI assistant (Claude Desktop, ChatGPT) and other MCP servers (filesystem, GitHub, databases, etc.):
+Agent-Lock MCP Gateway sits between your AI assistant and other MCP servers, intercepting every tool call before it executes:
 
 ```
-Claude Desktop → Agent-Lock MCP → Target MCP Servers
-                     │
-                     ▼
-              Risk Classification
-              Intent Validation
-              Approval (Telegram)
+Claude Desktop ──► Agent-Lock MCP Gateway ──► Target MCP Servers
+                           │                   ├── filesystem
+                           ▼                   ├── github
+                  Risk Classification          ├── postgres
+                  Gemini Intent Check          └── ...
+                  Telegram Approval
 ```
 
-**Every tool call is validated before execution:**
-- LOW risk → auto-approved
-- HIGH risk → requires Telegram approval
-- CRITICAL risk → blocked or requires approval
+**Every tool call goes through the governance pipeline:**
+- `LOW` risk → auto-approved instantly (no latency tax)
+- `HIGH` risk → Telegram notification, waits for your ✅ / ❌
+- `CRITICAL` risk → Telegram notification (or blocked by policy)
 
-## Installation
+---
+
+## Tool Naming Convention
+
+Agent-Lock exposes all target server tools using a **`{server_name}__{tool_name}`** naming scheme:
+
+| Original tool | Exposed as |
+|---|---|
+| `filesystem` → `read_file` | `filesystem__read_file` |
+| `github` → `create_issue` | `github__create_issue` |
+| `postgres` → `query` | `postgres__query` |
+
+This means Claude sees the **real tool schemas** with the correct argument types and descriptions — no generic wrapper needed.
+
+**Built-in management tools** (always available):
+
+| Tool | Description |
+|---|---|
+| `agent_lock__status` | Gateway health, backend URL, policy settings |
+| `agent_lock__list_servers` | Connected target servers and their status |
+
+---
+
+## Quick Start
 
 ### 1. Install Dependencies
 
 ```bash
-cd c:\Nueva-carpeta\agent-lock
+cd C:\Nueva-carpeta\agent-lock
 pip install -r requirements.txt
 ```
 
-### 2. Create Configuration
+### 2. Start the Backend
 
-The server will create a default config at `~/.agent-lock/mcp_config.json` on first run.
+The MCP gateway delegates validation to the Agent-Lock FastAPI backend:
 
+```bash
+# From the project root
+python agent-lock.py start
+```
+
+The backend must be running for risk classification, Gemini analysis, Telegram
+notifications, and audit logging to work. If the backend is unreachable, all
+tool calls are **blocked** (fail-closed).
+
+### 3. Create / Edit Configuration
+
+On first run the gateway creates a default config at `~/.agent-lock/mcp_config.json`.
 Edit it to add your target MCP servers:
 
 ```json
@@ -41,53 +76,59 @@ Edit it to add your target MCP servers:
     {
       "name": "filesystem",
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-server-filesystem", "C:\\Users\\yourname\\Documents"],
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "C:\\Users\\you\\Documents"],
       "enabled": true
     },
     {
       "name": "github",
       "command": "npx",
       "args": ["-y", "@anthropic/mcp-server-github"],
-      "env": {"GITHUB_TOKEN": "ghp_xxxx"},
+      "env": { "GITHUB_TOKEN": "ghp_xxxx" },
+      "enabled": true
+    },
+    {
+      "name": "postgres",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-postgres", "postgresql://localhost/mydb"],
       "enabled": true
     }
   ],
   "backend_url": "http://localhost:8000",
-  "telegram_bot_token": "YOUR_BOT_TOKEN",
-  "telegram_chat_id": "YOUR_CHAT_ID",
   "auto_approve_low_risk": true,
   "require_approval_for_high": true,
-  "require_approval_for_critical": true
+  "require_approval_for_critical": true,
+  "approval_timeout_seconds": 300
 }
 ```
 
-### 3. Start the Backend
+> **Note:** `telegram_bot_token` and `telegram_chat_id` are optional here —
+> the backend's `.env` file already configures the Telegram bot used for
+> approval notifications.
 
-The MCP server connects to the Agent-Lock backend for validation and approvals:
+### 4. Run the Gateway
 
-```bash
-cd c:\Nueva-carpeta\agent-lock
-python -m uvicorn backend.main:app --reload --port 8000
-```
-
-### 4. Run the MCP Server
-
-**For testing (HTTP transport):**
-```bash
-python -m mcp_server --transport http --port 8001
-```
-
-**For Claude Desktop (stdio transport):**
+**For Claude Desktop (stdio transport — default):**
 ```bash
 python -m mcp_server
 ```
 
+**For testing / ChatGPT (HTTP transport):**
+```bash
+python -m mcp_server --transport http --port 8001
+```
+
+**Custom config path:**
+```bash
+python -m mcp_server --config C:\path\to\my_config.json
+```
+
+---
+
 ## Configure Claude Desktop
 
-Add Agent-Lock to your Claude Desktop config file:
+Add Agent-Lock to your Claude Desktop configuration file.
 
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
@@ -102,117 +143,145 @@ Add Agent-Lock to your Claude Desktop config file:
 }
 ```
 
-Restart Claude Desktop after updating the config.
+Restart Claude Desktop after saving the file.
 
-## Available Tools
+Claude will now have access to all tools from your configured target servers,
+each prefixed with the server name (e.g. `filesystem__read_file`).
 
-Agent-Lock MCP Server exposes these tools:
+---
 
-| Tool | Description |
-|------|-------------|
-| `execute_tool` | Execute a tool on a target server (with validation) |
-| `list_available_tools` | List all tools from all connected servers |
-| `list_servers` | List configured target servers |
+## How Approval Works
 
-## Resources
-
-| Resource | Description |
-|----------|-------------|
-| `agent-lock://status` | Server status |
-| `agent-lock://config` | Current configuration |
-
-## How It Works
-
-### Risk Classification
-
-Tools are classified by risk level:
-
-- **LOW**: Read-only operations (read_file, list_directory)
-- **HIGH**: Write operations (write_file, execute_command)
-- **CRITICAL**: Destructive operations (rm -rf, DROP TABLE)
-
-### Approval Flow
-
-1. Tool call received
-2. Risk classification
-3. If HIGH/CRITICAL → send Telegram notification
-4. User approves/denies via Telegram
-5. Tool executed or blocked
-
-### Integration with Backend
-
-The MCP server calls the Agent-Lock backend (`/intercept` endpoint) for:
-- Full risk classification with Gemini AI validation
-- Telegram notification and approval polling
-- Audit logging
-
-## Example Usage in Claude
-
-Once configured, Claude can use Agent-Lock tools:
+### LOW Risk (instant)
 
 ```
-User: Read the file C:\Users\me\Documents\notes.txt
+Claude calls filesystem__read_file(path="notes.txt")
+    │
+    ▼
+Agent-Lock → POST /intercept → backend classifies as LOW
+    │
+    ▼
+AUTO_APPROVED → tool executes immediately → result returned to Claude
+```
 
-Claude: I'll read that file for you.
-[Calls: execute_tool(server="filesystem", tool="read_file", args={path: "..."})]
+### HIGH / CRITICAL Risk (Telegram loop)
 
-Agent-Lock: Risk = LOW → Auto-approved
-Result: [file contents]
+```
+Claude calls filesystem__delete_file(path="important.txt")
+    │
+    ▼
+Agent-Lock → POST /intercept → backend classifies as CRITICAL
+    │
+    ▼
+Telegram notification sent to you:
+  🦞 Agent-Lock — Approval required
+  ⚙️ filesystem__delete_file
+  🔴 Risk Level: CRITICAL
+  [✅ YES, execute]  [❌ NO, block]
+    │
+    ▼  (Agent-Lock polls GET /status/{action_id} every 2–10s)
+    │
+    ├─ You press ✅ → APPROVED → tool executes → result returned to Claude
+    └─ You press ❌ → BLOCKED  → Claude receives a clear error message
+```
+
+If you don't respond within `approval_timeout_seconds` (default: 5 minutes),
+the action is cancelled and Claude is told to retry after approving.
+
+---
+
+## Risk Classification
+
+Risk is determined by the Agent-Lock backend using a 4-layer pipeline:
+
+| Layer | Source | Override |
+|---|---|---|
+| 0 | `backend/policies.json` (regex rules) | Absolute |
+| 1 | Tool name → default risk table | — |
+| 2 | Argument content (CRITICAL / HIGH / LOW patterns) | Can downgrade |
+| 3 | Gemini 2.0 Flash — intrinsic safety analysis | Can escalate only |
+
+**Gemini Intrinsic Mode** is used for MCP calls because there is no user message
+available in the MCP context. Gemini evaluates whether the command is intrinsically
+safe or dangerous for an autonomous agent to run.
+
+---
+
+## Example Claude Session
+
+Once configured, Claude uses the tools transparently:
+
+```
+User: List the files in my Documents folder.
+
+Claude: [calls filesystem__list_directory(path="C:\Users\you\Documents")]
+Agent-Lock: risk=LOW → AUTO_APPROVED
+Result: [file list shown to user]
 ```
 
 ```
-User: Delete the folder C:\Users\me\Documents\old_stuff
+User: Delete the temp folder in Documents.
 
-Claude: I'll delete that folder.
-[Calls: execute_tool(server="filesystem", tool="delete_directory", args={...})]
-
-Agent-Lock: Risk = CRITICAL → Blocked
-Result: Error - CRITICAL risk operation blocked by policy
+Claude: [calls filesystem__delete_directory(path="C:\Users\you\Documents\temp")]
+Agent-Lock: risk=CRITICAL → Telegram notification sent
+[Claude waits...]
+[You press ✅ on Telegram]
+Agent-Lock: APPROVED
+Result: Folder deleted. Claude confirms to user.
 ```
 
-## Development
+```
+User: Drop the users table in the database.
 
-### Project Structure
+Claude: [calls postgres__query(sql="DROP TABLE users")]
+Agent-Lock: risk=CRITICAL (policy: policy_db_destructive)
+[You press ❌ on Telegram]
+Result: 🦞 Agent-Lock blocked this action — Blocked by user via Telegram
+```
+
+---
+
+## Project Structure
 
 ```
 mcp_server/
-├── __init__.py      # Package init
-├── __main__.py      # Entry point
-├── server.py        # FastMCP server definition
-├── proxy.py         # Tool proxy to target servers
-├── validator.py     # Risk classification & validation
-└── config.py        # Configuration management
+├── __init__.py      # Package metadata
+├── __main__.py      # Entry point shim  (python -m mcp_server)
+├── server.py        # Low-level MCP Server, list_tools / call_tool handlers
+├── proxy.py         # Async subprocess clients for target MCP servers
+├── validator.py     # Backend /intercept call + /status polling
+└── config.py        # AgentLockMCPConfig dataclass + load_config()
 ```
 
-### Adding New Target Servers
-
-Edit `~/.agent-lock/mcp_config.json` to add new MCP servers:
-
-```json
-{
-  "name": "my-custom-server",
-  "command": "node",
-  "args": ["path/to/my-server.js"],
-  "enabled": true
-}
-```
+---
 
 ## Troubleshooting
 
-### Server not appearing in Claude Desktop
+### Gateway not appearing in Claude Desktop
 
-1. Check the config file path is correct
-2. Ensure Python is in your PATH
+1. Verify the `cwd` path in `claude_desktop_config.json` is correct.
+2. Make sure `python` is in your system PATH.
 3. Check Claude Desktop logs: `%APPDATA%\Claude\logs\`
 
-### Tool calls failing
+### Tools not listed (0 proxied tools)
 
-1. Verify the backend is running on port 8000
-2. Check target MCP servers are installed (npx commands)
-3. Review stderr output for error messages
+1. Verify target servers are installed: `npx -y @anthropic/mcp-server-filesystem --help`
+2. Check `~/.agent-lock/mcp_config.json` — are servers enabled?
+3. Run the gateway manually and watch stderr: `python -m mcp_server`
 
-### Approval not working
+### Approval Telegram message not arriving
 
-1. Verify Telegram bot token and chat ID in config
-2. Ensure the backend's Telegram bot is configured
-3. Check the backend logs for notification errors
+1. Confirm the backend is running: `GET http://localhost:8000/health`
+2. Check `backend/.env` has `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set.
+3. Review backend logs for Telegram errors.
+
+### Action stuck in PENDING forever
+
+- The default timeout is 300 seconds (5 minutes).
+- After timeout, the action is cancelled and Claude receives a timeout message.
+- Increase `approval_timeout_seconds` in `mcp_config.json` if needed.
+
+### Backend unreachable
+
+All tool calls are **blocked** when the backend is down (fail-closed design).
+Start the backend first: `python agent-lock.py start`
