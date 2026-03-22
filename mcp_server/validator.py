@@ -28,9 +28,9 @@ from .config import AgentLockMCPConfig
 logger = logging.getLogger("agent-lock.mcp.validator")
 
 # ── Polling configuration ─────────────────────────────────────────────────────
-_POLL_INITIAL: float = 2.0  # first poll interval (seconds)
-_POLL_MAX: float = 10.0  # maximum poll interval after backoff
-_POLL_BACKOFF: float = 1.5  # multiplier applied after each poll
+_POLL_INITIAL: float = 2.0   # first poll interval (seconds)
+_POLL_MAX: float = 10.0      # maximum poll interval after backoff
+_POLL_BACKOFF: float = 1.5   # multiplier applied after each poll
 _DEFAULT_TIMEOUT: float = 300.0  # 5 minutes
 
 
@@ -42,6 +42,7 @@ async def validate_and_wait(
     tool_name: str,
     arguments: dict[str, Any],
     config: AgentLockMCPConfig,
+    user_intent: str = "",
     timeout: float = _DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """
@@ -57,6 +58,10 @@ async def validate_and_wait(
         Tool arguments.
     config : AgentLockMCPConfig
         Gateway configuration (backend URL, policy flags, etc.)
+    user_intent : str
+        The original user message captured by the gateway. If empty, the
+        backend will run Gemini in Intrinsic mode (evaluate the command
+        on its own merits without a reference instruction).
     timeout : float
         Maximum seconds to wait for a human approval before giving up.
 
@@ -72,8 +77,15 @@ async def validate_and_wait(
     # The backend identifies the tool as  "{server_name}__{tool_name}"
     full_tool_name = f"{server_name}__{tool_name}"
 
+    intent_preview = user_intent[:60] if user_intent else "(not captured — Gemini Intrinsic mode)"
+    logger.info(
+        f"validate_and_wait: tool={full_tool_name} | intent='{intent_preview}'"
+    )
+
     # ── Step 1: POST /intercept ───────────────────────────────────────────────
-    intercept_result = await _call_intercept(full_tool_name, arguments, config)
+    intercept_result = await _call_intercept(
+        full_tool_name, arguments, config, user_intent
+    )
     if intercept_result.get("_error"):
         return _blocked(
             risk_level="UNKNOWN",
@@ -135,25 +147,35 @@ async def _call_intercept(
     full_tool_name: str,
     arguments: dict[str, Any],
     config: AgentLockMCPConfig,
+    user_intent: str = "",
 ) -> dict[str, Any]:
     """
     POST /intercept to the Agent-Lock backend.
 
+    Passes the captured user_intent so the backend can run Gemini in
+    MODE A (intent comparison) instead of always falling back to
+    MODE B (intrinsic safety).
+
     Returns the raw response JSON on success, or a dict with "_error" key
     on failure so callers can distinguish network errors from backend errors.
-
-    NOTE: The correct field names expected by ToolCallRequest are:
-        tool_name   (not "tool")
-        args        (not "arguments")
-        user_intent (not None — use "" so the backend runs Gemini Intrinsic mode)
-        agent_id    (informational string)
     """
     payload = {
         "tool_name": full_tool_name,
         "args": arguments,
-        "user_intent": "",  # MCP context has no user message; backend uses Gemini Intrinsic mode
+        "user_intent": user_intent,  # now populated from the gateway's capture strategies
         "agent_id": "mcp-gateway",
     }
+
+    if user_intent:
+        logger.info(
+            f"📤 Sending to backend | tool={full_tool_name} | "
+            f"intent='{user_intent[:60]}' | mode=compare (Gemini MODE A)"
+        )
+    else:
+        logger.info(
+            f"📤 Sending to backend | tool={full_tool_name} | "
+            f"no intent captured → Gemini MODE B (intrinsic safety)"
+        )
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -227,7 +249,6 @@ async def _poll_until_decided(
                 data = resp.json()
         except Exception as exc:
             logger.warning(f"Status poll #{poll_count} failed (will retry): {exc}")
-            # Don't grow the interval on network errors — retry soon.
             interval = min(interval, _POLL_INITIAL)
             continue
 

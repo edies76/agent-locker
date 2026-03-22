@@ -1,0 +1,6 @@
+{
+  "/overview/page": "app/overview/page.js",
+  "/activity/page": "app/activity/page.js",
+  "/approvals/page": "app/approvals/page.js",
+  "/mcp/page": "app/mcp/page.js"
+}

@@ -70,11 +70,66 @@ USER_AUTH_REQUIRED_KEYWORDS = (
 )
 
 
+EMAIL_CONNECTOR_PATTERNS = (
+    "smtp",
+    "gmail",
+    "sendmail",
+    "send-email",
+    "send_email",
+    "mailgun",
+    "resend",
+    "gog send",
+    "gog",
+)
+
+
+EXEC_LIKE_TOOLS = {
+    "exec",
+    "bash",
+    "terminal",
+    "run_command",
+    "execute_code",
+}
+
+
+def _flatten_args_for_matching(args: dict) -> str:
+    parts: list[str] = []
+    for v in args.values():
+        if isinstance(v, str):
+            parts.append(v)
+        elif isinstance(v, dict):
+            parts.append(_flatten_args_for_matching(v))
+        elif isinstance(v, (list, tuple)):
+            parts.extend(str(item) for item in v)
+        else:
+            parts.append(str(v))
+    return " ".join(parts).lower()
+
+
+def _is_email_connector_call(tool_name: str, args: dict) -> bool:
+    t = (tool_name or "").strip().lower()
+    text = _flatten_args_for_matching(args)
+
+    if "send_email" in t or "send-email" in t:
+        return True
+
+    if any(p in t for p in EMAIL_CONNECTOR_PATTERNS):
+        return True
+
+    if t in EXEC_LIKE_TOOLS and any(p in text for p in EMAIL_CONNECTOR_PATTERNS):
+        return True
+
+    return False
+
+
 def requires_user_auth(tool_name: str, args: dict) -> bool:
     """Returns True when a tool should require an authenticated end-user token."""
     t = (tool_name or "").strip().lower()
 
     if t in USER_AUTH_REQUIRED_TOOLS:
+        return True
+
+    if _is_email_connector_call(t, args):
         return True
 
     # Heuristic for integrations that are not mapped explicitly yet.
@@ -86,6 +141,9 @@ def requires_user_auth(tool_name: str, args: dict) -> bool:
 
 def get_scope_for_tool(tool_name: str, args: dict, risk_level: RiskLevel) -> str:
     """Determina el scope mínimo necesario para una herramienta."""
+    if _is_email_connector_call(tool_name, args):
+        return "send:email"
+
     base_scope = TOOL_SCOPE_MAP.get(tool_name, "read:generic")
 
     # Para database.query, detectar si es escritura
@@ -97,6 +155,13 @@ def get_scope_for_tool(tool_name: str, args: dict, risk_level: RiskLevel) -> str
             base_scope = "admin:db"
 
     return base_scope
+
+
+def get_audience_for_tool(tool_name: str, args: dict) -> str:
+    """Resolve the target audience for token exchange per tool category."""
+    if _is_email_connector_call(tool_name, args):
+        return settings.auth0_google_audience
+    return settings.auth0_audience
 
 
 async def request_token(
@@ -118,7 +183,11 @@ async def request_token(
         return None
 
     scope = get_scope_for_tool(tool_name, args, risk_level)
-    audience = settings.auth0_audience
+    audience = get_audience_for_tool(tool_name, args)
+
+    # For email connectors, prefer Google API scopes configured in env.
+    if _is_email_connector_call(tool_name, args):
+        scope = settings.auth0_google_scopes or scope
 
     token_url = f"https://{settings.auth0_domain}/oauth/token"
 
@@ -149,7 +218,7 @@ async def request_token(
             data = response.json()
             access_token = data.get("access_token")
             logger.info(
-                f"Token obtenido de Auth0 | tool={tool_name} | scope={scope} | "
+                f"Token obtenido de Auth0 | tool={tool_name} | audience={audience} | scope={scope} | "
                 f"expires_in={data.get('expires_in')}s"
             )
             return access_token

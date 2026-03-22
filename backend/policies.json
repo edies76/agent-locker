@@ -17,6 +17,14 @@
             "description": "Destructive shell commands always require approval."
         },
         {
+            "id": "policy_email_connectors_via_exec",
+            "tool_pattern": ".*(bash|shell|exec|terminal|cmd|command|run|http_request|send_email).*",
+            "condition": ".*(smtp|gmail|sendmail|send[-_ ]?email|mailgun|resend|gog\\s+send).*",
+            "action": "FORCE_PENDING",
+            "risk_level": "HIGH",
+            "description": "Email sending through connectors/exec wrappers requires explicit human approval."
+        },
+        {
             "id": "policy_db_destructive",
             "tool_pattern": "database.*",
             "condition": ".*(DROP|TRUNCATE|DELETE).*",

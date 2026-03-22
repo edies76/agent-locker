@@ -1,0 +1,145 @@
+"use client"
+
+import Link from "next/link"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { useParams } from "next/navigation"
+import { fetchActivityItem, fetchMCPTargets } from "@/lib/api"
+import { Action, MCPTargetsResponse } from "@/types"
+
+export default function ActivityDetailPage() {
+  const params = useParams<{ actionId: string }>()
+  const actionId = params?.actionId ?? ""
+
+  const [item, setItem] = useState<Action | null>(null)
+  const [targets, setTargets] = useState<MCPTargetsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    if (!actionId) return
+    try {
+      const [detail, mcpTargets] = await Promise.all([
+        fetchActivityItem(actionId),
+        fetchMCPTargets(),
+      ])
+
+      if (detail?.error) {
+        setError(detail.error)
+        setItem(null)
+      } else {
+        setItem(detail)
+        setError(null)
+      }
+
+      setTargets(mcpTargets)
+    } catch {
+      setError("Could not load event details")
+    } finally {
+      setLoading(false)
+    }
+  }, [actionId])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const connectedNames = useMemo(() => {
+    if (!targets) return []
+    return targets.servers.filter((s) => s.connected).map((s) => s.name)
+  }, [targets])
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-100">Event Details</h1>
+          <p className="text-sm text-slate-500 mt-1">Action ID: <span className="font-mono">{actionId}</span></p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/activity"
+            className="text-xs px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:border-slate-500 transition-colors"
+          >
+            Back to Activity
+          </Link>
+          <button
+            onClick={load}
+            className="text-xs px-3 py-2 rounded-lg border border-slate-700 text-slate-300 hover:border-slate-500 transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/30 px-4 py-5 text-slate-500">Loading...</div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-5 text-red-300">{error}</div>
+      ) : item ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-xs uppercase tracking-wider text-slate-500">Tool</p>
+              <p className="text-sm font-mono text-slate-200 mt-1 break-all">{item.tool_name}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-xs uppercase tracking-wider text-slate-500">Risk</p>
+              <p className="text-sm text-slate-200 mt-1">{item.risk_level}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-xs uppercase tracking-wider text-slate-500">Decision</p>
+              <p className="text-sm text-slate-200 mt-1">{item.decision}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-xs uppercase tracking-wider text-slate-500">Agent</p>
+              <p className="text-sm text-slate-200 mt-1">{item.agent_id ?? "-"}</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">MCP Context</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Target MCP</p>
+                <p className="font-mono text-slate-200">{item.execution?.server_name ?? "unknown"}</p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Execution</p>
+                <p className="text-slate-200">{item.execution?.success ? "Success" : "Failed/Not reported"}</p>
+              </div>
+              <div className="md:col-span-2">
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Connected MCP Servers Now</p>
+                <p className="text-slate-300">{connectedNames.length > 0 ? connectedNames.join(", ") : "None"}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">Request</h2>
+            <pre className="text-xs text-emerald-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-3 overflow-auto max-h-72 font-mono">
+{JSON.stringify(item.execution?.request_args ?? item.args ?? {}, null, 2)}
+            </pre>
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">Response</h2>
+            {item.execution?.error ? (
+              <pre className="text-xs text-red-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-3 overflow-auto max-h-72 font-mono">
+{item.execution.error}
+              </pre>
+            ) : (
+              <pre className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-3 overflow-auto max-h-72 font-mono">
+{item.execution?.response_summary ?? "No response summary captured"}
+              </pre>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">Analysis</h2>
+            <p className="text-sm text-slate-300 leading-relaxed">{item.analysis || "-"}</p>
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}

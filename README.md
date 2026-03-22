@@ -1,62 +1,213 @@
-# 🦞 Agent-Lock for OpenClaw
+# 🦞 Agent-Lock
 
-Agent-Lock is a security and governance middleware designed to intercept and approve tool calls made by **OpenClaw** agents. If an AI agent attempts a high-risk or destructive action (like dropping a database, wiping files, or executing dangerous shell commands), Agent-Lock halts the execution, pings you on Telegram, and waits for your human-in-the-loop approval.
+Agent-Lock is a **security and governance middleware** that intercepts and approves tool calls made by AI agents. If an agent attempts a high-risk or destructive action (like dropping a database, wiping files, or executing dangerous shell commands), Agent-Lock halts the execution, notifies you on Telegram, and waits for your human-in-the-loop approval before proceeding.
 
-## 🚀 How to Start
+Originally built for **OpenClaw**, Agent-Lock now ships a full **MCP Gateway** that works with **Claude Desktop**, **ChatGPT**, and any MCP-compatible AI client.
 
-There are two main components: the **Backend** (Python) that handles analysis and notifications, and the **Plugin** (TypeScript) that integrates natively with OpenClaw.
+---
 
-### 1. Requirements
+## 📐 Architecture Overview
+
+```
+┌─────────────────────────────────────────────────┐
+│           AI Client (Claude / OpenClaw)         │
+└───────────────────────┬─────────────────────────┘
+                        │  Tool Call
+                        ▼
+┌─────────────────────────────────────────────────┐
+│          Agent-Lock MCP Gateway                 │
+│   (mcp_server/ — stdio or HTTP transport)       │
+│                                                 │
+│  1. Intercepts every tool call                  │
+│  2. Sends to FastAPI backend for analysis       │
+│  3. Waits for decision (auto or human)          │
+│  4. Forwards approved calls to target server    │
+└────────────┬──────────────────────┬─────────────┘
+             │                      │
+             ▼                      ▼
+ ┌─────────────────────┐  ┌──────────────────────┐
+ │  Agent-Lock Backend │  │  Target MCP Servers  │
+ │  (backend/ FastAPI) │  │  (filesystem, github,│
+ │                     │  │   postgres, etc.)    │
+ │  • Risk Classifier  │  └──────────────────────┘
+ │  • Intent Validator │
+ │  • Telegram HITL    │
+ │  • Auth0 Vault      │
+ │  • Audit Logger     │
+ └─────────────────────┘
+```
+
+---
+
+## 🚀 Quick Start
+
+### Requirements
 
 - [Node.js](https://nodejs.org/) & `npm`
-- [Python 3](https://www.python.org/)
-- [OpenClaw](https://github.com/openclaw/openclaw) installed globally (`npm install -g openclaw`)
+- [Python 3.10+](https://www.python.org/)
+- [OpenClaw](https://github.com/openclaw/openclaw) *(for OpenClaw mode only)*
 
-### 2. Setup (One-time only)
+### 1. Clone & Configure
 
-1. **Clone the repository:**
-   ```powershell
-   git clone <your-repo-url>
-   cd agent-lock
-   ```
+```powershell
+git clone <your-repo-url>
+cd agent-lock
+cd backend
+cp .env.example .env
+# Edit .env — add Telegram Bot Token, Chat ID, and Gemini API key
+```
 
-2. **Configure Environment Variables:**
-   - Navigate to `backend/` and copy the example file:
-     ```powershell
-     cd backend
-     cp .env.example .env
-     ```
-   - Edit `.env` to include your Telegram Bot Token, Chat ID, and Gemini API keys.
+### 2. Install Dependencies
 
-3. **Install Dependencies & Install the Plugin:**
-   - Open a PowerShell as Administrator from the project root.
-   - Run the installer script, which builds the OpenClaw plugin and installs it natively into your `~/.openclaw/extensions/agent-lock` folder:
-     ```powershell
-     .\install-plugin.ps1
-     ```
+```powershell
+# From project root — builds the OpenClaw plugin and installs it
+.\install-plugin.ps1
+```
 
-### 3. Running the System
+### 3. Run
 
-To use the agent with human-in-the-loop protection:
-
-**Terminal 1: Start the Backend Layer**
-From the project root:
+**Terminal 1 — Backend:**
 ```powershell
 python agent-lock.py start
 ```
 
-**Terminal 2: Launch OpenClaw**
+**OpenClaw mode — Terminal 2:**
 ```powershell
 openclaw gateway
 ```
-OpenClaw will automatically load the Agent-Lock extension and monitor all tool calls.
+
+**Claude Desktop mode — Terminal 2:**
+```powershell
+python -m mcp_server
+```
 
 ---
 
-## ⚙️ Configuration (Policies)
+## 🔌 MCP Gateway
 
-You can define custom risk policies inside `backend/policies.json`.
-For example, this policy explicitly blocks file deletions until human approval:
+Agent-Lock proxies any existing MCP server through its governance layer. Claude sees all the tools, but every call is risk-classified before it reaches the real server.
+
+### How It Works
+
+```
+Claude Desktop ──► Agent-Lock Gateway ──► filesystem MCP server
+                          │
+                          └─► Risk analysis + optional Telegram approval
+```
+
+1. Claude calls `filesystem__read_file`.
+2. The gateway intercepts and forwards the call to the backend.
+3. The backend classifies the risk (LOW / HIGH / CRITICAL).
+4. **LOW** → auto-approved, forwarded immediately.
+5. **HIGH / CRITICAL** → paused, Telegram alert sent, waits for your ✅/❌.
+6. On approval, the call is forwarded to the real MCP server and the result returned to Claude.
+
+### Tool Naming Convention
+
+Proxied tools follow the pattern `{server_name}__{tool_name}`:
+
+| Original tool | As seen by Claude |
+|---|---|
+| `read_file` (filesystem) | `filesystem__read_file` |
+| `create_issue` (github) | `github__create_issue` |
+| `query` (postgres) | `postgres__query` |
+
+### Built-in Management Tools
+
+Always available in Claude — no proxying required:
+
+| Tool | Description |
+|---|---|
+| `agent_lock__status` | Gateway health, backend URL, connected servers, policy summary |
+| `agent_lock__list_servers` | All configured servers with name, enabled flag, and connection status |
+
+### Transports
+
+| Transport | Command | Use case |
+|---|---|---|
+| `stdio` (default) | `python -m mcp_server` | Claude Desktop |
+| `http` | `python -m mcp_server --transport http --port 8001` | Testing / ChatGPT plugins |
+
+### Claude Desktop Integration
+
+Add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "agent-lock": {
+      "command": "python",
+      "args": ["-m", "mcp_server"],
+      "cwd": "C:\\nueva-carpeta\\agent-lock"
+    }
+  }
+}
+```
+
+Agent-Lock will load your target servers from `~/.agent-lock/mcp_config.json` and expose all their tools through the governance layer.
+
+### Custom Config Path
+
+```powershell
+# Via CLI flag
+python -m mcp_server --config C:\path\to\mcp_config.json
+
+# Via environment variable
+$env:AGENT_LOCK_MCP_CONFIG = "C:\path\to\mcp_config.json"
+python -m mcp_server
+```
+
+---
+
+## ⚙️ Configuration
+
+### MCP Gateway Config (`~/.agent-lock/mcp_config.json`)
+
+Created automatically on first run. Edit it to register your target servers:
+
+```json
+{
+  "backend_url": "http://localhost:8000",
+  "auto_approve_low_risk": true,
+  "require_approval_for_high": true,
+  "require_approval_for_critical": true,
+  "approval_timeout_seconds": 300,
+  "target_servers": [
+    {
+      "name": "filesystem",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "C:\\Users\\you\\Documents"],
+      "enabled": true
+    },
+    {
+      "name": "github",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-github"],
+      "env": { "GITHUB_TOKEN": "ghp_xxxx" },
+      "enabled": true
+    },
+    {
+      "name": "postgres",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-postgres", "postgresql://localhost/mydb"],
+      "enabled": true
+    }
+  ]
+}
+```
+
+### Policy Settings
+
+| Key | Default | Description |
+|---|---|---|
+| `auto_approve_low_risk` | `true` | Skip Telegram for LOW risk calls |
+| `require_approval_for_high` | `true` | Telegram approval required for HIGH |
+| `require_approval_for_critical` | `true` | Telegram approval required for CRITICAL |
+| `approval_timeout_seconds` | `300` | Seconds to wait before cancelling (fail-closed) |
+
+### Backend Policies (`backend/policies.json`)
+
+Define custom risk rules using regex patterns:
 
 ```json
 {
@@ -69,11 +220,160 @@ For example, this policy explicitly blocks file deletions until human approval:
 }
 ```
 
-## 🔐 How it Works
+| Field | Description |
+|---|---|
+| `tool_pattern` | Regex matched against the tool name |
+| `condition` | Regex matched against the tool arguments |
+| `action` | `FORCE_PENDING` (require approval) or `BLOCK` (always deny) |
+| `risk_level` | `LOW`, `HIGH`, or `CRITICAL` |
 
-1. OpenClaw tries to run a tool (e.g., `fs.delete`).
-2. Our native OpenClaw extension intercepts the tool trigger before it executes.
-3. It sends the details to the Python backend.
-4. If it triggers a policy (or Gemini flags the prompt as risky), the execution is paused (`PENDING`).
-5. A detailed alert arrives in your Telegram DM containing the risk analysis.
-6. You reply ✅ "Approve" or ❌ "Reject", and OpenClaw resumes or blocks the tool operation instantly.
+---
+
+## 🔐 Governance Layer
+
+### Risk Classification
+
+Each tool call goes through two layers:
+
+**1. Static Rules** (`backend/engine/action_rules.py`)
+Regex patterns that instantly classify known dangerous patterns:
+- Shell: `rm -rf`, `format`, `del /f`, `shutdown`
+- Database: `DROP TABLE`, `TRUNCATE`, `DELETE FROM` without WHERE
+- Code execution: arbitrary `exec`, `eval`, `subprocess` with destructive flags
+
+**2. AI Analysis** (`backend/engine/intent_validator.py`)
+Gemini 2.0 Flash compares the agent's technical action against your original instruction to detect semantic contradictions. If your intent was "summarize this file" but the agent tries to delete it, Gemini flags the mismatch.
+
+- **Fallback:** Keyword-based scoring if Gemini is unavailable.
+- **Empty intent:** If no user instruction is captured, Gemini is skipped and a neutral score (0.85) is returned — relying solely on static rules.
+
+### Risk Levels
+
+| Level | Example | Default Action |
+|---|---|---|
+| `LOW` | `ls`, `echo`, `read_file`, `Write-Host` | Auto-approved immediately |
+| `HIGH` | `delete_file`, `exec` with unknown command | Telegram alert + human approval |
+| `CRITICAL` | `DROP TABLE`, `rm -rf /`, destructive shell flags | Telegram alert + human approval |
+
+### Human-in-the-Loop (Telegram)
+
+When a HIGH or CRITICAL action is detected:
+
+1. A detailed alert card arrives in your Telegram DM.
+2. The card includes: tool name, server, arguments, risk level, and Gemini's analysis.
+3. You tap **✅ Approve** or **❌ Reject**.
+4. The gateway resumes or cancels the tool call instantly.
+5. If no response arrives within `approval_timeout_seconds`, the action is **cancelled** (fail-closed).
+
+> **Important:** Use a **separate** Telegram bot for Agent-Lock and OpenClaw to avoid a `409 Conflict` error on `getUpdates`.
+
+### Token Vault (Auth0)
+
+Rather than exposing hardcoded credentials, Agent-Lock requests short-lived tokens from Auth0 scoped to the minimum permissions required for each tool. The agent only ever sees the ephemeral session token — never the master credentials.
+
+| Scope | Used for |
+|---|---|
+| `read:files` | File read operations |
+| `write:db` | Database writes |
+| `admin:execute` | Shell execution |
+
+---
+
+## 📁 Project Structure
+
+```
+agent-lock/
+├── agent-lock.py           # CLI entry point (start / stop / status)
+├── mcp_launcher.py         # MCP gateway launcher helper
+├── launch.ps1              # One-command launcher (backend + gateway)
+├── install-plugin.ps1      # OpenClaw plugin installer
+├── install-mcp.bat         # MCP dependency installer
+│
+├── mcp_server/             # MCP Gateway — Claude Desktop integration
+│   ├── server.py           # Core server: list_tools + call_tool handlers
+│   ├── proxy.py            # Target server subprocess manager
+│   ├── validator.py        # Backend call + approval polling logic
+│   ├── config.py           # Config dataclasses + mcp_config.json loader
+│   ├── __main__.py         # python -m mcp_server entry point
+│   └── README.md           # MCP-specific notes
+│
+├── backend/                # FastAPI governance backend
+│   ├── main.py             # App entry point + route registration
+│   ├── models.py           # Pydantic request/response models
+│   ├── store.py            # In-memory state store (pending actions)
+│   ├── config.py           # Backend settings (.env loader)
+│   ├── policies.json       # Custom risk rules
+│   ├── engine/             # Risk classifier + intent validator (Gemini)
+│   ├── auth/               # Auth0 token vault
+│   ├── notifications/      # Telegram bot (HITL flow)
+│   ├── routes/             # FastAPI route handlers
+│   └── audit/              # Structured JSON audit logs
+│
+├── plugin/                 # OpenClaw native extension (TypeScript)
+│   └── agent-lock-plugin/
+│       └── src/            # Interception hooks + backend client
+│
+└── dashboard/              # Next.js admin dashboard
+    └── app/                # Policy editor, audit viewer, server status
+```
+
+---
+
+## 📊 Audit Logs
+
+All tool calls — approved, blocked, or timed out — are logged at `backend/audit/logs/` in structured JSON. Each entry includes:
+
+- Timestamp and unique action ID
+- Tool name, server name, and arguments
+- Risk level and classification reason
+- Gemini's intent analysis and contradiction score
+- Final decision (`approved` / `blocked` / `timeout`) and decision source (`auto` / `human`)
+
+---
+
+## 🐛 Known Issues
+
+These are active bugs and limitations in the current version:
+
+| # | Issue | Area | Workaround |
+|---|---|---|---|
+| 1 | `vscode__replace_lines_code` and `vscode__create_file_code` return no confirmation on write — tools execute but don't always report success/failure | VS Code MCP plugin | Verify edits manually after each write |
+| 2 | `vscode__list_files_code` fails with "Separator is not found" when called with absolute paths — only works with relative paths from workspace root | VS Code MCP plugin | Always use relative paths (e.g. `backend/` not `C:\...`) |
+| 3 | `filesystem` MCP restricted to `C:\Users\ediva\Documents` — write access denied for projects outside that directory | Filesystem MCP config | Move project inside Documents or update allowed paths in `claude_desktop_config.json` |
+| 4 | In-memory store (`backend/store.py`) does not survive backend restarts — all pending approvals lost on crash | Backend | Restart backend and reissue the tool call |
+| 5 | Telegram `409 Conflict` if Agent-Lock and OpenClaw share the same bot token — `getUpdates` polling clashes | Notifications | Register a separate bot via `@BotFather` |
+| 6 | Empty `user_intent` (e.g. `"[OpenClaw session]"`) causes Gemini to be skipped — risk scored by static rules only | Intent Validator | Pass a real user message through the session capture hooks |
+
+---
+
+## 🔮 Next Steps
+
+### Immediate (fix current blockers)
+
+- [ ] **Fix VS Code MCP write confirmation** — investigate why `create_file_code` / `replace_lines_code` return no result object; add explicit success/error response in the plugin
+- [ ] **Expand filesystem MCP allowed paths** — update `claude_desktop_config.json` to include `C:\nueva-carpeta` so the governance layer can read/write project files directly
+- [ ] **Persist pending actions** — replace `store.py` in-memory dict with Redis or SQLite so approvals survive backend restarts
+
+### Short Term
+
+- [ ] **Dashboard policy editor** — live `policies.json` editing via Next.js UI without restarting the backend
+- [ ] **Webhook approval channel** — alternative to Telegram (Slack, Discord, or HTTP webhook) for environments where Telegram is blocked
+- [ ] **Per-server risk overrides** — define different risk thresholds per target server in `mcp_config.json` (e.g. `filesystem` always HIGH, `github` read-only = LOW)
+- [ ] **Auth0 scope auto-mapping** — infer the correct Auth0 scope from the tool name automatically instead of hardcoding it
+
+### Medium Term
+
+- [ ] **Multi-agent session isolation** — track `user_intent` and approval state per session ID so concurrent agents don't share approval context
+- [ ] **OpenTelemetry tracing** — distributed tracing across gateway → backend → target server for full observability
+- [ ] **Rate limiting per tool** — configurable call limits per tool per session to prevent runaway agents
+- [ ] **Dashboard audit viewer** — real-time log stream with filters by risk level, server, decision, and time range
+
+### Long Term
+
+- [ ] **Claude-native approval UI** — replace Telegram with an in-chat approval flow using Claude's artifact system
+- [ ] **Policy testing sandbox** — simulate tool calls against `policies.json` without executing them, to validate rules before deploying
+- [ ] **Multi-user support** — per-user policies, approval routing, and audit separation for team deployments
+
+---
+
+*Documentation updated March 2026.*

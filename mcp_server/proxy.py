@@ -20,11 +20,43 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import sys
 from typing import Any
 
 from .config import TargetServer
 
 logger = logging.getLogger("agent-lock.mcp.proxy")
+
+
+def _resolve_command(command: str) -> str | None:
+    """
+    Resolve a command name to its full executable path.
+
+    On Windows, asyncio.create_subprocess_exec does not invoke the shell,
+    so bare commands like "npx" won't find "npx.cmd" automatically.
+    We try the following in order:
+      1. shutil.which(command)               — finds npx.cmd / npx.exe
+      2. shutil.which(command + ".cmd")      — explicit .cmd fallback
+      3. shutil.which(command + ".exe")      — explicit .exe fallback
+      4. Return the original string as-is    — let the OS error naturally
+
+    On Linux/macOS this is essentially a no-op (just returns which(command)).
+    """
+    # Direct hit (works on all platforms for binaries already on PATH)
+    found = shutil.which(command)
+    if found:
+        return found
+
+    if sys.platform == "win32":
+        for ext in (".cmd", ".exe", ".bat", ".ps1"):
+            found = shutil.which(command + ext)
+            if found:
+                return found
+
+    # Last resort: return as-is and let the OS raise FileNotFoundError
+    return command
+
 
 # Seconds to wait for a single JSON-RPC response before giving up.
 _REQUEST_TIMEOUT: float = 30.0
@@ -79,14 +111,25 @@ class MCPClient:
 
         env = {**os.environ, **self.server.env}
 
+        # Resolve the full executable path, including .cmd/.exe on Windows.
+        # asyncio.create_subprocess_exec does NOT use the shell, so bare names
+        # like "npx" won't resolve to "npx.cmd" on Windows without this.
+        resolved_cmd = _resolve_command(self.server.command)
+        if resolved_cmd is None:
+            logger.error(
+                f"[{self.server.name}] command not found: '{self.server.command}'. "
+                "Is it installed and on PATH?"
+            )
+            return
+
         logger.info(
             f"[{self.server.name}] starting: "
-            f"{self.server.command} {' '.join(self.server.args)}"
+            f"{resolved_cmd} {' '.join(self.server.args)}"
         )
 
         try:
             self._process = await asyncio.create_subprocess_exec(
-                self.server.command,
+                resolved_cmd,
                 *self.server.args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -95,7 +138,7 @@ class MCPClient:
             )
         except FileNotFoundError:
             logger.error(
-                f"[{self.server.name}] command not found: '{self.server.command}'. "
+                f"[{self.server.name}] command not found: '{resolved_cmd}'. "
                 "Is it installed and on PATH?"
             )
             return
@@ -217,37 +260,67 @@ class MCPClient:
         self._process.stdin.write(line)
         await self._process.stdin.drain()
 
-        # Read response (with timeout)
-        try:
-            raw = await asyncio.wait_for(
-                self._process.stdout.readline(),
-                timeout=_REQUEST_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            raise RuntimeError(
-                f"[{self.server.name}] timeout waiting for response "
-                f"(method={method}, id={req_id})"
-            )
+        # Read responses until we get the matching id.
+        # MCP servers may emit notifications/interleaved messages between requests.
+        deadline = asyncio.get_event_loop().time() + _REQUEST_TIMEOUT
 
-        if not raw:
-            raise RuntimeError(
-                f"[{self.server.name}] subprocess closed stdout "
-                f"(method={method}, id={req_id})"
-            )
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"[{self.server.name}] timeout waiting for response "
+                    f"(method={method}, id={req_id})"
+                )
 
-        try:
-            response = json.loads(raw.decode())
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"[{self.server.name}] invalid JSON response: {exc}")
+            try:
+                raw = await asyncio.wait_for(
+                    self._process.stdout.readline(),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    f"[{self.server.name}] timeout waiting for response "
+                    f"(method={method}, id={req_id})"
+                )
 
-        if "error" in response:
-            err = response["error"]
-            raise RuntimeError(
-                f"[{self.server.name}] JSON-RPC error "
-                f"{err.get('code')}: {err.get('message')}"
-            )
+            if not raw:
+                raise RuntimeError(
+                    f"[{self.server.name}] subprocess closed stdout "
+                    f"(method={method}, id={req_id})"
+                )
 
-        return response.get("result", {})
+            try:
+                response = json.loads(raw.decode())
+            except json.JSONDecodeError:
+                logger.debug(
+                    f"[{self.server.name}] ignoring non-JSON stdout line while "
+                    f"waiting for id={req_id}"
+                )
+                continue
+
+            # Ignore notifications or unrelated responses.
+            if "id" not in response:
+                logger.debug(
+                    f"[{self.server.name}] received notification while waiting "
+                    f"for id={req_id}: {response.get('method', '(unknown)')}"
+                )
+                continue
+
+            if response.get("id") != req_id:
+                logger.debug(
+                    f"[{self.server.name}] received out-of-order response id="
+                    f"{response.get('id')} while waiting for id={req_id}"
+                )
+                continue
+
+            if "error" in response:
+                err = response["error"]
+                raise RuntimeError(
+                    f"[{self.server.name}] JSON-RPC error "
+                    f"{err.get('code')}: {err.get('message')}"
+                )
+
+            return response.get("result", {})
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """

@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     auth0_audience: str = "https://agent-lock-api"
     auth0_callback_url: str = "http://localhost:8000/auth/callback"
     auth0_scope: str = "openid profile email offline_access"
+    # Third-party provider targets for Token Vault style delegation
+    auth0_google_audience: str = "https://www.googleapis.com/"
+    auth0_google_scopes: str = "https://www.googleapis.com/auth/gmail.send"
+    auth0_google_connection_name: str = "google-oauth2"
 
     # Telegram
     telegram_bot_token: str = ""

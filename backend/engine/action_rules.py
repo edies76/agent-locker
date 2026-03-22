@@ -48,6 +48,14 @@ HIGH_PATTERNS = [
     r"__import__",
     r"\bshutdown\b",
     r"\breboot\b",
+    # Email connectors often run through exec/shell wrappers
+    r"\bsmtp\b",
+    r"\bgmail\b",
+    r"\bsendmail\b",
+    r"\bsend[-_ ]?email\b",
+    r"\bmailgun\b",
+    r"\bresend\b",
+    r"\bgog\s+send\b",
 ]
 
 # ── Low Risk Patterns (Safe shell commands / Display) ────────────────────────

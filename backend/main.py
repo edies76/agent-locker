@@ -6,22 +6,24 @@ Starts the backend with:
 - All routers
 - CORS enabled for the OpenClaw plugin
 """
-import logging
+
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-from config import get_settings
-from auth.middleware import AuthContextMiddleware
-from routes.intercept import router as intercept_router
-from routes.status import router as status_router
-from routes.approve import router as approve_router
-from routes.logs import router as logs_router
-from routes.auth import router as auth_router
 import notifications.telegram_bot as tg_bot
 import store
+from auth.middleware import AuthContextMiddleware
+from config import get_settings
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from routes.approve import router as approve_router
+from routes.auth import router as auth_router
+from routes.dashboard import router as dashboard_router
+from routes.intercept import router as intercept_router
+from routes.logs import router as logs_router
+from routes.settings_api import router as settings_router
+from routes.status import router as status_router
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -38,8 +40,9 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     # Register the approval callback in the bot
     async def _handle_approval(action_id: str, decision: str) -> None:
-        from models import ApprovalRequest, ApprovalDecision
+        from models import ApprovalDecision, ApprovalRequest
         from routes.approve import approve_action
+
         req = ApprovalRequest(decision=ApprovalDecision(decision))
         await approve_action(action_id, req)
 
@@ -80,11 +83,14 @@ app.include_router(status_router, tags=["Status"])
 app.include_router(approve_router, tags=["Approve"])
 app.include_router(logs_router, tags=["Logs"])
 app.include_router(auth_router, tags=["Auth"])
+app.include_router(dashboard_router)
+app.include_router(settings_router)
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
