@@ -260,33 +260,39 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
     server = Server("agent-lock")
 
     # ── sampling handler — Strategy 1 for user intent capture ────────────────
-    # When Claude Desktop calls server/createMessage (sampling), the request
-    # contains the full conversation messages. We read the latest human turn
-    # and store it so the next tool call validation has the real user intent.
-    @server.create_message()
-    async def handle_sampling(
-        messages: list[types.SamplingMessage],
-        **kwargs: Any,
-    ) -> types.CreateMessageResult:
-        # Extract the last human message from the sampling request
-        for msg in reversed(messages):
-            if msg.role == "user":
-                content = msg.content
-                if isinstance(content, types.TextContent):
-                    _update_intent(content.text)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, types.TextContent) and block.text:
-                            _update_intent(block.text)
-                            break
-                break
-        # We don't actually handle sampling ourselves — return empty so Claude
-        # knows we registered but didn't consume it.
-        return types.CreateMessageResult(
-            role="assistant",
-            content=types.TextContent(type="text", text=""),
-            model="passthrough",
-            stopReason="end_turn",
+    # Some MCP SDK versions do not expose create_message(); guard it so the
+    # gateway still boots and falls back to __user_intent extraction.
+    if hasattr(server, "create_message"):
+        # When Claude calls server/createMessage (sampling), the request
+        # contains the full conversation. Capture the latest user turn.
+        @server.create_message()
+        async def handle_sampling(
+            messages: list[types.SamplingMessage],
+            **kwargs: Any,
+        ) -> types.CreateMessageResult:
+            # Extract the last human message from the sampling request
+            for msg in reversed(messages):
+                if msg.role == "user":
+                    content = msg.content
+                    if isinstance(content, types.TextContent):
+                        _update_intent(content.text)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, types.TextContent) and block.text:
+                                _update_intent(block.text)
+                                break
+                    break
+            # We don't actually handle sampling ourselves — return empty so Claude
+            # knows we registered but didn't consume it.
+            return types.CreateMessageResult(
+                role="assistant",
+                content=types.TextContent(type="text", text=""),
+                model="passthrough",
+                stopReason="end_turn",
+            )
+    else:
+        logger.warning(
+            "MCP SDK does not support create_message(); sampling intent capture disabled."
         )
 
     # ── list_tools ────────────────────────────────────────────────────────────

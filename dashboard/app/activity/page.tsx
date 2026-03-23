@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { fetchActivity } from "@/lib/api"
 import { Action, RiskLevel, ActionStatus } from "@/types"
 import ActionRow from "../components/ActionRow"
@@ -22,8 +22,12 @@ export default function ActivityPage() {
   const [riskFilter, setRiskFilter] = useState<FilterRisk>("ALL")
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("ALL")
   const [search, setSearch] = useState("")
+  const isFetchingRef = useRef(false)
 
   const loadActivity = useCallback(async () => {
+    if (isFetchingRef.current) return
+    isFetchingRef.current = true
+
     try {
       const data = await fetchActivity(50)
       if (Array.isArray(data)) {
@@ -34,12 +38,19 @@ export default function ActivityPage() {
       setError(true)
     } finally {
       setLoading(false)
+      isFetchingRef.current = false
     }
   }, [])
 
   useEffect(() => {
     loadActivity()
-    const interval = setInterval(loadActivity, 5000)
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        loadActivity()
+      }
+    }, 5000)
+
     return () => clearInterval(interval)
   }, [loadActivity])
 
@@ -258,7 +269,7 @@ export default function ActivityPage() {
       {/* Footer note */}
       {!loading && !error && filtered.length > 0 && (
         <p className="text-xs text-slate-700 text-center">
-          Click any row to expand full details · Auto-refreshes every 5s
+          Click any row to open its detail page · Auto-refreshes every 5s
         </p>
       )}
     </div>
