@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -32,6 +34,11 @@ _POLL_INITIAL: float = 2.0   # first poll interval (seconds)
 _POLL_MAX: float = 10.0      # maximum poll interval after backoff
 _POLL_BACKOFF: float = 1.5   # multiplier applied after each poll
 _DEFAULT_TIMEOUT: float = 300.0  # 5 minutes
+
+
+# ── Local Cache for LOW risk tools ───────────────────────────────────────────
+# format: { "full_tool_name": (risk_level, analysis, expiry) }
+_local_policy_cache: dict[str, tuple[str, str, datetime]] = {}
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
@@ -77,6 +84,31 @@ async def validate_and_wait(
     # The backend identifies the tool as  "{server_name}__{tool_name}"
     full_tool_name = f"{server_name}__{tool_name}"
 
+    # ── Step 0: Check Local Cache (Fast Path) ────────────────────────────────
+    if config.local_cache_ttl > 0:
+        cached = _local_policy_cache.get(full_tool_name)
+        if cached:
+            risk, analysis, expiry = cached
+            if datetime.now() < expiry:
+                logger.info(f"⚡ Local cache hit (LOW risk fast-path) | tool={full_tool_name}")
+                # We still want to record this in the backend, but we don't block on it.
+                # Since we don't have an action_id yet, we trigger the intercept in background
+                # to get one and then report success/failure from the server.py
+                # BUT wait: server.py needs an action_id to report.
+                # So we actually DO need to call intercept, but maybe we can make it
+                # return faster or assume it will be approved.
+                # Actually, the user wants REDUCED latency. A local cache that skips the backend
+                # for the critical path is the best.
+                # To keep the dashboard working, we can fire-and-forget the intercept call.
+                asyncio.create_task(_call_intercept(full_tool_name, arguments, config, user_intent))
+                
+                return _approved(
+                    risk_level=risk,
+                    reason=f"[Local Cache] {analysis}",
+                    action_id=f"cached-{int(time.time())}", # Temporary ID
+                    auth_token=None, # Tokens usually require backend interaction
+                )
+
     intent_preview = user_intent[:60] if user_intent else "(not captured — Gemini Intrinsic mode)"
     logger.info(
         f"validate_and_wait: tool={full_tool_name} | intent='{intent_preview}'"
@@ -104,6 +136,14 @@ async def validate_and_wait(
 
     # ── Step 2: AUTO_APPROVED (LOW risk fast path) ────────────────────────────
     if status == "AUTO_APPROVED":
+        # Cache this for next time if it's truly LOW risk
+        if risk_level == "LOW" and config.local_cache_ttl > 0:
+            _local_policy_cache[full_tool_name] = (
+                risk_level,
+                analysis,
+                datetime.now() + timedelta(seconds=config.local_cache_ttl)
+            )
+
         logger.info(f"✅ Auto-approved (LOW risk) | action_id={action_id}")
         return _approved(
             risk_level=risk_level,

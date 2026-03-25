@@ -4,6 +4,9 @@ import Link from "next/link"
 import { useEffect, useMemo, useState, useCallback } from "react"
 import { fetchActivity, fetchMCPTargets } from "@/lib/api"
 import { Action, MCPTargetsResponse } from "@/types"
+import { useToast } from "../components/Toast"
+import { exportToJSON, exportToCSV } from "@/lib/export"
+import { debounce } from "@/lib/cache"
 
 type FilterRisk = "ALL" | "LOW" | "HIGH" | "CRITICAL"
 type FilterStatus = "ALL" | "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED"
@@ -25,6 +28,21 @@ export default function ActivityPage() {
   const [riskFilter, setRiskFilter] = useState<FilterRisk>("ALL")
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("ALL")
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
+  const [regexMode, setRegexMode] = useState(false)
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
+  const { showToast } = useToast()
+
+  // Debounced search
+  const debouncedSetSearch = useMemo(
+    () => debounce((value: string) => setDebouncedSearch(value), 300),
+    []
+  )
+
+  useEffect(() => {
+    debouncedSetSearch(search)
+  }, [search, debouncedSetSearch])
 
   const load = useCallback(async () => {
     try {
@@ -58,10 +76,21 @@ export default function ActivityPage() {
 
   const filtered = useMemo(() => {
     return actions.filter((a) => {
+      // Risk filter
       if (riskFilter !== "ALL" && a.risk_level !== riskFilter) return false
+      
+      // Status filter
       if (statusFilter !== "ALL" && a.decision !== statusFilter) return false
 
-      const query = search.trim().toLowerCase()
+      // Date range filter
+      if (dateFrom || dateTo) {
+        const actionDate = new Date(a.timestamp)
+        if (dateFrom && actionDate < new Date(dateFrom)) return false
+        if (dateTo && actionDate > new Date(dateTo + 'T23:59:59')) return false
+      }
+
+      // Search filter (debounced)
+      const query = debouncedSearch.trim()
       if (!query) return true
 
       const haystack = [
@@ -69,13 +98,22 @@ export default function ActivityPage() {
         a.agent_id ?? "",
         a.analysis ?? "",
         a.execution?.server_name ?? "",
-      ]
-        .join(" ")
-        .toLowerCase()
+        JSON.stringify(a.args || {}),
+      ].join(" ")
 
-      return haystack.includes(query)
+      if (regexMode) {
+        try {
+          const regex = new RegExp(query, "i")
+          return regex.test(haystack)
+        } catch {
+          // Invalid regex, fall back to plain text
+          return haystack.toLowerCase().includes(query.toLowerCase())
+        }
+      } else {
+        return haystack.toLowerCase().includes(query.toLowerCase())
+      }
     })
-  }, [actions, riskFilter, statusFilter, search])
+  }, [actions, riskFilter, statusFilter, debouncedSearch, regexMode, dateFrom, dateTo])
 
   const timingSummary = useMemo(() => {
     const totals: number[] = []
@@ -142,6 +180,59 @@ export default function ActivityPage() {
   const riskFilters: FilterRisk[] = ["ALL", "LOW", "HIGH", "CRITICAL"]
   const statusFilters: FilterStatus[] = ["ALL", "PENDING", "AUTO_APPROVED", "APPROVED", "BLOCKED"]
 
+  // Export handlers
+  const handleExportJSON = useCallback(() => {
+    try {
+      exportToJSON(filtered, 'agent-lock-activity')
+      showToast({
+        type: 'success',
+        title: 'Exported to JSON',
+        message: `${filtered.length} items exported`,
+        duration: 3000,
+      })
+    } catch (error) {
+      showToast({
+        type: 'error',
+        title: 'Export failed',
+        message: String(error),
+        duration: 3000,
+      })
+    }
+  }, [filtered, showToast])
+
+  const handleExportCSV = useCallback(() => {
+    try {
+      exportToCSV(filtered, 'agent-lock-activity')
+      showToast({
+        type: 'success',
+        title: 'Exported to CSV',
+        message: `${filtered.length} items exported`,
+        duration: 3000,
+      })
+    } catch (error) {
+      showToast({
+        type: 'error',
+        title: 'Export failed',
+        message: String(error),
+        duration: 3000,
+      })
+    }
+  }, [filtered, showToast])
+
+  const clearFilters = useCallback(() => {
+    setRiskFilter("ALL")
+    setStatusFilter("ALL")
+    setSearch("")
+    setDateFrom("")
+    setDateTo("")
+    setRegexMode(false)
+    showToast({
+      type: 'info',
+      title: 'Filters cleared',
+      duration: 2000,
+    })
+  }, [showToast])
+
   return (
     <div className="space-y-6">
       <section className="glass-panel rounded-2xl px-6 py-5 border">
@@ -188,32 +279,101 @@ export default function ActivityPage() {
       </section>
 
       <section className="glass-panel rounded-xl p-4 border space-y-3">
-        <div className="flex flex-col md:flex-row gap-3 md:items-center">
-          <input
-            type="text"
-            placeholder="Buscar por tool, server o analisis"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-2 text-sm focus:outline-none focus:border-sky-400/60"
-          />
-          <div className="flex flex-wrap gap-2">
-            {riskFilters.map((r) => (
-              <button
-                key={r}
-                onClick={() => setRiskFilter(r)}
-                className={`chip rounded-full text-xs px-3 py-1 ${riskFilter === r ? "text-sky-200 border-sky-300/70" : "text-slate-300"}`}
-              >
-                {r}
-              </button>
-            ))}
+        {/* Search bar with regex toggle */}
+        <div className="flex flex-col lg:flex-row gap-3">
+          <div className="flex-1 flex gap-2">
+            <input
+              type="text"
+              placeholder={regexMode ? "Regex search (e.g., tool_.*delete)" : "Search by tool, server, analysis, or args"}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-2 text-sm focus:outline-none focus:border-sky-400/60"
+            />
+            <button
+              onClick={() => setRegexMode(!regexMode)}
+              className={`px-3 py-2 rounded-lg text-xs font-mono transition-colors ${
+                regexMode
+                  ? 'bg-purple-700/30 border-purple-600/50 text-purple-200'
+                  : 'bg-slate-900/40 border-slate-600/40 text-slate-400'
+              } border`}
+              title="Toggle regex mode"
+            >
+              .*
+            </button>
+          </div>
+          
+          {/* Export buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={handleExportJSON}
+              disabled={filtered.length === 0}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-sky-700/30 border-sky-600/50 text-sky-200 border hover:bg-sky-700/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              📥 JSON
+            </button>
+            <button
+              onClick={handleExportCSV}
+              disabled={filtered.length === 0}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-700/30 border-emerald-600/50 text-emerald-200 border hover:bg-emerald-700/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              📊 CSV
+            </button>
+            <button
+              onClick={clearFilters}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-700/30 border-slate-600/50 text-slate-300 border hover:bg-slate-700/40 transition-colors"
+            >
+              Clear
+            </button>
           </div>
         </div>
+
+        {/* Date range picker */}
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-slate-400 text-xs">Date range:</span>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-1.5 text-xs focus:outline-none focus:border-sky-400/60"
+            placeholder="From"
+          />
+          <span className="text-slate-600">→</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-1.5 text-xs focus:outline-none focus:border-sky-400/60"
+            placeholder="To"
+          />
+          <span className="text-slate-500 text-xs ml-auto">
+            {filtered.length !== actions.length && `${filtered.length} of ${actions.length} items`}
+          </span>
+        </div>
+
+        {/* Risk filters */}
+        <div className="flex flex-wrap gap-2">
+          {riskFilters.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRiskFilter(r)}
+              className={`chip rounded-full text-xs px-3 py-1 transition-all ${
+                riskFilter === r ? "text-sky-200 border-sky-300/70 bg-sky-900/20" : "text-slate-300 hover:bg-slate-800/30"
+              }`}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+        
+        {/* Status filters */}
         <div className="flex flex-wrap gap-2">
           {statusFilters.map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`chip rounded-full text-xs px-3 py-1 ${statusFilter === s ? "text-emerald-200 border-emerald-300/70" : "text-slate-300"}`}
+              className={`chip rounded-full text-xs px-3 py-1 transition-all ${
+                statusFilter === s ? "text-emerald-200 border-emerald-300/70 bg-emerald-900/20" : "text-slate-300 hover:bg-slate-800/30"
+              }`}
             >
               {s}
             </button>

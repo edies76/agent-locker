@@ -6,6 +6,10 @@ import { Stats, Action } from "@/types"
 import StatCard from "../components/StatCard"
 import { RiskBadge, StatusBadge } from "../components/Badge"
 import ScoreBar from "../components/ScoreBar"
+import LoadingSpinner from "../components/LoadingSpinner"
+import ErrorAlert from "../components/ErrorAlert"
+import EmptyState from "../components/EmptyState"
+import { apiCache } from "@/lib/cache"
 
 function Skeleton({ className }: { className?: string }) {
   return (
@@ -72,9 +76,23 @@ export default function OverviewPage() {
       loadActivity()
     }, 3000)
 
+    // SSE real-time updates
+    const { sseClient } = require('@/lib/sse')
+    
+    const handleStatsUpdate = () => {
+      console.log('Stats updated via SSE')
+      loadStats()
+      loadActivity()
+    }
+    
+    sseClient.on('stats_updated', handleStatsUpdate)
+    sseClient.on('approval_decided', handleStatsUpdate)
+
     return () => {
       clearInterval(statsInterval)
       clearInterval(activityInterval)
+      sseClient.off('stats_updated', handleStatsUpdate)
+      sseClient.off('approval_decided', handleStatsUpdate)
     }
   }, [loadAll, loadStats, loadActivity, checkHealth])
 
@@ -135,27 +153,13 @@ export default function OverviewPage() {
 
       {/* Stat Cards */}
       {loading ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Skeleton key={i} className="h-36" />
-          ))}
-        </div>
+        <LoadingSpinner size="lg" message="Loading statistics..." />
       ) : statsError ? (
-        <div className="bg-red-900/20 border border-red-700/40 rounded-xl px-5 py-4 text-red-300 text-sm flex items-center gap-3">
-          <span className="text-xl">⚠️</span>
-          <div>
-            <p className="font-semibold">Error loading statistics</p>
-            <p className="text-red-400 text-xs mt-0.5">
-              Make sure the backend is running at http://localhost:8000
-            </p>
-          </div>
-          <button
-            onClick={loadStats}
-            className="ml-auto text-xs bg-red-800/40 hover:bg-red-700/40 border border-red-700/40 rounded-lg px-3 py-1.5 transition-colors"
-          >
-            Retry
-          </button>
-        </div>
+        <ErrorAlert
+          title="Error loading statistics"
+          message="Make sure the backend is running at http://localhost:8000"
+          onRetry={loadStats}
+        />
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <StatCard
@@ -331,34 +335,20 @@ export default function OverviewPage() {
 
         {activityError ? (
           <div className="px-5 py-8 text-center">
-            <p className="text-red-400 text-sm">⚠️ Error loading activity</p>
-            <button
-              onClick={loadActivity}
-              className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 underline"
-            >
-              Retry
-            </button>
+            <ErrorAlert
+              title="Error loading activity"
+              message="Failed to fetch recent activity data"
+              onRetry={loadActivity}
+            />
           </div>
         ) : loading ? (
-          <div className="divide-y divide-brand-border">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="px-5 py-3 flex items-center gap-4">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-4 w-16" />
-                <Skeleton className="h-4 w-20" />
-                <Skeleton className="h-4 flex-1" />
-              </div>
-            ))}
-          </div>
+          <LoadingSpinner size="md" message="Loading activity feed..." />
         ) : activity.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <p className="text-slate-500 text-3xl mb-2">🛡️</p>
-            <p className="text-slate-400 font-medium">No activity yet</p>
-            <p className="text-slate-600 text-sm mt-1">
-              Tool calls will appear here once AI agents start interacting
-            </p>
-          </div>
+          <EmptyState
+            icon="🛡️"
+            title="No activity yet"
+            description="Tool calls will appear here once AI agents start interacting"
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

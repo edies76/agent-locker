@@ -1,10 +1,12 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { fetchPending, approveAction } from "@/lib/api"
 import { Action } from "@/types"
 import { RiskBadge } from "../components/Badge"
 import ScoreBar from "../components/ScoreBar"
+import { useToast } from "../components/Toast"
+import { soundManager } from "@/lib/sounds"
 
 interface CardState {
   loading: boolean
@@ -15,9 +17,13 @@ interface CardState {
 function ApprovalCard({
   action,
   onDecision,
+  isSelected,
+  onSelect,
 }: {
   action: Action
   onDecision: (id: string, decision: "YES" | "NO") => Promise<void>
+  isSelected: boolean
+  onSelect: () => void
 }) {
   const [state, setState] = useState<CardState>({
     loading: false,
@@ -25,6 +31,13 @@ function ApprovalCard({
     result: null,
   })
   const [argsExpanded, setArgsExpanded] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (isSelected && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isSelected])
 
   async function handleDecision(decision: "YES" | "NO") {
     setState({ loading: true, done: false, result: null })
@@ -35,6 +48,13 @@ function ApprovalCard({
         done: true,
         result: decision === "YES" ? "approved" : "rejected",
       })
+      
+      // Play sound
+      if (decision === "YES") {
+        soundManager.approved()
+      } else {
+        soundManager.rejected()
+      }
     } catch {
       setState({ loading: false, done: false, result: null })
     }
@@ -77,11 +97,15 @@ function ApprovalCard({
 
   return (
     <div
+      ref={cardRef}
+      onClick={onSelect}
       className={`
         bg-brand-card border rounded-xl overflow-hidden
         flex flex-col
         ${riskBorderMap[action.risk_level]}
         ${riskGlowMap[action.risk_level]}
+        ${isSelected ? 'ring-2 ring-sky-500 shadow-lg shadow-sky-500/20' : ''}
+        cursor-pointer transition-all
       `}
     >
       {/* Card Header */}
@@ -246,12 +270,55 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [decidedIds, setDecidedIds] = useState<Set<string>>(new Set())
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [soundEnabled, setSoundEnabled] = useState(true)
+  const [prevPendingCount, setPrevPendingCount] = useState(0)
+  const { showToast } = useToast()
+
+  // Sound settings
+  useEffect(() => {
+    const enabled = soundManager.isEnabled()
+    setSoundEnabled(enabled)
+  }, [])
+
+  const toggleSound = useCallback(() => {
+    const newState = !soundEnabled
+    setSoundEnabled(newState)
+    soundManager.setEnabled(newState)
+    showToast({
+      type: 'info',
+      title: `Sounds ${newState ? 'enabled' : 'disabled'}`,
+      duration: 2000,
+    })
+  }, [soundEnabled, showToast])
 
   const loadPending = useCallback(async () => {
     try {
       const data = await fetchPending()
       if (Array.isArray(data)) {
+        // Detect new approvals
+        if (data.length > prevPendingCount && prevPendingCount > 0) {
+          const newCount = data.length - prevPendingCount
+          showToast({
+            type: 'warning',
+            title: `${newCount} new approval${newCount > 1 ? 's' : ''}`,
+            message: 'Action required',
+            duration: 5000,
+          })
+          
+          // Play sound for new approvals
+          const hasCritical = data.some(a => a.risk_level === 'CRITICAL')
+          if (hasCritical) {
+            soundManager.criticalApproval()
+          } else {
+            soundManager.newApproval()
+          }
+        }
+        
         setPending(data)
+        setPrevPendingCount(data.length)
         setError(false)
       }
     } catch {
@@ -259,24 +326,154 @@ export default function ApprovalsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [prevPendingCount, showToast])
 
   useEffect(() => {
     loadPending()
     const interval = setInterval(loadPending, 2000)
-    return () => clearInterval(interval)
+    
+    // SSE real-time updates
+    const { sseClient } = require('@/lib/sse')
+    
+    const handleApprovalPending = (data: any) => {
+      console.log('New approval pending:', data)
+      soundManager.newApproval()
+      loadPending() // Refresh list
+    }
+    
+    const handleApprovalDecided = (data: any) => {
+      console.log('Approval decided:', data)
+      loadPending() // Refresh list
+    }
+    
+    sseClient.on('approval_pending', handleApprovalPending)
+    sseClient.on('approval_decided', handleApprovalDecided)
+    
+    return () => {
+      clearInterval(interval)
+      sseClient.off('approval_pending', handleApprovalPending)
+      sseClient.off('approval_decided', handleApprovalDecided)
+    }
   }, [loadPending])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      const activeActions = pending.filter((a) => !decidedIds.has(a.action_id))
+      if (activeActions.length === 0) return
+
+      // Don't trigger if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
+      switch (e.key.toLowerCase()) {
+        case 'y':
+        case 'a': // Also accept 'a' for approve
+          e.preventDefault()
+          if (bulkMode) {
+            // Add to selection
+            const action = activeActions[selectedIndex]
+            if (action) {
+              setSelectedIds(prev => new Set(prev).add(action.action_id))
+              soundManager.keyPress()
+            }
+          } else {
+            // Approve current
+            const action = activeActions[selectedIndex]
+            if (action) {
+              handleDecision(action.action_id, 'YES')
+            }
+          }
+          break
+
+        case 'n':
+        case 'r': // Also accept 'r' for reject
+          e.preventDefault()
+          if (!bulkMode) {
+            const action = activeActions[selectedIndex]
+            if (action) {
+              handleDecision(action.action_id, 'NO')
+            }
+          }
+          break
+
+        case 'arrowdown':
+        case 'j': // Vim-style
+          e.preventDefault()
+          setSelectedIndex((prev) => Math.min(prev + 1, activeActions.length - 1))
+          soundManager.keyPress()
+          break
+
+        case 'arrowup':
+        case 'k': // Vim-style
+          e.preventDefault()
+          setSelectedIndex((prev) => Math.max(prev - 1, 0))
+          soundManager.keyPress()
+          break
+
+        case 'b':
+          e.preventDefault()
+          setBulkMode((prev) => !prev)
+          setSelectedIds(new Set())
+          soundManager.keyPress()
+          showToast({
+            type: 'info',
+            title: `Bulk mode ${bulkMode ? 'disabled' : 'enabled'}`,
+            duration: 2000,
+          })
+          break
+
+        case 'escape':
+          e.preventDefault()
+          if (bulkMode) {
+            setBulkMode(false)
+            setSelectedIds(new Set())
+          }
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress)
+    return () => window.removeEventListener('keydown', handleKeyPress)
+  }, [pending, selectedIndex, decidedIds, bulkMode, showToast])
+
+  // Reset selection when items change
+  useEffect(() => {
+    const activeCount = pending.filter((a) => !decidedIds.has(a.action_id)).length
+    if (selectedIndex >= activeCount) {
+      setSelectedIndex(Math.max(0, activeCount - 1))
+    }
+  }, [pending, decidedIds, selectedIndex])
 
   const handleDecision = useCallback(
     async (action_id: string, decision: "YES" | "NO") => {
-      await approveAction(action_id, decision)
-      // After a short delay, mark as decided so it fades out
-      setTimeout(() => {
-        setDecidedIds((prev) => {
-          const next = new Set(prev)
-          next.add(action_id)
-          return next
+      // Optimistic update - remove from UI immediately
+      setPending((prev) => {
+        const optimistic = prev.map(a => 
+          a.action_id === action_id 
+            ? { ...a, decision: decision === "YES" ? "APPROVED" : "BLOCKED" }
+            : a
+        )
+        return optimistic
+      })
+      
+      setDecidedIds((prev) => {
+        const next = new Set(prev)
+        next.add(action_id)
+        return next
+      })
+
+      try {
+        await approveAction(action_id, decision)
+        
+        showToast({
+          type: decision === "YES" ? "success" : "info",
+          title: decision === "YES" ? "Action approved" : "Action rejected",
+          message: `Tool: ${pending.find(a => a.action_id === action_id)?.tool_name}`,
+          duration: 3000,
         })
+        
         // Remove from list after animation
         setTimeout(() => {
           setPending((prev) => prev.filter((a) => a.action_id !== action_id))
@@ -286,10 +483,83 @@ export default function ApprovalsPage() {
             return next
           })
         }, 1200)
-      }, 800)
+      } catch (error) {
+        // Rollback on error
+        setPending((prev) => {
+          const rollback = prev.map(a => 
+            a.action_id === action_id 
+              ? { ...a, decision: "PENDING" }
+              : a
+          )
+          return rollback
+        })
+        
+        setDecidedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(action_id)
+          return next
+        })
+        
+        showToast({
+          type: "error",
+          title: "Failed to process action",
+          message: String(error),
+          duration: 5000,
+        })
+      }
     },
-    []
+    [pending, showToast]
   )
+
+  // Bulk approve
+  const handleBulkApprove = useCallback(async () => {
+    if (selectedIds.size === 0) return
+    
+    showToast({
+      type: 'info',
+      title: `Approving ${selectedIds.size} actions...`,
+      duration: 2000,
+    })
+
+    for (const id of selectedIds) {
+      await handleDecision(id, 'YES')
+      await new Promise(resolve => setTimeout(resolve, 100)) // Stagger requests
+    }
+
+    setSelectedIds(new Set())
+    setBulkMode(false)
+    
+    showToast({
+      type: 'success',
+      title: 'Bulk approval complete',
+      duration: 3000,
+    })
+  }, [selectedIds, handleDecision, showToast])
+
+  // Bulk reject
+  const handleBulkReject = useCallback(async () => {
+    if (selectedIds.size === 0) return
+    
+    showToast({
+      type: 'info',
+      title: `Rejecting ${selectedIds.size} actions...`,
+      duration: 2000,
+    })
+
+    for (const id of selectedIds) {
+      await handleDecision(id, 'NO')
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    setSelectedIds(new Set())
+    setBulkMode(false)
+    
+    showToast({
+      type: 'info',
+      title: 'Bulk rejection complete',
+      duration: 3000,
+    })
+  }, [selectedIds, handleDecision, showToast])
 
   // Visible (not yet cleaned up) pending actions
   const visible = pending.filter((a) => !decidedIds.has(a.action_id) || true)
@@ -309,6 +579,38 @@ export default function ApprovalsPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Sound toggle */}
+          <button
+            onClick={toggleSound}
+            className="flex items-center gap-2 text-xs bg-brand-card border border-brand-border rounded-lg px-3 py-2 hover:bg-brand-bg transition-colors"
+            title="Toggle sound notifications"
+          >
+            <span className="text-base">{soundEnabled ? '🔊' : '🔇'}</span>
+            <span className="text-slate-400">{soundEnabled ? 'Sounds On' : 'Sounds Off'}</span>
+          </button>
+
+          {/* Bulk mode toggle */}
+          <button
+            onClick={() => {
+              setBulkMode(!bulkMode)
+              setSelectedIds(new Set())
+              showToast({
+                type: 'info',
+                title: `Bulk mode ${bulkMode ? 'disabled' : 'enabled'}`,
+                message: bulkMode ? '' : 'Press Y to select items, B to toggle',
+                duration: 2000,
+              })
+            }}
+            className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 transition-colors ${
+              bulkMode
+                ? 'bg-sky-700/30 border-sky-600/50 text-sky-200'
+                : 'bg-brand-card border-brand-border text-slate-400'
+            } border`}
+          >
+            <span className="text-base">☑️</span>
+            <span>Bulk Mode {bulkMode ? 'ON' : 'OFF'}</span>
+          </button>
+
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse inline-block" />
             Polling every 2s
@@ -319,6 +621,47 @@ export default function ApprovalsPage() {
           >
             ↻ Refresh
           </button>
+        </div>
+      </div>
+
+      {/* Keyboard shortcuts help */}
+      <div className="glass-panel rounded-xl border px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6 text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-slate-800/50 border border-slate-700 rounded text-slate-300 font-mono">Y</kbd>
+              <span>Approve</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-slate-800/50 border border-slate-700 rounded text-slate-300 font-mono">N</kbd>
+              <span>Reject</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-slate-800/50 border border-slate-700 rounded text-slate-300 font-mono">↑↓</kbd>
+              <span>Navigate</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-slate-800/50 border border-slate-700 rounded text-slate-300 font-mono">B</kbd>
+              <span>Bulk Mode</span>
+            </div>
+          </div>
+          {bulkMode && selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-sky-300 font-semibold">{selectedIds.size} selected</span>
+              <button
+                onClick={handleBulkApprove}
+                className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Approve All
+              </button>
+              <button
+                onClick={handleBulkReject}
+                className="bg-red-700 hover:bg-red-600 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Reject All
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -403,18 +746,48 @@ export default function ApprovalsPage() {
       {/* Approval cards grid */}
       {!loading && !error && visible.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-          {visible.map((action) => (
-            <div
-              key={action.action_id}
-              className={`transition-all duration-500 ${
-                decidedIds.has(action.action_id)
-                  ? "opacity-40 scale-95 pointer-events-none"
-                  : "opacity-100 scale-100"
-              }`}
-            >
-              <ApprovalCard action={action} onDecision={handleDecision} />
-            </div>
-          ))}
+          {visible.map((action, index) => {
+            const isCurrentlySelected = index === selectedIndex && !decidedIds.has(action.action_id)
+            const isInBulkSelection = selectedIds.has(action.action_id)
+            
+            return (
+              <div
+                key={action.action_id}
+                className={`transition-all duration-500 ${
+                  decidedIds.has(action.action_id)
+                    ? "opacity-40 scale-95 pointer-events-none"
+                    : "opacity-100 scale-100"
+                } ${isInBulkSelection ? 'ring-2 ring-sky-400' : ''}`}
+              >
+                <ApprovalCard
+                  action={action}
+                  onDecision={handleDecision}
+                  isSelected={isCurrentlySelected}
+                  onSelect={() => {
+                    const activeIndex = pending
+                      .filter((a) => !decidedIds.has(a.action_id))
+                      .findIndex((a) => a.action_id === action.action_id)
+                    if (activeIndex >= 0) {
+                      setSelectedIndex(activeIndex)
+                    }
+                    
+                    // Toggle selection in bulk mode
+                    if (bulkMode) {
+                      setSelectedIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(action.action_id)) {
+                          next.delete(action.action_id)
+                        } else {
+                          next.add(action.action_id)
+                        }
+                        return next
+                      })
+                    }
+                  }}
+                />
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

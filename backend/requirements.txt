@@ -10,3 +10,4 @@ PyJWT[crypto]==2.9.0
 cryptography==42.0.8
 pytest==8.3.3
 pytest-asyncio==0.24.0
+sse-starlette==2.1.3

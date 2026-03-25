@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from routes.approve import router as approve_router
 from routes.auth import router as auth_router
 from routes.dashboard import router as dashboard_router
+from routes.events import router as events_router
 from routes.intercept import router as intercept_router
 from routes.logs import router as logs_router
 from routes.settings_api import router as settings_router
@@ -83,6 +84,7 @@ app.include_router(status_router, tags=["Status"])
 app.include_router(approve_router, tags=["Approve"])
 app.include_router(logs_router, tags=["Logs"])
 app.include_router(auth_router, tags=["Auth"])
+app.include_router(events_router, tags=["SSE"])
 app.include_router(dashboard_router)
 app.include_router(settings_router)
 

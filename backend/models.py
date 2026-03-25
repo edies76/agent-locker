@@ -19,6 +19,13 @@ class ActionStatus(str, Enum):
     AUTH_REQUIRED = "AUTH_REQUIRED"
 
 
+class ActionStatusHistory(BaseModel):
+    """Record of a status change for an action."""
+    status: ActionStatus
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    reason: Optional[str] = None
+
+
 # ── OpenClaw Plugin → Backend Payload ───────────────────────────────────────
 
 class ToolCallRequest(BaseModel):
@@ -85,6 +92,7 @@ class PendingAction(BaseModel):
     intent_score: float
     analysis: str
     status: ActionStatus = ActionStatus.PENDING
+    status_history: list[ActionStatusHistory] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     decided_at: Optional[datetime] = None
     auth_token: Optional[str] = None

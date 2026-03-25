@@ -52,6 +52,11 @@ class AgentLockMCPConfig:
     # After the timeout the action is cancelled (fail-closed).
     approval_timeout_seconds: float = 300.0  # 5 minutes
 
+    # ── Latency Optimizations ─────────────────────────────────────────────────
+    # Local cache TTL for auto-approved LOW risk tools (seconds).
+    # 0 to disable local caching.
+    local_cache_ttl: int = 3600  # 1 hour
+
     # ── Audit ─────────────────────────────────────────────────────────────────
     audit_log_path: str = "logs/mcp_audit.jsonl"
 
@@ -89,6 +94,7 @@ class AgentLockMCPConfig:
                 "require_approval_for_critical", True
             ),
             approval_timeout_seconds=float(data.get("approval_timeout_seconds", 300.0)),
+            local_cache_ttl=int(data.get("local_cache_ttl", 3600)),
             audit_log_path=data.get("audit_log_path", "logs/mcp_audit.jsonl"),
         )
 
@@ -115,6 +121,7 @@ class AgentLockMCPConfig:
             "require_approval_for_high": self.require_approval_for_high,
             "require_approval_for_critical": self.require_approval_for_critical,
             "approval_timeout_seconds": self.approval_timeout_seconds,
+            "local_cache_ttl": self.local_cache_ttl,
             "audit_log_path": self.audit_log_path,
         }
 

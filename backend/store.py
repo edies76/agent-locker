@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from models import ActionStatus, PendingAction, RiskLevel
+from models import ActionStatus, PendingAction, RiskLevel, ActionStatusHistory
 
 logger = logging.getLogger("agent-lock.store")
 
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS actions (
     intent_score    REAL NOT NULL,
     analysis        TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL,
+    status_history  TEXT NOT NULL DEFAULT '[]',
     created_at      TEXT NOT NULL,
     decided_at      TEXT,
     auth_token      TEXT,
@@ -88,8 +89,25 @@ def _init_db() -> None:
     logger.info(f"SQLite store initialised at {_DB_PATH}")
 
 
-# Run migration on import
+def _migrate_db() -> None:
+    """Apply migrations to existing database schema."""
+    with _get_conn() as conn:
+        cursor = conn.cursor()
+
+        # Check if status_history column exists
+        cursor.execute("PRAGMA table_info(actions)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "status_history" not in columns:
+            logger.info("Migrating: Adding status_history column")
+            cursor.execute("ALTER TABLE actions ADD COLUMN status_history TEXT NOT NULL DEFAULT '[]'")
+            conn.commit()
+            logger.info("Migration complete: status_history column added")
+
+
+# Run initialization and migrations on import
 _init_db()
+_migrate_db()
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
@@ -107,6 +125,7 @@ def _to_row(action: PendingAction) -> dict[str, Any]:
         "intent_score": action.intent_score,
         "analysis":     action.analysis or "",
         "status":       action.status.value,
+        "status_history": json.dumps([h.dict() for h in action.status_history], ensure_ascii=False),
         "created_at":   action.created_at.isoformat(),
         "decided_at":   action.decided_at.isoformat() if action.decided_at else None,
         "auth_token":   action.auth_token,
@@ -137,6 +156,7 @@ def _from_row(row: sqlite3.Row) -> PendingAction:
         intent_score=row["intent_score"],
         analysis=row["analysis"] or "",
         status=ActionStatus(row["status"]),
+        status_history=[ActionStatusHistory(**h) for h in json.loads(row["status_history"])],
         created_at=_dt(row["created_at"]) or datetime.now(timezone.utc),
         decided_at=_dt(row["decided_at"]),
         auth_token=row["auth_token"],
@@ -155,11 +175,11 @@ def save(action: PendingAction) -> None:
             """
             INSERT INTO actions
                 (action_id, tool_name, args, user_intent, agent_id, session_key,
-                 raw_command, risk_level, intent_score, analysis, status,
+                 raw_command, risk_level, intent_score, analysis, status, status_history,
                  created_at, decided_at, auth_token, subject_token, login_url)
             VALUES
                 (:action_id, :tool_name, :args, :user_intent, :agent_id, :session_key,
-                 :raw_command, :risk_level, :intent_score, :analysis, :status,
+                 :raw_command, :risk_level, :intent_score, :analysis, :status, :status_history,
                  :created_at, :decided_at, :auth_token, :subject_token, :login_url)
             """,
             row,
@@ -204,6 +224,7 @@ def update(action: PendingAction) -> None:
                 intent_score = :intent_score,
                 analysis     = :analysis,
                 status       = :status,
+                status_history = :status_history,
                 created_at   = :created_at,
                 decided_at   = :decided_at,
                 auth_token   = :auth_token,

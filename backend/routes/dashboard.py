@@ -76,37 +76,51 @@ async def get_stats() -> dict[str, Any]:
     Risk breakdown and timeline histogram are included so the dashboard
     can render charts without a second request.
     """
-    logs = read_logs(limit=500)
-    pending_actions = store.all_pending()
+    try:
+        logs = read_logs(limit=500)
+        pending_actions = store.all_pending()
 
-    total = len(logs) + len(pending_actions)
-    auto_approved = sum(1 for l in logs if l.get("decision") == "AUTO_APPROVED")
-    human_approved = sum(1 for l in logs if l.get("decision") == "APPROVED")
-    blocked = sum(1 for l in logs if l.get("decision") == "BLOCKED")
-    pending_count = len(pending_actions)
+        total = len(logs) + len(pending_actions)
+        auto_approved = sum(1 for l in logs if l.get("decision") == "AUTO_APPROVED")
+        human_approved = sum(1 for l in logs if l.get("decision") == "APPROVED")
+        blocked = sum(1 for l in logs if l.get("decision") == "BLOCKED")
+        pending_count = len(pending_actions)
 
-    # Risk-level breakdown (from logs only — pending are all unresolved)
-    risk_counts = {r.value: 0 for r in RiskLevel}
-    for l in logs:
-        rl = l.get("risk_level", "LOW")
-        if rl in risk_counts:
-            risk_counts[rl] += 1
+        # Risk-level breakdown (from logs only — pending are all unresolved)
+        risk_counts = {r.value: 0 for r in RiskLevel}
+        for l in logs:
+            rl = l.get("risk_level", "LOW")
+            if rl in risk_counts:
+                risk_counts[rl] += 1
 
-    # Add pending to risk counts
-    for a in pending_actions:
-        risk_counts[a.risk_level.value] += 1
+        # Add pending to risk counts
+        for a in pending_actions:
+            risk_counts[a.risk_level.value] += 1
 
-    return {
-        "total": total,
-        "auto_approved": auto_approved,
-        "human_approved": human_approved,
-        "blocked": blocked,
-        "pending": pending_count,
-        "risk_breakdown": risk_counts,
-        "signature_failures": sum(
-            1 for l in logs if l.get("_signature_valid") is False
-        ),
-    }
+        return {
+            "total": total,
+            "auto_approved": auto_approved,
+            "human_approved": human_approved,
+            "blocked": blocked,
+            "pending": pending_count,
+            "risk_breakdown": risk_counts,
+            "signature_failures": sum(
+                1 for l in logs if l.get("_signature_valid") is False
+            ),
+        }
+    except Exception as exc:
+        logger.error(f"Error fetching stats: {exc}", exc_info=True)
+        # Return safe defaults instead of crashing
+        return {
+            "total": 0,
+            "auto_approved": 0,
+            "human_approved": 0,
+            "blocked": 0,
+            "pending": 0,
+            "risk_breakdown": {r.value: 0 for r in RiskLevel},
+            "signature_failures": 0,
+            "error": str(exc),
+        }
 
 
 # ── Activity feed ─────────────────────────────────────────────────────────────
@@ -120,20 +134,24 @@ async def get_activity(
     Unified activity feed: PENDING actions (from live store) + resolved actions
     (from signed audit log), merged and sorted newest-first.
     """
-    # 1. In-memory store — all actions regardless of status
-    store_items = [_action_to_dict(a) for a in store.all_actions()]
+    try:
+        # 1. In-memory store — all actions regardless of status
+        store_items = [_action_to_dict(a) for a in store.all_actions()]
 
-    # 2. Audit log — already-resolved actions
-    log_items = []
-    logged_ids = {item["action_id"] for item in store_items}
-    for entry in read_logs(limit=limit):
-        if entry.get("action_id") not in logged_ids:
-            entry.setdefault("_source", "log")
-            log_items.append(entry)
+        # 2. Audit log — already-resolved actions
+        log_items = []
+        logged_ids = {item["action_id"] for item in store_items}
+        for entry in read_logs(limit=limit):
+            if entry.get("action_id") not in logged_ids:
+                entry.setdefault("_source", "log")
+                log_items.append(entry)
 
-    combined = store_items + log_items
-    combined.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-    return [_attach_execution_details(item) for item in combined[:limit]]
+        combined = store_items + log_items
+        combined.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        return [_attach_execution_details(item) for item in combined[:limit]]
+    except Exception as exc:
+        logger.error(f"Error fetching activity: {exc}", exc_info=True)
+        return []
 
 
 # ── Pending actions ───────────────────────────────────────────────────────────
@@ -145,26 +163,46 @@ async def get_pending() -> list[dict[str, Any]]:
     Return only the actions currently awaiting human approval.
     Polled every ~1 s by the dashboard approval panel.
     """
-    return [_action_to_dict(a) for a in store.all_pending()]
+    try:
+        return [_action_to_dict(a) for a in store.all_pending()]
+    except Exception as exc:
+        logger.error(f"Error fetching pending actions: {exc}", exc_info=True)
+        return []
 
 
 @router.get("/activity/{action_id}")
 async def get_activity_item(action_id: str) -> dict[str, Any]:
     """Return full details for a single action id from store/log plus execution info."""
-    for a in store.all_actions():
-        if a.action_id == action_id:
-            return _attach_execution_details(_action_to_dict(a))
+    try:
+        # Validate action_id format
+        if not action_id or len(action_id) > 100:
+            return {
+                "action_id": action_id,
+                "error": "Invalid action_id format",
+                "execution": {},
+            }
+        
+        for a in store.all_actions():
+            if a.action_id == action_id:
+                return _attach_execution_details(_action_to_dict(a))
 
-    for entry in read_logs(limit=2000):
-        if entry.get("action_id") == action_id:
-            entry.setdefault("_source", "log")
-            return _attach_execution_details(entry)
+        for entry in read_logs(limit=2000):
+            if entry.get("action_id") == action_id:
+                entry.setdefault("_source", "log")
+                return _attach_execution_details(entry)
 
-    return {
-        "action_id": action_id,
-        "error": "Action not found",
-        "execution": _mcp_executions.get(action_id, {}),
-    }
+        return {
+            "action_id": action_id,
+            "error": "Action not found",
+            "execution": _mcp_executions.get(action_id, {}),
+        }
+    except Exception as exc:
+        logger.error(f"Error fetching activity item {action_id}: {exc}", exc_info=True)
+        return {
+            "action_id": action_id,
+            "error": f"Internal error: {str(exc)}",
+            "execution": {},
+        }
 
 
 # ── MCP heartbeat / status ────────────────────────────────────────────────────
@@ -225,23 +263,33 @@ async def get_mcp_status() -> dict[str, Any]:
     Return the latest MCP gateway heartbeat and a staleness flag.
     The dashboard uses this to show the green/red connection dot.
     """
-    if _mcp_last_seen is None:
+    try:
+        if _mcp_last_seen is None:
+            return {
+                "connected": False,
+                "last_seen": None,
+                "seconds_ago": None,
+                "info": {},
+            }
+
+        now = datetime.now(timezone.utc)
+        seconds_ago = (now - _mcp_last_seen).total_seconds()
+
+        return {
+            "connected": seconds_ago < 60,  # consider stale after 60 s
+            "last_seen": _mcp_last_seen.isoformat(),
+            "seconds_ago": round(seconds_ago),
+            "info": _mcp_info,
+        }
+    except Exception as exc:
+        logger.error(f"Error fetching MCP status: {exc}", exc_info=True)
         return {
             "connected": False,
             "last_seen": None,
             "seconds_ago": None,
             "info": {},
+            "error": str(exc),
         }
-
-    now = datetime.now(timezone.utc)
-    seconds_ago = (now - _mcp_last_seen).total_seconds()
-
-    return {
-        "connected": seconds_ago < 60,  # consider stale after 60 s
-        "last_seen": _mcp_last_seen.isoformat(),
-        "seconds_ago": round(seconds_ago),
-        "info": _mcp_info,
-    }
 
 
 @router.get("/mcp/timings")
@@ -307,6 +355,10 @@ async def get_mcp_targets() -> dict[str, Any]:
                         "command": server.get("command", ""),
                     }
                 )
+    except FileNotFoundError:
+        logger.warning(f"MCP config file not found: {_mcp_config_path}")
+    except json.JSONDecodeError as exc:
+        logger.error(f"Invalid JSON in MCP config: {exc}")
     except Exception as exc:
         logger.warning(f"Could not load MCP config for dashboard: {exc}")
 

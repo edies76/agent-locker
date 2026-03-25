@@ -1,53 +1,66 @@
 const BASE = "http://localhost:8000"
 
+import { cachedFetch, apiCache } from "./cache"
+
 export async function fetchHealth() {
   const res = await fetch(`${BASE}/health`, { cache: "no-store" })
   return res.json()
 }
 
-export async function fetchStats() {
-  const res = await fetch(`${BASE}/dashboard/stats`, { cache: "no-store" })
-  return res.json()
+export async function fetchStats(options?: { refresh?: boolean }) {
+  return cachedFetch(`${BASE}/dashboard/stats`, {
+    ttl: 5000, // 5s cache
+    refresh: options?.refresh,
+  })
 }
 
-export async function fetchActivity(limit = 50) {
-  const res = await fetch(`${BASE}/dashboard/activity?limit=${limit}`, { cache: "no-store" })
-  return res.json()
+export async function fetchActivity(limit = 50, options?: { refresh?: boolean }) {
+  return cachedFetch(`${BASE}/dashboard/activity?limit=${limit}`, {
+    ttl: 3000, // 3s cache for activity
+    refresh: options?.refresh,
+  })
 }
 
 export async function fetchActivityItem(actionId: string) {
-  const res = await fetch(`${BASE}/dashboard/activity/${actionId}`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/dashboard/activity/${actionId}`, {
+    ttl: 10000, // 10s cache for individual items
+  })
 }
 
 export async function fetchPending() {
+  // Never cache pending approvals - always fresh
   const res = await fetch(`${BASE}/dashboard/pending`, { cache: "no-store" })
   return res.json()
 }
 
 export async function fetchMCPStatus() {
-  const res = await fetch(`${BASE}/dashboard/mcp/status`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/dashboard/mcp/status`, {
+    ttl: 10000, // 10s cache
+  })
 }
 
 export async function fetchMCPTargets() {
-  const res = await fetch(`${BASE}/dashboard/mcp/targets`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/dashboard/mcp/targets`, {
+    ttl: 15000, // 15s cache - config doesn't change often
+  })
 }
 
 export async function fetchMCPTimings(limit = 100) {
-  const res = await fetch(`${BASE}/dashboard/mcp/timings?limit=${limit}`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/dashboard/mcp/timings?limit=${limit}`, {
+    ttl: 5000,
+  })
 }
 
 export async function fetchSettings() {
-  const res = await fetch(`${BASE}/settings`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/settings`, {
+    ttl: 30000, // 30s cache - settings rarely change
+  })
 }
 
 export async function fetchPolicies() {
-  const res = await fetch(`${BASE}/settings/policies`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/settings/policies`, {
+    ttl: 30000,
+  })
 }
 
 export async function updatePolicies(body: {
@@ -59,6 +72,11 @@ export async function updatePolicies(body: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
+  
+  // Invalidate settings cache after update
+  apiCache.invalidate(`fetch:${BASE}/settings/policies`)
+  apiCache.invalidate(`fetch:${BASE}/settings`)
+  
   return res.json()
 }
 
@@ -77,10 +95,21 @@ export async function approveAction(action_id: string, decision: "YES" | "NO") {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision }),
   })
+  
+  // Invalidate related caches after approval
+  apiCache.invalidatePattern('dashboard/stats')
+  apiCache.invalidatePattern('dashboard/activity')
+  
   return res.json()
 }
 
 export async function fetchLogs(limit = 50) {
-  const res = await fetch(`${BASE}/logs?limit=${limit}`, { cache: "no-store" })
-  return res.json()
+  return cachedFetch(`${BASE}/logs?limit=${limit}`, {
+    ttl: 10000,
+  })
+}
+
+// Utility to force refresh all caches
+export function refreshAllCaches() {
+  apiCache.clear()
 }
