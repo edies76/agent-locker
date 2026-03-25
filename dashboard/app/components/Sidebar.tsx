@@ -41,14 +41,14 @@ export default function Sidebar() {
   }, [])
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-60 bg-brand-sidebar flex flex-col z-50 border-r border-brand-border">
+    <aside className="fixed left-0 top-0 h-screen w-60 bg-brand-sidebar/80 backdrop-blur-xl flex flex-col z-50 border-r border-slate-700/40 shadow-2xl shadow-slate-950/30">
       {/* Logo / Branding */}
-      <div className="px-5 py-6 border-b border-brand-border">
+      <div className="px-5 py-6 border-b border-slate-700/40">
         <div className="flex items-center gap-2">
           <span className="text-2xl">🦞</span>
           <div>
             <h1 className="text-white font-bold text-lg leading-tight">Agent-Lock</h1>
-            <p className="text-slate-500 text-xs leading-tight">Security Dashboard</p>
+            <p className="text-slate-400 text-xs leading-tight">Control Center</p>
           </div>
         </div>
       </div>
@@ -63,11 +63,11 @@ export default function Sidebar() {
               href={item.href}
               className={`
                 flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-                transition-all duration-150 relative
+                transition-all duration-200 relative
                 ${
                   isActive
-                    ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/40"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                    ? "bg-sky-500/80 text-slate-900 shadow-lg shadow-sky-700/30 border border-sky-300/60"
+                    : "text-slate-300 hover:text-white hover:bg-slate-800/60 border border-transparent"
                 }
               `}
             >
@@ -84,12 +84,12 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-brand-border">
+      <div className="px-5 py-4 border-t border-slate-700/40">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-          <span className="text-slate-600 text-xs">v1.0.0</span>
+          <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+          <span className="text-slate-400 text-xs">v1.0.0</span>
         </div>
-        <p className="text-slate-700 text-xs mt-1">Agent-Lock Dashboard</p>
+        <p className="text-slate-500 text-xs mt-1">Governance Dashboard</p>
       </div>
     </aside>
   )

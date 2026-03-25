@@ -22,6 +22,8 @@ export default function ActionRow({ action, index }: ActionRowProps) {
     router.push(detailHref)
   }
 
+  const gatewayMs = action.execution?.timings_ms?.total_gateway_ms
+
   return (
     <tr
       onClick={openDetail}
@@ -76,6 +78,11 @@ export default function ActionRow({ action, index }: ActionRowProps) {
         {/* Agent */}
         <td className="px-4 py-3 text-xs text-slate-500 font-mono">
           {action.agent_id ?? "—"}
+        </td>
+
+        {/* Gateway latency */}
+        <td className="px-4 py-3 text-xs text-slate-400 font-mono whitespace-nowrap">
+          {typeof gatewayMs === "number" ? `${gatewayMs.toFixed(1)} ms` : "—"}
         </td>
 
         {/* Analysis preview */}

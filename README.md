@@ -9,6 +9,49 @@ Originally built for **OpenClaw**, Agent-Lock now ships a full **MCP Gateway** t
 ## 📐 Architecture Overview
 
 ```
+
+## 🧭 Integration Modes (Choose One or Both)
+
+Agent-Lock has two independent entry points that share the same backend.
+
+| Mode | Folder | Primary users | What it intercepts |
+|---|---|---|---|
+| MCP Gateway | `mcp_server/` | Claude Desktop, ChatGPT MCP clients | MCP tool calls (`server__tool`) |
+| OpenClaw Plugin | `plugin/agent-lock-plugin/` | OpenClaw users | OpenClaw `before_tool_call` events |
+
+Shared backend capabilities for both:
+- Risk classification and policy enforcement
+- Telegram human approval flow
+- Auth token scoping/injection
+- Audit logs and dashboard activity stream
+
+---
+
+## 🧑‍💼 External Onboarding (Recommended Order)
+
+For external collaborators and first-time setup, use this sequence:
+
+1. Start backend and verify health endpoint.
+2. Pick integration mode:
+  - MCP only (Claude/Desktop or MCP clients)
+  - OpenClaw plugin only
+  - Both in parallel
+3. Configure only the selected mode.
+4. Run one safe read-only call and validate:
+  - appears in Dashboard Activity
+  - has risk classification
+  - has execution timing metadata
+5. Run one HIGH-risk sample and confirm approval path.
+6. Confirm logs:
+  - backend audit log
+  - plugin runtime logs (if OpenClaw mode)
+
+Operational check:
+- If backend is down, calls are blocked by design (fail-closed).
+- If Telegram is misconfigured, HIGH/CRITICAL actions will not progress.
+- Use separate Telegram bots for OpenClaw and Agent-Lock to avoid update conflicts.
+
+---
 ┌─────────────────────────────────────────────────┐
 │           AI Client (Claude / OpenClaw)         │
 └───────────────────────┬─────────────────────────┘

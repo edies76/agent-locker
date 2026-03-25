@@ -23,6 +23,19 @@ export interface Action {
     request_args?: Record<string, unknown>
     response_summary?: string
     error?: string
+    timings_ms?: {
+      validation_wait_ms?: number
+      target_exec_ms?: number
+      total_gateway_ms?: number
+      baseline_direct_ms?: number
+      agent_lock_overhead_ms?: number
+    }
+    benchmark?: {
+      enabled?: boolean
+      mode?: string
+      success?: boolean
+      note?: string
+    }
     updated_at?: string
   }
 }
@@ -60,6 +73,34 @@ export interface MCPTargetsResponse {
   servers: MCPTargetServer[]
   configured_count: number
   connected_count: number
+}
+
+export interface MCPTimingAverages {
+  total_gateway_ms: number | null
+  validation_wait_ms: number | null
+  target_exec_ms: number | null
+  baseline_direct_ms: number | null
+  agent_lock_overhead_ms: number | null
+}
+
+export interface MCPTimingsResponse {
+  sample_size: number
+  with_total: number
+  with_baseline: number
+  average_ms: MCPTimingAverages
+  latest: Array<{
+    server_name?: string
+    tool_name?: string
+    success?: boolean
+    updated_at?: string
+    timings_ms?: {
+      total_gateway_ms?: number
+      validation_wait_ms?: number
+      target_exec_ms?: number
+      baseline_direct_ms?: number
+      agent_lock_overhead_ms?: number
+    }
+  }>
 }
 
 export interface Settings {

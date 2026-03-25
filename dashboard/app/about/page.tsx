@@ -61,6 +61,47 @@ export default function AboutPage() {
         </div>
       </section>
 
+      {/* Platform separation */}
+      <section className="bg-brand-card border border-brand-border rounded-xl p-6 space-y-4">
+        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+          🧩 Two Components, Two Responsibilities
+        </h2>
+        <p className="text-slate-400 text-sm leading-relaxed">
+          Agent-Lock is intentionally split so external teams can adopt only what they need.
+          The MCP Gateway and the OpenClaw Plugin are separate integration surfaces that both
+          call the same backend governance API.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-brand-bg border border-brand-border rounded-xl p-4 space-y-2">
+            <p className="text-sm font-bold text-indigo-300">MCP Gateway (mcp_server)</p>
+            <ul className="space-y-1.5 text-xs text-slate-400">
+              <li>• Used by Claude Desktop / ChatGPT MCP clients</li>
+              <li>• Proxies target MCP tools with naming server__tool</li>
+              <li>• Calls backend /intercept and /status for every tool call</li>
+              <li>• Best for teams standardizing on MCP ecosystem</li>
+            </ul>
+          </div>
+
+          <div className="bg-brand-bg border border-brand-border rounded-xl p-4 space-y-2">
+            <p className="text-sm font-bold text-amber-300">OpenClaw Plugin (plugin/agent-lock-plugin)</p>
+            <ul className="space-y-1.5 text-xs text-slate-400">
+              <li>• Native interception inside OpenClaw runtime</li>
+              <li>• Captures session intent and guards before_tool_call</li>
+              <li>• Polls backend decisions and injects scoped auth token</li>
+              <li>• Best for OpenClaw-first deployments</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3">
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Both paths share the same governance backend, policies, audit logs, Telegram approvals,
+            and dashboard. This means one policy model and one audit trail across clients.
+          </p>
+        </div>
+      </section>
+
       {/* Risk Classification Pipeline */}
       <section className="bg-brand-card border border-brand-border rounded-xl p-6 space-y-5">
         <h2 className="text-lg font-bold text-white flex items-center gap-2">

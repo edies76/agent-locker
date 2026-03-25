@@ -1,11 +1,11 @@
 {
     "name": "agent-lock-plugin",
     "displayName": "Agent-Lock",
-    "description": "Governance and security layer: intercepts tool calls, validates intent with Gemini, classifies risk, and requires human approval for critical actions.",
+    "description": "Governance and security layer: intercepts tool calls, validates intent with Gemini, classifies risk, requires human approval for critical actions, and supports structured logs via AGENT_LOCK_LOG_LEVEL.",
     "version": "1.0.0",
     "author": "Agent-Lock",
     "main": "dist/index.js",
     "engines": {
         "openclaw": ">=1.0.0"
     }
-}
+}

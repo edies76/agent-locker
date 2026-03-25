@@ -35,6 +35,11 @@ export async function fetchMCPTargets() {
   return res.json()
 }
 
+export async function fetchMCPTimings(limit = 100) {
+  const res = await fetch(`${BASE}/dashboard/mcp/timings?limit=${limit}`, { cache: "no-store" })
+  return res.json()
+}
+
 export async function fetchSettings() {
   const res = await fetch(`${BASE}/settings`, { cache: "no-store" })
   return res.json()

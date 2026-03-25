@@ -48,6 +48,9 @@ export default function ActivityDetailPage() {
     return targets.servers.filter((s) => s.connected).map((s) => s.name)
   }, [targets])
 
+  const timings = item?.execution?.timings_ms
+  const benchmark = item?.execution?.benchmark
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -111,6 +114,46 @@ export default function ActivityDetailPage() {
                 <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Connected MCP Servers Now</p>
                 <p className="text-slate-300">{connectedNames.length > 0 ? connectedNames.join(", ") : "None"}</p>
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+            <h2 className="text-sm font-semibold text-slate-200 mb-3">Timing Breakdown</h2>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Gateway total</p>
+                <p className="font-mono text-slate-200">
+                  {typeof timings?.total_gateway_ms === "number" ? `${timings.total_gateway_ms.toFixed(1)} ms` : "N/A"}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Validation wait</p>
+                <p className="font-mono text-slate-200">
+                  {typeof timings?.validation_wait_ms === "number" ? `${timings.validation_wait_ms.toFixed(1)} ms` : "N/A"}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Target execute</p>
+                <p className="font-mono text-slate-200">
+                  {typeof timings?.target_exec_ms === "number" ? `${timings.target_exec_ms.toFixed(1)} ms` : "N/A"}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Direct baseline</p>
+                <p className="font-mono text-slate-200">
+                  {typeof timings?.baseline_direct_ms === "number" ? `${timings.baseline_direct_ms.toFixed(1)} ms` : "N/A"}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 border-t border-slate-800 pt-3 text-sm">
+              <p className="text-slate-500 text-xs uppercase tracking-wider mb-1">Agent-Lock overhead estimate</p>
+              <p className="font-mono text-slate-200">
+                {typeof timings?.agent_lock_overhead_ms === "number" ? `${timings.agent_lock_overhead_ms.toFixed(1)} ms` : "N/A"}
+              </p>
+              <p className="text-xs text-slate-500 mt-2">
+                {benchmark?.note ?? "No benchmark note"}
+              </p>
             </div>
           </div>
 

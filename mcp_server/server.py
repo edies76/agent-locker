@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Any
 
 import httpx
@@ -112,6 +113,34 @@ _PATH_ARG_KEYS = {
     "target_path",
     "includePattern",
 }
+
+
+def _is_probably_read_only_tool(tool_name: str) -> bool:
+    """
+    Heuristic read-only detector for safe latency baseline probes.
+
+    We only run direct baseline re-execution for tools that are very likely
+    non-mutating to avoid accidental side effects.
+    """
+    lowered = (tool_name or "").lower()
+    readonly_prefixes = (
+        "read",
+        "get",
+        "list",
+        "fetch",
+        "search",
+        "query",
+        "status",
+        "show",
+        "describe",
+    )
+    readonly_keywords = (
+        "read_file",
+        "list_dir",
+        "grep",
+        "status",
+    )
+    return lowered.startswith(readonly_prefixes) or any(k in lowered for k in readonly_keywords)
 
 
 def _normalize_vscode_args(args: dict[str, Any]) -> dict[str, Any]:
@@ -352,6 +381,7 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
         name: str,
         arguments: dict[str, Any] | None,
     ) -> list[types.TextContent]:
+        total_start = time.perf_counter()
         args: dict[str, Any] = arguments or {}
         logger.info(f"call_tool: {name}  args_keys={list(args.keys())}")
 
@@ -386,6 +416,7 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
             f"Validating {server_name}.{tool_name} ... "
             f"| intent='{_last_user_intent[:60]}'"
         )
+        validate_start = time.perf_counter()
         validation = await validate_and_wait(
             server_name=server_name,
             tool_name=tool_name,
@@ -393,6 +424,7 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
             config=config,
             user_intent=_last_user_intent,  # ← pass captured intent to backend
         )
+        validation_ms = round((time.perf_counter() - validate_start) * 1000.0, 2)
 
         decision = validation.get("decision", "blocked")
         risk_level = validation.get("risk_level", "UNKNOWN")
@@ -448,7 +480,46 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
 
         # ── 2. Execute on target server ───────────────────────────────────────
         logger.info(f"Executing {server_name}.{tool_name} ...")
+        exec_start = time.perf_counter()
         result = await proxy.execute_tool(server_name, tool_name, args)
+        target_exec_ms = round((time.perf_counter() - exec_start) * 1000.0, 2)
+
+        timings_ms: dict[str, float] = {
+            "validation_wait_ms": validation_ms,
+            "target_exec_ms": target_exec_ms,
+            "total_gateway_ms": round((time.perf_counter() - total_start) * 1000.0, 2),
+        }
+
+        baseline_result: dict[str, Any] = {
+            "enabled": False,
+            "mode": "none",
+            "note": "Baseline benchmark not attempted",
+        }
+
+        # Optional direct-baseline probe for read-only tools.
+        # This quantifies gateway overhead vs direct target execution time.
+        benchmark_enabled = os.environ.get("AGENT_LOCK_BENCHMARK_READONLY", "1") == "1"
+        if benchmark_enabled and _is_probably_read_only_tool(tool_name):
+            baseline_result["enabled"] = True
+            baseline_result["mode"] = "readonly_direct_replay"
+            try:
+                baseline_start = time.perf_counter()
+                baseline_raw = await proxy.execute_tool(server_name, tool_name, args)
+                baseline_ms = round((time.perf_counter() - baseline_start) * 1000.0, 2)
+                timings_ms["baseline_direct_ms"] = baseline_ms
+                timings_ms["agent_lock_overhead_ms"] = round(
+                    timings_ms["total_gateway_ms"] - baseline_ms,
+                    2,
+                )
+                baseline_result["success"] = bool(baseline_raw.get("success"))
+                baseline_result["note"] = "Baseline direct replay completed"
+            except Exception as exc:
+                baseline_result["success"] = False
+                baseline_result["note"] = f"Baseline replay failed: {exc}"
+        elif not benchmark_enabled:
+            baseline_result["note"] = "Disabled by AGENT_LOCK_BENCHMARK_READONLY=0"
+        else:
+            baseline_result["note"] = "Skipped: tool is not read-only"
 
         if not result.get("success"):
             await _report_execution(
@@ -460,6 +531,8 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
                 request_args=args,
                 response_summary="",
                 error=result.get("error", "Unknown error"),
+                timings_ms=timings_ms,
+                benchmark=baseline_result,
             )
             return [
                 types.TextContent(
@@ -482,6 +555,8 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
             request_args=args,
             response_summary=_summarise_result(raw),
             error="",
+            timings_ms=timings_ms,
+            benchmark=baseline_result,
         )
         return _normalise_result(raw)
 
@@ -516,6 +591,8 @@ async def _report_execution(
     request_args: dict[str, Any],
     response_summary: str,
     error: str,
+    timings_ms: dict[str, float],
+    benchmark: dict[str, Any],
 ) -> None:
     """Send execution metadata to backend for activity-detail dashboards."""
     if not action_id:
@@ -529,6 +606,8 @@ async def _report_execution(
         "request_args": request_args,
         "response_summary": response_summary,
         "error": error,
+        "timings_ms": timings_ms,
+        "benchmark": benchmark,
     }
 
     try:

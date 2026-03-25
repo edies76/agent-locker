@@ -185,6 +185,8 @@ class MCPExecutionPayload(BaseModel):
     request_args: dict[str, Any] = {}
     response_summary: str = ""
     error: str = ""
+    timings_ms: dict[str, float] = {}
+    benchmark: dict[str, Any] = {}
 
 
 @router.post("/mcp/heartbeat")
@@ -210,6 +212,8 @@ async def mcp_execution(payload: MCPExecutionPayload) -> dict[str, str]:
         "request_args": payload.request_args,
         "response_summary": payload.response_summary,
         "error": payload.error,
+        "timings_ms": payload.timings_ms,
+        "benchmark": payload.benchmark,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     return {"status": "ok"}
@@ -237,6 +241,47 @@ async def get_mcp_status() -> dict[str, Any]:
         "last_seen": _mcp_last_seen.isoformat(),
         "seconds_ago": round(seconds_ago),
         "info": _mcp_info,
+    }
+
+
+@router.get("/mcp/timings")
+async def get_mcp_timings(limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    """Return aggregate timing metrics to estimate Agent-Lock latency overhead."""
+    items = list(_mcp_executions.values())
+    items.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+    sample = items[:limit]
+
+    def _collect(key: str) -> list[float]:
+        values: list[float] = []
+        for item in sample:
+            v = item.get("timings_ms", {}).get(key)
+            if isinstance(v, (int, float)):
+                values.append(float(v))
+        return values
+
+    def _avg(values: list[float]) -> float | None:
+        if not values:
+            return None
+        return round(sum(values) / len(values), 2)
+
+    totals = _collect("total_gateway_ms")
+    validations = _collect("validation_wait_ms")
+    targets = _collect("target_exec_ms")
+    baselines = _collect("baseline_direct_ms")
+    overheads = _collect("agent_lock_overhead_ms")
+
+    return {
+        "sample_size": len(sample),
+        "with_total": len(totals),
+        "with_baseline": len(baselines),
+        "average_ms": {
+            "total_gateway_ms": _avg(totals),
+            "validation_wait_ms": _avg(validations),
+            "target_exec_ms": _avg(targets),
+            "baseline_direct_ms": _avg(baselines),
+            "agent_lock_overhead_ms": _avg(overheads),
+        },
+        "latest": sample[:20],
     }
 
 

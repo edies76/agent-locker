@@ -21,6 +21,38 @@ const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
 
 const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? "500");
 const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? "2000");
+const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? "info").toLowerCase();
+
+const LEVEL_WEIGHT: Record<string, number> = {
+    debug: 10,
+    info: 20,
+    warn: 30,
+    error: 40,
+};
+
+function shouldLog(level: "debug" | "info" | "warn" | "error"): boolean {
+    const current = LEVEL_WEIGHT[LOG_LEVEL] ?? LEVEL_WEIGHT.info;
+    return LEVEL_WEIGHT[level] >= current;
+}
+
+function log(
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    context?: Record<string, unknown>,
+): void {
+    if (!shouldLog(level)) return;
+    const suffix = context ? ` | ${JSON.stringify(context)}` : "";
+    const line = `[Agent-Lock][${level.toUpperCase()}] ${message}${suffix}`;
+    if (level === "warn") {
+        console.warn(line);
+        return;
+    }
+    if (level === "error") {
+        console.error(line);
+        return;
+    }
+    console.log(line);
+}
 
 // Cache: session → latest user message
 const intentCache = new Map<string, string>();
@@ -43,6 +75,7 @@ function getIntent(key: string): string {
 const pending = new Map<string, (d: "approve" | "deny") => void>();
 
 async function post(url: string, body: unknown) {
+    const start = Date.now();
     const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN;
     const r = await fetch(url, {
         method: "POST",
@@ -52,12 +85,23 @@ async function post(url: string, body: unknown) {
         },
         body: JSON.stringify(body),
     });
+    log("debug", "HTTP POST completed", {
+        url,
+        status: r.status,
+        latency_ms: Date.now() - start,
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
 }
 
 async function get(url: string) {
+    const start = Date.now();
     const r = await fetch(url);
+    log("debug", "HTTP GET completed", {
+        url,
+        status: r.status,
+        latency_ms: Date.now() - start,
+    });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
 }
@@ -171,9 +215,15 @@ export default function register(api: any) {
                 const storedFallback = (fallbackKey !== sessionKey) ? store(fallbackKey, text) : false;
 
                 if (storedPrimary) {
-                    console.log(`[Agent-Lock] 📝 Intent captured: "${text.slice(0, 80)}"`);
+                    log("info", "Intent captured", {
+                        session_key: sessionKey,
+                        preview: text.slice(0, 80),
+                    });
                 } else if (storedFallback) {
-                    console.log(`[Agent-Lock] 📝 Intent captured: "${text.slice(0, 80)}"`);
+                    log("info", "Intent captured (fallback key)", {
+                        session_key: fallbackKey,
+                        preview: text.slice(0, 80),
+                    });
                 }
             }
             return undefined;
@@ -210,7 +260,7 @@ export default function register(api: any) {
                 return { success: false, message: "Action not found." };
             },
         });
-        console.log("[Agent-Lock] ✅ agent_lock_respond tool registered");
+        log("info", "agent_lock_respond tool registered");
     }
 
     // ── Intercept tool calls ──────────────────────────────────────────────────
@@ -234,13 +284,16 @@ export default function register(api: any) {
             ? `"${userIntent.slice(0, 60)}"`
             : "(not captured — Gemini semantic validation will be skipped)";
 
-        console.log(
-            `[Agent-Lock] 🔍 ${toolName}(${(rawCommand ?? JSON.stringify(args)).slice(0, 80)}) ` +
-            `| intent: ${intentPreview}`
-        );
+        log("info", "Intercepting tool call", {
+            tool_name: toolName,
+            session_key: sessionKey,
+            raw_preview: (rawCommand ?? JSON.stringify(args)).slice(0, 80),
+            intent_preview: intentPreview,
+        });
 
         let result: any;
         try {
+            const interceptStart = Date.now();
             result = await post(`${BACKEND_URL}/intercept`, {
                 tool_name: toolName,
                 args,
@@ -250,13 +303,27 @@ export default function register(api: any) {
                 raw_command: rawCommand,
                 subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN,
             });
+            log("debug", "Intercept response received", {
+                tool_name: toolName,
+                status: result?.status,
+                action_id: result?.action_id,
+                latency_ms: Date.now() - interceptStart,
+            });
         } catch {
-            console.warn(`[Agent-Lock] ❌ Backend unavailable — blocking tool: ${toolName}`);
+            log("error", "Backend unavailable, fail-closed block", {
+                tool_name: toolName,
+                session_key: sessionKey,
+            });
             return { block: true, blockReason: "🦞 Agent-Lock backend unavailable — action blocked (fail-closed)." };
         }
 
         const { action_id, status, analysis, auth_token } = result;
-        console.log(`[Agent-Lock] → ${status} | ${String(analysis).slice(0, 80)}`);
+        log("info", "Decision received", {
+            action_id,
+            tool_name: toolName,
+            status,
+            analysis_preview: String(analysis).slice(0, 80),
+        });
 
         // If the backend already returned an injectable Auth0 token (AUTO_APPROVED path),
         // attach it to the tool call so downstream integrations (e.g. Gmail) can rely
@@ -278,7 +345,11 @@ export default function register(api: any) {
 
             event.params = params;
 
-            console.log("[Agent-Lock] 🔑 Auth token injected into tool params (AUTO_APPROVED).");
+            log("debug", "Auth token injected", {
+                action_id,
+                tool_name: toolName,
+                source: "AUTO_APPROVED",
+            });
         }
 
         if (status === "AUTO_APPROVED" || status === "APPROVED") return undefined;
@@ -293,6 +364,12 @@ export default function register(api: any) {
                         if (s.status !== "PENDING") {
                             clearInterval(iv);
                             pending.delete(action_id);
+                            log("info", "Pending decision resolved", {
+                                action_id,
+                                tool_name: toolName,
+                                final_status: s.status,
+                                polls,
+                            });
                             // If the action is now approved, inject the token (if any) before resuming.
                             if (s.status === "APPROVED" || s.status === "AUTO_APPROVED") {
                                 const token = s.auth_token as string | undefined;
@@ -309,7 +386,11 @@ export default function register(api: any) {
 
                                     event.params = params;
 
-                                    console.log("[Agent-Lock] 🔑 Auth token injected into tool params (APPROVED).");
+                                    log("debug", "Auth token injected", {
+                                        action_id,
+                                        tool_name: toolName,
+                                        source: "APPROVED",
+                                    });
                                 }
                                 resolve("approve");
                             } else {
@@ -323,12 +404,23 @@ export default function register(api: any) {
                     // (setInterval can't change its delay; this is a best-effort fallback)
                     if (polls === 10 && STATUS_POLL_MS < STATUS_POLL_MS_MAX) {
                         clearInterval(iv);
+                        log("debug", "Switching to slower polling cadence", {
+                            action_id,
+                            from_ms: STATUS_POLL_MS,
+                            to_ms: STATUS_POLL_MS_MAX,
+                        });
                         const slowIv = setInterval(async () => {
                             try {
                                 const s = await get(`${BACKEND_URL}/status/${action_id}`);
                                 if (s.status !== "PENDING") {
                                     clearInterval(slowIv);
                                     pending.delete(action_id);
+                                    log("info", "Pending decision resolved", {
+                                        action_id,
+                                        tool_name: toolName,
+                                        final_status: s.status,
+                                        polls,
+                                    });
                                     resolve(s.status === "APPROVED" || s.status === "AUTO_APPROVED" ? "approve" : "deny");
                                 }
                             } catch {}
@@ -337,11 +429,25 @@ export default function register(api: any) {
                 }, Math.max(100, STATUS_POLL_MS));
             });
             if (decision === "approve") return undefined;
+            log("warn", "Tool call blocked after pending flow", {
+                action_id,
+                tool_name: toolName,
+            });
             return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
         }
 
+        log("warn", "Tool call blocked by immediate decision", {
+            action_id,
+            tool_name: toolName,
+            status,
+        });
         return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
     });
 
-    console.log("🦞 Agent-Lock active | backend=" + BACKEND_URL);
+    log("info", "Plugin active", {
+        backend_url: BACKEND_URL,
+        poll_ms: STATUS_POLL_MS,
+        poll_ms_max: STATUS_POLL_MS_MAX,
+        log_level: LOG_LEVEL,
+    });
 }

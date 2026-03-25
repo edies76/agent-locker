@@ -1,277 +1,321 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
-import { fetchActivity } from "@/lib/api"
-import { Action, RiskLevel, ActionStatus } from "@/types"
-import ActionRow from "../components/ActionRow"
+import Link from "next/link"
+import { useEffect, useMemo, useState, useCallback } from "react"
+import { fetchActivity, fetchMCPTargets } from "@/lib/api"
+import { Action, MCPTargetsResponse } from "@/types"
 
-type FilterRisk = "ALL" | RiskLevel
-type FilterStatus = "ALL" | ActionStatus
+type FilterRisk = "ALL" | "LOW" | "HIGH" | "CRITICAL"
+type FilterStatus = "ALL" | "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED"
 
-const riskFilters: FilterRisk[] = ["ALL", "LOW", "HIGH", "CRITICAL"]
-const statusFilters: FilterStatus[] = ["ALL", "PENDING", "AUTO_APPROVED", "APPROVED", "BLOCKED"]
+function avg(values: number[]): number | null {
+  if (!values.length) return null
+  return values.reduce((a, b) => a + b, 0) / values.length
+}
 
-function Skeleton({ className }: { className?: string }) {
-  return <div className={`animate-pulse bg-slate-700/40 rounded-lg ${className ?? ""}`} />
+function toMs(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null
 }
 
 export default function ActivityPage() {
   const [actions, setActions] = useState<Action[]>([])
+  const [targets, setTargets] = useState<MCPTargetsResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [riskFilter, setRiskFilter] = useState<FilterRisk>("ALL")
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("ALL")
   const [search, setSearch] = useState("")
-  const isFetchingRef = useRef(false)
 
-  const loadActivity = useCallback(async () => {
-    if (isFetchingRef.current) return
-    isFetchingRef.current = true
-
+  const load = useCallback(async () => {
     try {
-      const data = await fetchActivity(50)
-      if (Array.isArray(data)) {
-        setActions(data)
-        setError(false)
-      }
+      const [activityData, targetData] = await Promise.all([
+        fetchActivity(120),
+        fetchMCPTargets(),
+      ])
+      setActions(Array.isArray(activityData) ? activityData : [])
+      setTargets(targetData)
+      setError(null)
     } catch {
-      setError(true)
+      setError("No se pudo cargar la actividad")
     } finally {
       setLoading(false)
-      isFetchingRef.current = false
     }
   }, [])
 
   useEffect(() => {
-    loadActivity()
-
+    load()
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        loadActivity()
+        load()
       }
     }, 5000)
-
     return () => clearInterval(interval)
-  }, [loadActivity])
+  }, [load])
 
-  const filtered = actions.filter((a) => {
-    if (riskFilter !== "ALL" && a.risk_level !== riskFilter) return false
-    if (statusFilter !== "ALL" && a.decision !== statusFilter) return false
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      return (
-        a.tool_name.toLowerCase().includes(q) ||
-        a.analysis?.toLowerCase().includes(q) ||
-        a.user_intent?.toLowerCase().includes(q) ||
-        a.agent_id?.toLowerCase().includes(q) ||
-        false
-      )
+  const connectedServers = useMemo(() => {
+    return (targets?.servers ?? []).filter((s) => s.connected).map((s) => s.name)
+  }, [targets])
+
+  const filtered = useMemo(() => {
+    return actions.filter((a) => {
+      if (riskFilter !== "ALL" && a.risk_level !== riskFilter) return false
+      if (statusFilter !== "ALL" && a.decision !== statusFilter) return false
+
+      const query = search.trim().toLowerCase()
+      if (!query) return true
+
+      const haystack = [
+        a.tool_name,
+        a.agent_id ?? "",
+        a.analysis ?? "",
+        a.execution?.server_name ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+
+      return haystack.includes(query)
+    })
+  }, [actions, riskFilter, statusFilter, search])
+
+  const timingSummary = useMemo(() => {
+    const totals: number[] = []
+    const overheads: number[] = []
+
+    for (const action of filtered) {
+      const total = toMs(action.execution?.timings_ms?.total_gateway_ms)
+      if (total !== null) totals.push(total)
+
+      const overhead = toMs(action.execution?.timings_ms?.agent_lock_overhead_ms)
+      if (overhead !== null) overheads.push(overhead)
     }
-    return true
-  })
 
-  const riskButtonColor: Record<FilterRisk, string> = {
-    ALL: "bg-slate-700 text-slate-200 border-slate-600",
-    LOW: "bg-emerald-900/60 text-emerald-300 border-emerald-700/60",
-    HIGH: "bg-amber-900/60 text-amber-300 border-amber-700/60",
-    CRITICAL: "bg-red-900/60 text-red-300 border-red-700/60",
-  }
+    return {
+      measured: totals.length,
+      avgGateway: avg(totals),
+      avgOverhead: avg(overheads),
+    }
+  }, [filtered])
 
-  const statusButtonColor: Record<FilterStatus, string> = {
-    ALL: "bg-slate-700 text-slate-200 border-slate-600",
-    PENDING: "bg-amber-900/60 text-amber-300 border-amber-700/60",
-    AUTO_APPROVED: "bg-blue-900/60 text-blue-300 border-blue-700/60",
-    APPROVED: "bg-emerald-900/60 text-emerald-300 border-emerald-700/60",
-    BLOCKED: "bg-red-900/60 text-red-300 border-red-700/60",
-  }
+  const toolDurationRows = useMemo(() => {
+    const map = new Map<string, { count: number; total: number; serverNames: Set<string> }>()
 
-  const inactiveClass =
-    "bg-brand-card text-slate-500 border-brand-border hover:text-slate-300 hover:border-slate-600"
+    for (const action of filtered) {
+      const total = toMs(action.execution?.timings_ms?.total_gateway_ms)
+      if (total === null) continue
+
+      const key = action.tool_name
+      const row = map.get(key) ?? { count: 0, total: 0, serverNames: new Set<string>() }
+      row.count += 1
+      row.total += total
+      if (action.execution?.server_name) row.serverNames.add(action.execution.server_name)
+      map.set(key, row)
+    }
+
+    return Array.from(map.entries())
+      .map(([tool, data]) => ({
+        tool,
+        count: data.count,
+        avgMs: data.total / data.count,
+        servers: Array.from(data.serverNames),
+      }))
+      .sort((a, b) => b.avgMs - a.avgMs)
+  }, [filtered])
+
+  const groupedByConnectedServer = useMemo(() => {
+    const groups = connectedServers.map((serverName) => {
+      const items = filtered.filter((a) => a.execution?.server_name === serverName)
+      const totals = items
+        .map((a) => toMs(a.execution?.timings_ms?.total_gateway_ms))
+        .filter((v): v is number => v !== null)
+
+      return {
+        serverName,
+        count: items.length,
+        avgMs: avg(totals),
+        items: items.slice(0, 8),
+      }
+    })
+
+    return groups
+  }, [connectedServers, filtered])
+
+  const riskFilters: FilterRisk[] = ["ALL", "LOW", "HIGH", "CRITICAL"]
+  const statusFilters: FilterStatus[] = ["ALL", "PENDING", "AUTO_APPROVED", "APPROVED", "BLOCKED"]
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Activity</h1>
-          <p className="text-slate-500 text-sm mt-0.5">
-            All intercepted tool calls — polling every 5s
+      <section className="glass-panel rounded-2xl px-6 py-5 border">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.18em] text-sky-300">Activity Intelligence</p>
+            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">Tool Timing y Separacion por MCP</h1>
+            <p className="text-sm text-slate-300/80 mt-1">
+              Cada llamada muestra su duracion y cada servidor MCP conectado tiene su bloque independiente.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={load} className="btn-glow text-sm font-semibold px-4 py-2 rounded-lg">
+              Actualizar
+            </button>
+            <span className="chip text-xs text-slate-300 rounded-full px-3 py-1">
+              {filtered.length} eventos visibles
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="glass-panel rounded-xl p-4 border">
+          <p className="text-xs uppercase tracking-wider text-slate-400">Con timing</p>
+          <p className="text-3xl font-semibold text-white mt-1">{timingSummary.measured}</p>
+        </div>
+        <div className="glass-panel rounded-xl p-4 border">
+          <p className="text-xs uppercase tracking-wider text-slate-400">Gateway promedio</p>
+          <p className="text-3xl font-semibold text-sky-300 mt-1">
+            {timingSummary.avgGateway !== null ? `${timingSummary.avgGateway.toFixed(1)} ms` : "N/A"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-600 font-mono">
-            {filtered.length} / {actions.length} actions
-          </span>
-          <button
-            onClick={loadActivity}
-            className="text-xs text-indigo-400 hover:text-indigo-300 bg-brand-card border border-brand-border rounded-lg px-3 py-2 transition-colors"
-          >
-            ↻ Refresh
-          </button>
+        <div className="glass-panel rounded-xl p-4 border">
+          <p className="text-xs uppercase tracking-wider text-slate-400">Overhead promedio</p>
+          <p className="text-3xl font-semibold text-amber-300 mt-1">
+            {timingSummary.avgOverhead !== null ? `${timingSummary.avgOverhead.toFixed(1)} ms` : "N/A"}
+          </p>
         </div>
-      </div>
-
-      {/* Filter bar */}
-      <div className="bg-brand-card border border-brand-border rounded-xl p-4 space-y-3">
-        {/* Search */}
-        <input
-          type="text"
-          placeholder="Search by tool, analysis, agent..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-600 transition-colors"
-        />
-
-        {/* Risk filters */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-600 uppercase tracking-wider mr-1">Risk:</span>
-          {riskFilters.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRiskFilter(r)}
-              className={`
-                text-xs font-semibold px-2.5 py-1 rounded-full border transition-all
-                ${riskFilter === r ? riskButtonColor[r] : inactiveClass}
-              `}
-            >
-              {r}
-            </button>
-          ))}
+        <div className="glass-panel rounded-xl p-4 border">
+          <p className="text-xs uppercase tracking-wider text-slate-400">MCP conectados</p>
+          <p className="text-3xl font-semibold text-emerald-300 mt-1">{connectedServers.length}</p>
         </div>
+      </section>
 
-        {/* Status filters */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-slate-600 uppercase tracking-wider mr-1">Status:</span>
+      <section className="glass-panel rounded-xl p-4 border space-y-3">
+        <div className="flex flex-col md:flex-row gap-3 md:items-center">
+          <input
+            type="text"
+            placeholder="Buscar por tool, server o analisis"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-2 text-sm focus:outline-none focus:border-sky-400/60"
+          />
+          <div className="flex flex-wrap gap-2">
+            {riskFilters.map((r) => (
+              <button
+                key={r}
+                onClick={() => setRiskFilter(r)}
+                className={`chip rounded-full text-xs px-3 py-1 ${riskFilter === r ? "text-sky-200 border-sky-300/70" : "text-slate-300"}`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
           {statusFilters.map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
-              className={`
-                text-xs font-semibold px-2.5 py-1 rounded-full border transition-all
-                ${statusFilter === s ? statusButtonColor[s] : inactiveClass}
-              `}
+              className={`chip rounded-full text-xs px-3 py-1 ${statusFilter === s ? "text-emerald-200 border-emerald-300/70" : "text-slate-300"}`}
             >
-              {s === "AUTO_APPROVED" ? "AUTO" : s}
+              {s}
             </button>
           ))}
         </div>
+      </section>
 
-        {/* Active filters summary */}
-        {(riskFilter !== "ALL" || statusFilter !== "ALL" || search) && (
-          <div className="flex items-center gap-2 pt-1">
-            <span className="text-xs text-slate-600">Active filters:</span>
-            {riskFilter !== "ALL" && (
-              <span className="text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/40 rounded-full px-2 py-0.5">
-                Risk: {riskFilter}
-              </span>
-            )}
-            {statusFilter !== "ALL" && (
-              <span className="text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/40 rounded-full px-2 py-0.5">
-                Status: {statusFilter}
-              </span>
-            )}
-            {search && (
-              <span className="text-xs bg-indigo-900/40 text-indigo-300 border border-indigo-700/40 rounded-full px-2 py-0.5">
-                Search: &ldquo;{search}&rdquo;
-              </span>
-            )}
-            <button
-              onClick={() => {
-                setRiskFilter("ALL")
-                setStatusFilter("ALL")
-                setSearch("")
-              }}
-              className="text-xs text-slate-500 hover:text-slate-300 underline ml-1"
-            >
-              Clear all
-            </button>
-          </div>
-        )}
-      </div>
+      <section className="glass-panel rounded-xl border overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-100">Recuento de duracion por tool</h2>
+          <span className="text-xs text-slate-400">Ordenado por mayor latencia promedio</span>
+        </div>
 
-      {/* Table */}
-      <div className="bg-brand-card border border-brand-border rounded-xl overflow-hidden">
-        {error ? (
-          <div className="px-5 py-12 text-center">
-            <p className="text-red-400 text-sm font-medium">⚠️ Error loading activity</p>
-            <p className="text-slate-600 text-xs mt-1">
-              Make sure the backend is running at http://localhost:8000
-            </p>
-            <button
-              onClick={loadActivity}
-              className="mt-3 text-xs text-indigo-400 hover:text-indigo-300 bg-brand-bg border border-brand-border rounded-lg px-4 py-2 transition-colors"
-            >
-              Retry
-            </button>
-          </div>
-        ) : loading ? (
-          <div className="divide-y divide-brand-border">
-            <div className="px-4 py-2.5 flex gap-4 bg-brand-bg/50">
-              {["w-28", "w-32", "w-16", "w-24", "w-24", "w-20", "flex-1"].map((w, i) => (
-                <Skeleton key={i} className={`h-3 ${w}`} />
-              ))}
-            </div>
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="px-4 py-3 flex gap-4">
-                {["w-28", "w-32", "w-16", "w-24", "w-24", "w-20", "flex-1"].map((w, j) => (
-                  <Skeleton key={j} className={`h-4 ${w}`} />
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="px-5 py-16 text-center">
-            <p className="text-4xl mb-3">🔍</p>
-            <p className="text-slate-400 font-medium">No activity yet</p>
-            <p className="text-slate-600 text-sm mt-1">
-              {actions.length > 0
-                ? "No actions match your current filters"
-                : "Tool calls will appear here once AI agents start interacting"}
-            </p>
-            {actions.length > 0 && (
-              <button
-                onClick={() => {
-                  setRiskFilter("ALL")
-                  setStatusFilter("ALL")
-                  setSearch("")
-                }}
-                className="mt-3 text-xs text-indigo-400 hover:text-indigo-300 underline"
-              >
-                Clear filters
-              </button>
-            )}
-          </div>
+        {loading ? (
+          <div className="px-4 py-6 text-sm text-slate-400">Cargando...</div>
+        ) : error ? (
+          <div className="px-4 py-6 text-sm text-red-300">{error}</div>
+        ) : toolDurationRows.length === 0 ? (
+          <div className="px-4 py-6 text-sm text-slate-400">No hay datos de timing todavia.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-brand-border bg-brand-bg/50">
-                  <th className="px-4 py-2.5 text-left whitespace-nowrap">Time</th>
-                  <th className="px-4 py-2.5 text-left">Tool</th>
-                  <th className="px-4 py-2.5 text-left">Risk</th>
-                  <th className="px-4 py-2.5 text-left">Status</th>
-                  <th className="px-4 py-2.5 text-left">Score</th>
-                  <th className="px-4 py-2.5 text-left">Agent</th>
-                  <th className="px-4 py-2.5 text-left">Analysis</th>
-                  <th className="px-3 py-2.5 text-left w-8"></th>
+                <tr className="text-xs uppercase tracking-wider text-slate-400 bg-slate-900/40 border-b border-slate-700/40">
+                  <th className="px-4 py-2 text-left">Tool</th>
+                  <th className="px-4 py-2 text-left">Avg gateway</th>
+                  <th className="px-4 py-2 text-left">Muestras</th>
+                  <th className="px-4 py-2 text-left">MCP servers</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((action, i) => (
-                  <ActionRow key={action.action_id} action={action} index={i} />
+                {toolDurationRows.map((row, idx) => (
+                  <tr key={row.tool} className={idx % 2 === 0 ? "bg-slate-900/20" : "bg-slate-900/5"}>
+                    <td className="px-4 py-2 font-mono text-slate-100">{row.tool}</td>
+                    <td className="px-4 py-2 text-sky-300 font-mono">{row.avgMs.toFixed(1)} ms</td>
+                    <td className="px-4 py-2 text-slate-300">{row.count}</td>
+                    <td className="px-4 py-2 text-slate-300">{row.servers.length ? row.servers.join(", ") : "N/A"}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Footer note */}
-      {!loading && !error && filtered.length > 0 && (
-        <p className="text-xs text-slate-700 text-center">
-          Click any row to open its detail page · Auto-refreshes every 5s
-        </p>
-      )}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-white">Actividad separada por MCP conectado</h2>
+          <span className="text-xs text-slate-400">Fuente: Dashboard + heartbeat MCP</span>
+        </div>
+
+        {connectedServers.length === 0 ? (
+          <div className="glass-panel rounded-xl border px-4 py-5 text-sm text-slate-400">
+            No hay MCP conectados en este momento.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {groupedByConnectedServer.map((group) => (
+              <div key={group.serverName} className="glass-panel rounded-xl border overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white font-mono">{group.serverName}</p>
+                    <p className="text-xs text-slate-400">{group.count} acciones</p>
+                  </div>
+                  <span className="chip text-xs text-slate-300 rounded-full px-3 py-1">
+                    avg {group.avgMs !== null ? `${group.avgMs.toFixed(1)} ms` : "N/A"}
+                  </span>
+                </div>
+
+                {group.items.length === 0 ? (
+                  <div className="px-4 py-5 text-sm text-slate-400">Sin eventos para este MCP con tus filtros actuales.</div>
+                ) : (
+                  <div className="divide-y divide-slate-700/25">
+                    {group.items.map((action) => (
+                      <Link
+                        key={action.action_id}
+                        href={`/activity/${action.action_id}`}
+                        className="block px-4 py-3 hover:bg-sky-900/15 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-mono text-slate-100">{action.tool_name}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{new Date(action.timestamp).toLocaleString()}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-sky-300 font-mono">
+                              {toMs(action.execution?.timings_ms?.total_gateway_ms) !== null
+                                ? `${toMs(action.execution?.timings_ms?.total_gateway_ms)!.toFixed(1)} ms`
+                                : "N/A"}
+                            </p>
+                            <p className="text-xs text-slate-400">{action.decision}</p>
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
