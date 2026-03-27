@@ -6,6 +6,8 @@ import { useParams } from "next/navigation"
 import { fetchActivityItem, fetchMCPTargets } from "@/lib/api"
 import { Action, MCPTargetsResponse } from "@/types"
 
+export const dynamic = 'force-dynamic'
+
 export default function ActivityDetailPage() {
   const params = useParams<{ actionId: string }>()
   const actionId = params?.actionId ?? ""
@@ -23,15 +25,15 @@ export default function ActivityDetailPage() {
         fetchMCPTargets(),
       ])
 
-      if (detail?.error) {
-        setError(detail.error)
+      if ((detail as any)?.error) {
+        setError((detail as any).error)
         setItem(null)
       } else {
-        setItem(detail)
+        setItem(detail as Action)
         setError(null)
       }
 
-      setTargets(mcpTargets)
+      setTargets(mcpTargets as MCPTargetsResponse)
     } catch {
       setError("Could not load event details")
     } finally {

@@ -25,6 +25,7 @@ from routes.intercept import router as intercept_router
 from routes.logs import router as logs_router
 from routes.settings_api import router as settings_router
 from routes.status import router as status_router
+from routes.token_vault_api import router as token_vault_router
 
 # ── Logging Setup ─────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -87,6 +88,7 @@ app.include_router(auth_router, tags=["Auth"])
 app.include_router(events_router, tags=["SSE"])
 app.include_router(dashboard_router)
 app.include_router(settings_router)
+app.include_router(token_vault_router)
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────

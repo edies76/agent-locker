@@ -1,8 +1,20 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { fetchMCPStatus, fetchMCPTargets, fetchMCPTimings } from "@/lib/api"
-import { MCPStatus, MCPTargetsResponse, MCPTimingsResponse } from "@/types"
+import {
+  fetchMCPStatus,
+  fetchMCPTargets,
+  fetchMCPTimings,
+  fetchMCPDiagnostics,
+  toggleMCPTarget,
+} from "@/lib/api"
+import {
+  MCPStatus,
+  MCPTargetsResponse,
+  MCPTimingsResponse,
+  MCPDiagnostics,
+} from "@/types"
+import { useToast } from "../components/Toast"
 
 function ms(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "N/A"
@@ -20,19 +32,24 @@ export default function MCPMonitorPage() {
   const [status, setStatus] = useState<MCPStatus | null>(null)
   const [targets, setTargets] = useState<MCPTargetsResponse | null>(null)
   const [timings, setTimings] = useState<MCPTimingsResponse | null>(null)
+  const [diagnostics, setDiagnostics] = useState<MCPDiagnostics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [togglingServer, setTogglingServer] = useState<string | null>(null)
+  const { showToast } = useToast()
 
   const load = useCallback(async () => {
     try {
-      const [statusData, targetsData, timingsData] = await Promise.all([
+      const [statusData, targetsData, timingsData, diagnosticsData] = await Promise.all([
         fetchMCPStatus(),
         fetchMCPTargets(),
         fetchMCPTimings(300),
+        fetchMCPDiagnostics(),
       ])
-      setStatus(statusData)
-      setTargets(targetsData)
-      setTimings(timingsData)
+      setStatus(statusData as MCPStatus)
+      setTargets(targetsData as MCPTargetsResponse)
+      setTimings(timingsData as MCPTimingsResponse)
+      setDiagnostics(diagnosticsData as MCPDiagnostics)
       setError(null)
     } catch {
       setError("No se pudo cargar el monitor MCP")
@@ -73,7 +90,8 @@ export default function MCPMonitorPage() {
 
   const byServer = useMemo(() => {
     const latest = timings?.latest ?? []
-    return connectedServers.map((server) => {
+    const allServers = targets?.servers?.map((s) => s.name) ?? []
+    return allServers.map((server) => {
       const rows = latest.filter((x) => x.server_name === server)
       const values = rows
         .map((x) => x.timings_ms?.total_gateway_ms)
@@ -85,7 +103,47 @@ export default function MCPMonitorPage() {
         avgMs,
       }
     })
-  }, [connectedServers, timings])
+  }, [targets, timings])
+
+  const handleToggle = useCallback(
+    async (name: string, enabled: boolean) => {
+      setTogglingServer(name)
+      try {
+        const result = await toggleMCPTarget(name, enabled)
+        if (!result?.ok) {
+          showToast({
+            type: "error",
+            title: result?.error || "Toggle failed",
+            duration: 3000,
+          })
+          return
+        }
+        showToast({
+          type: "success",
+          title: `${name} ${enabled ? "enabled" : "disabled"}`,
+          duration: 2500,
+        })
+        await load()
+      } catch {
+        showToast({
+          type: "error",
+          title: "Could not update MCP target",
+          duration: 3000,
+        })
+      } finally {
+        setTogglingServer(null)
+      }
+    },
+    [load, showToast]
+  )
+
+  const topology = useMemo(() => {
+    const servers = targets?.servers ?? []
+    return servers.map((s) => ({
+      ...s,
+      nodeColor: s.connected ? "bg-emerald-500" : s.enabled ? "bg-amber-500" : "bg-slate-500",
+    }))
+  }, [targets])
 
   return (
     <div className="space-y-6">
@@ -93,9 +151,11 @@ export default function MCPMonitorPage() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">MCP Clarity Board</p>
-            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">Estado, Rendimiento y Segmentacion</h1>
+            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">
+              Estado, Topologia y Diagnostico
+            </h1>
             <p className="text-sm text-slate-300/85 mt-1">
-              Vista operativa de Agent-Lock para entender en segundos que MCP esta conectado y cuanto tarda cada tool.
+              Mapa de servidores MCP, latencias y salud operativa en tiempo real.
             </p>
           </div>
           <button onClick={load} className="btn-glow rounded-lg px-4 py-2 text-sm font-semibold">
@@ -137,14 +197,98 @@ export default function MCPMonitorPage() {
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="glass-panel rounded-xl border overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">Segmentado por MCP conectado</h2>
-            <span className="text-xs text-slate-400">{connectedServers.length} conectados</span>
+            <h2 className="text-sm font-semibold text-slate-100">Topologia MCP</h2>
+            <span className="text-xs text-slate-400">
+              {targets?.configured_count ?? 0} configurados / {targets?.connected_count ?? 0} online
+            </span>
           </div>
-
           {loading ? (
             <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
-          ) : connectedServers.length === 0 ? (
-            <div className="px-4 py-5 text-sm text-slate-400">No hay MCP conectados.</div>
+          ) : topology.length === 0 ? (
+            <div className="px-4 py-5 text-sm text-slate-400">No hay servidores configurados.</div>
+          ) : (
+            <div className="p-4 space-y-3">
+              {topology.map((s) => (
+                <div key={s.name} className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/20">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={`w-2.5 h-2.5 rounded-full ${s.nodeColor}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm text-slate-100 font-mono truncate">{s.name}</p>
+                        <p className="text-xs text-slate-400 truncate">{s.command || "No command metadata"}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleToggle(s.name, !s.enabled)}
+                      disabled={togglingServer === s.name}
+                      className={`rounded-md px-3 py-1 text-xs font-semibold border transition-colors ${
+                        s.enabled
+                          ? "text-amber-200 border-amber-500/40 hover:bg-amber-500/15"
+                          : "text-emerald-200 border-emerald-500/40 hover:bg-emerald-500/15"
+                      } disabled:opacity-50`}
+                    >
+                      {togglingServer === s.name ? "Updating..." : s.enabled ? "Disable" : "Enable"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="glass-panel rounded-xl border overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-100">Diagnostico de conexion</h2>
+            <span
+              className={`text-xs font-semibold ${
+                diagnostics?.healthy ? "text-emerald-300" : "text-amber-300"
+              }`}
+            >
+              {diagnostics?.healthy ? "Healthy" : "Needs attention"}
+            </span>
+          </div>
+          <div className="p-4 space-y-4">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Warnings</p>
+              {diagnostics?.warnings?.length ? (
+                <ul className="space-y-2">
+                  {diagnostics.warnings.map((w, i) => (
+                    <li key={`${w}-${i}`} className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-md px-3 py-2">
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-emerald-300">No warnings detected.</p>
+              )}
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Recommendations</p>
+              {diagnostics?.recommendations?.length ? (
+                <ul className="space-y-2">
+                  {diagnostics.recommendations.map((r, i) => (
+                    <li key={`${r}-${i}`} className="text-sm text-slate-200 bg-slate-900/30 border border-slate-700/40 rounded-md px-3 py-2">
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-400">System is operating within expected thresholds.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="glass-panel rounded-xl border overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-100">Latencia por servidor</h2>
+            <span className="text-xs text-slate-400">ultimas muestras</span>
+          </div>
+          {loading ? (
+            <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
           ) : (
             <div className="divide-y divide-slate-700/30">
               {byServer.map((row) => (
@@ -165,7 +309,6 @@ export default function MCPMonitorPage() {
             <h2 className="text-sm font-semibold text-slate-100">Top tools por duracion</h2>
             <span className="text-xs text-slate-400">ultimas muestras</span>
           </div>
-
           {loading ? (
             <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
           ) : byTool.length === 0 ? (

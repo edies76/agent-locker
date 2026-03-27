@@ -4,6 +4,7 @@ Dashboard API Routes
 Endpoints consumed exclusively by the Agent-Lock web dashboard.
 
 GET  /dashboard/stats      — Aggregate counters (total, approved, blocked, etc.)
+GET  /dashboard/trends     — Time-series data for charts (24h window)
 GET  /dashboard/activity   — Combined stream: in-memory store + audit log, newest first
 GET  /dashboard/pending    — Currently PENDING actions (live, from store)
 POST /dashboard/mcp/heartbeat — MCP gateway announces itself (keeps "last seen" fresh)
@@ -63,6 +64,19 @@ def _attach_execution_details(item: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(item)
     enriched["execution"] = exec_meta
     return enriched
+
+
+def _read_mcp_config() -> dict[str, Any]:
+    if not _mcp_config_path.exists():
+        return {"target_servers": []}
+    with open(_mcp_config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_mcp_config(config: dict[str, Any]) -> None:
+    _mcp_config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(_mcp_config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -152,6 +166,141 @@ async def get_activity(
     except Exception as exc:
         logger.error(f"Error fetching activity: {exc}", exc_info=True)
         return []
+
+
+# ── Trends (24h time-series) ──────────────────────────────────────────────────
+
+
+@router.get("/trends")
+async def get_trends(hours: int = Query(default=24, ge=1, le=168)) -> dict[str, Any]:
+    """
+    Return time-series data for charts (actions per hour, approval rate, avg response time).
+    
+    Args:
+        hours: Number of hours to look back (default 24, max 168 = 7 days)
+    
+    Returns:
+        {
+            "actions_per_hour": [{"timestamp": <ms>, "value": <count>}, ...],
+            "approval_rate": [{"timestamp": <ms>, "value": <0-1>}, ...],
+            "avg_response_time": [{"timestamp": <ms>, "value": <seconds>}, ...],
+            "critical_actions": [{"timestamp": <ms>, "value": <count>}, ...]
+        }
+    """
+    try:
+        from collections import defaultdict
+        from datetime import timedelta
+        
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=hours)
+        
+        # Read all logs within time window
+        logs = read_logs(limit=1000)
+        pending = store.all_pending()
+        
+        # Filter by timestamp
+        filtered_logs = []
+        for l in logs:
+            try:
+                ts_str = l.get("timestamp", "")
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts >= cutoff:
+                    filtered_logs.append(l)
+            except (ValueError, AttributeError):
+                continue
+        
+        # Group by hour buckets
+        hour_buckets = defaultdict(lambda: {
+            "count": 0,
+            "approved": 0,
+            "response_times": [],
+            "critical": 0
+        })
+        
+        for l in filtered_logs:
+            try:
+                ts_str = l.get("timestamp", "")
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                # Round to hour bucket
+                bucket_ts = ts.replace(minute=0, second=0, microsecond=0)
+                bucket_ms = int(bucket_ts.timestamp() * 1000)
+                
+                hour_buckets[bucket_ms]["count"] += 1
+                
+                decision = l.get("decision", "")
+                if decision in ["APPROVED", "AUTO_APPROVED"]:
+                    hour_buckets[bucket_ms]["approved"] += 1
+                
+                if l.get("risk_level") == "CRITICAL":
+                    hour_buckets[bucket_ms]["critical"] += 1
+                
+                # Calculate response time if available
+                created_str = l.get("timestamp", "")
+                decided_str = l.get("decided_at", "")
+                if created_str and decided_str:
+                    try:
+                        created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        decided = datetime.fromisoformat(decided_str.replace("Z", "+00:00"))
+                        response_time = (decided - created).total_seconds()
+                        if 0 <= response_time <= 3600:  # Sanity check (max 1 hour)
+                            hour_buckets[bucket_ms]["response_times"].append(response_time)
+                    except (ValueError, AttributeError):
+                        pass
+            except Exception:
+                continue
+        
+        # Convert to lists
+        actions_per_hour = []
+        approval_rate = []
+        avg_response_time = []
+        critical_actions = []
+        
+        # Fill in all hour buckets (even empty ones)
+        for i in range(hours + 1):
+            bucket_time = now - timedelta(hours=hours - i)
+            bucket_time = bucket_time.replace(minute=0, second=0, microsecond=0)
+            bucket_ms = int(bucket_time.timestamp() * 1000)
+            
+            data = hour_buckets.get(bucket_ms, {
+                "count": 0,
+                "approved": 0,
+                "response_times": [],
+                "critical": 0
+            })
+            
+            actions_per_hour.append({"timestamp": bucket_ms, "value": data["count"]})
+            
+            # Approval rate (0-1)
+            rate = data["approved"] / data["count"] if data["count"] > 0 else 0
+            approval_rate.append({"timestamp": bucket_ms, "value": rate})
+            
+            # Average response time
+            avg_time = (
+                sum(data["response_times"]) / len(data["response_times"])
+                if data["response_times"]
+                else 0
+            )
+            avg_response_time.append({"timestamp": bucket_ms, "value": avg_time})
+            
+            critical_actions.append({"timestamp": bucket_ms, "value": data["critical"]})
+        
+        return {
+            "actions_per_hour": actions_per_hour,
+            "approval_rate": approval_rate,
+            "avg_response_time": avg_response_time,
+            "critical_actions": critical_actions,
+        }
+    
+    except Exception as exc:
+        logger.error(f"Error calculating trends: {exc}", exc_info=True)
+        # Return empty data
+        return {
+            "actions_per_hour": [],
+            "approval_rate": [],
+            "avg_response_time": [],
+            "critical_actions": [],
+            "error": str(exc),
+        }
 
 
 # ── Pending actions ───────────────────────────────────────────────────────────
@@ -381,3 +530,101 @@ async def get_mcp_targets() -> dict[str, Any]:
         "configured_count": len(configured_servers),
         "connected_count": sum(1 for s in configured_servers if s["connected"]),
     }
+
+
+class MCPTargetTogglePayload(BaseModel):
+    enabled: bool
+
+
+@router.post("/mcp/targets/{server_name}/toggle")
+async def toggle_mcp_target(server_name: str, payload: MCPTargetTogglePayload) -> dict[str, Any]:
+    """Enable or disable a configured MCP target server."""
+    try:
+        target_name = server_name.strip()
+        if not target_name:
+            return {"ok": False, "error": "Invalid server name"}
+
+        config = _read_mcp_config()
+        target_servers = config.get("target_servers", [])
+
+        updated = False
+        for server in target_servers:
+            if (server.get("name") or "").strip() == target_name:
+                server["enabled"] = payload.enabled
+                updated = True
+                break
+
+        if not updated:
+            return {"ok": False, "error": "Server not found in config"}
+
+        config["target_servers"] = target_servers
+        _write_mcp_config(config)
+        return {"ok": True, "server": target_name, "enabled": payload.enabled}
+    except json.JSONDecodeError as exc:
+        logger.error(f"Invalid MCP config JSON: {exc}", exc_info=True)
+        return {"ok": False, "error": "Invalid MCP config JSON"}
+    except Exception as exc:
+        logger.error(f"Error toggling MCP target {server_name}: {exc}", exc_info=True)
+        return {"ok": False, "error": str(exc)}
+
+
+@router.get("/mcp/diagnostics")
+async def get_mcp_diagnostics() -> dict[str, Any]:
+    """Return diagnostics and recommendations for MCP connectivity/performance."""
+    try:
+        status = await get_mcp_status()
+        timings = await get_mcp_timings(limit=300)
+        targets = await get_mcp_targets()
+
+        warnings: list[str] = []
+        recommendations: list[str] = []
+
+        connected = bool(status.get("connected"))
+        seconds_ago = status.get("seconds_ago")
+        if not connected:
+            warnings.append("MCP gateway appears offline.")
+            recommendations.append("Verify the MCP server process and heartbeat path.")
+        elif isinstance(seconds_ago, (int, float)) and seconds_ago > 30:
+            warnings.append("Heartbeat is stale (>30s).")
+            recommendations.append("Check network latency or heartbeat scheduling.")
+
+        avg = timings.get("average_ms", {})
+        total_ms = avg.get("total_gateway_ms")
+        overhead_ms = avg.get("agent_lock_overhead_ms")
+        if isinstance(total_ms, (int, float)) and total_ms > 1500:
+            warnings.append("High gateway latency detected.")
+            recommendations.append("Reduce expensive tools or inspect backend load.")
+        if isinstance(overhead_ms, (int, float)) and overhead_ms > 600:
+            warnings.append("Agent-Lock overhead is higher than expected.")
+            recommendations.append("Profile validation and policy evaluation paths.")
+
+        servers = targets.get("servers", [])
+        disconnected_enabled = [
+            s.get("name")
+            for s in servers
+            if bool(s.get("enabled")) and not bool(s.get("connected"))
+        ]
+        if disconnected_enabled:
+            warnings.append("Some enabled MCP targets are disconnected.")
+            recommendations.append("Verify command paths and server startup scripts.")
+
+        return {
+            "connected": connected,
+            "seconds_ago": seconds_ago,
+            "config_path": targets.get("config_path"),
+            "configured_count": targets.get("configured_count", 0),
+            "connected_count": targets.get("connected_count", 0),
+            "timings": avg,
+            "disconnected_enabled": disconnected_enabled,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "healthy": len(warnings) == 0,
+        }
+    except Exception as exc:
+        logger.error(f"Error collecting MCP diagnostics: {exc}", exc_info=True)
+        return {
+            "healthy": False,
+            "warnings": ["Diagnostics unavailable due to internal error."],
+            "recommendations": ["Check backend logs for diagnostics failure."],
+            "error": str(exc),
+        }

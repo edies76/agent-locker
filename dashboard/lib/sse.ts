@@ -14,7 +14,7 @@ class SSEClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
 
-  connect(url: string = 'http://localhost:8000/events/stream') {
+  connect(url: string = 'https://agent-lock-backend-api-7.azurewebsites.net/events/stream') {
     if (this.eventSource) {
       console.warn('SSE already connected')
       return

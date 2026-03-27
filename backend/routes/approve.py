@@ -18,6 +18,19 @@ import store
 router = APIRouter()
 logger = logging.getLogger("agent-lock.approve")
 
+BROKERED_PROVIDER_PATTERNS = (
+    "gmail",
+    "calendar",
+    "github",
+    "slack",
+)
+
+
+def _should_enforce_brokered_mode(tool_name: str, args: dict) -> bool:
+    joined = f"{tool_name} " + " ".join(str(v) for v in args.values())
+    lowered = joined.lower()
+    return any(p in lowered for p in BROKERED_PROVIDER_PATTERNS)
+
 
 @router.post("/approve/{action_id}", response_model=StatusResponse)
 async def approve_action(action_id: str, body: ApprovalRequest) -> StatusResponse:
@@ -35,20 +48,32 @@ async def approve_action(action_id: str, body: ApprovalRequest) -> StatusRespons
         action.decided_at = datetime.now(timezone.utc)
 
         if body.decision == ApprovalDecision.YES:
-            # Request minimum permission Auth0 token
-            auth_token = await request_token(
-                action.tool_name,
-                action.args,
-                action.risk_level,
-                subject_token=getattr(action, "subject_token", None),
-            )
+            auth_token = None
+            if not _should_enforce_brokered_mode(action.tool_name, action.args):
+                # Request minimum permission Auth0 token for non-brokered flows.
+                auth_token = await request_token(
+                    action.tool_name,
+                    action.args,
+                    action.risk_level,
+                    subject_token=getattr(action, "subject_token", None),
+                )
             action.status = ActionStatus.APPROVED
-            action.status_history.append(ActionStatusHistory(status=ActionStatus.USER_APPROVED, message="User approved action via Telegram"))
+            action.status_history.append(
+                ActionStatusHistory(
+                    status=ActionStatus.APPROVED,
+                    reason="User approved action via Telegram",
+                )
+            )
             action.auth_token = auth_token
             logger.info(f"✅ APPROVED by user | action_id={action_id} | tool={action.tool_name}")
         else:
             action.status = ActionStatus.BLOCKED
-            action.status_history.append(ActionStatusHistory(status=ActionStatus.USER_DENIED, message="User denied action via Telegram"))
+            action.status_history.append(
+                ActionStatusHistory(
+                    status=ActionStatus.BLOCKED,
+                    reason="User denied action via Telegram",
+                )
+            )
             logger.info(f"🚫 BLOCKED by user | action_id={action_id} | tool={action.tool_name}")
 
         store.update(action)

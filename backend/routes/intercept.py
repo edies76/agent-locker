@@ -34,6 +34,23 @@ import store
 router = APIRouter()
 logger = logging.getLogger("agent-lock.intercept")
 
+BROKERED_PROVIDER_PATTERNS = (
+    "gmail",
+    "calendar",
+    "github",
+    "slack",
+)
+
+
+def _should_enforce_brokered_mode(tool_name: str, args: dict) -> bool:
+    """
+    For provider-connected integrations, do not return provider tokens to agent/tool clients.
+    Agent-Lock should broker those calls server-side via /vault routes.
+    """
+    joined = f"{tool_name} " + " ".join(str(v) for v in args.values())
+    lowered = joined.lower()
+    return any(p in lowered for p in BROKERED_PROVIDER_PATTERNS)
+
 
 @router.post("/intercept", response_model=InterceptResponse)
 async def intercept_tool_call(payload: ToolCallRequest, request: Request) -> InterceptResponse:
@@ -130,6 +147,30 @@ async def intercept_tool_call(payload: ToolCallRequest, request: Request) -> Int
 
     # ── 4. LOW → Auto-approve ─────────────────────────────────────────────────
     if risk_level == RiskLevel.LOW:
+        # For connected-provider calls we force broker mode:
+        # approved by policy, but no provider token is leaked downstream.
+        if _should_enforce_brokered_mode(payload.tool_name, payload.args):
+            action.status = ActionStatus.AUTO_APPROVED
+            action.decided_at = datetime.now(timezone.utc)
+            action.auth_token = None
+            store.save(action)
+            write_log(action)
+            logger.info(
+                "✅ Auto-approved (LOW, broker mode) | action_id=%s | tool=%s",
+                action.action_id,
+                payload.tool_name,
+            )
+            return InterceptResponse(
+                action_id=action.action_id,
+                status=ActionStatus.AUTO_APPROVED,
+                risk_level=risk_level,
+                intent_score=intent_result.score,
+                analysis=(
+                    f"{intent_result.analysis} | broker_mode=required (use /vault endpoints)"
+                ),
+                auth_token=None,
+            )
+
         auth_token = await request_token(
             payload.tool_name,
             payload.args,

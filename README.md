@@ -95,9 +95,29 @@ Operational check:
 ```powershell
 git clone <your-repo-url>
 cd agent-lock
-cd backend
-cp .env.example .env
-# Edit .env — add Telegram Bot Token, Chat ID, and Gemini API key
+# Create backend/.env (no template file is shipped yet)
+# Add Telegram Bot Token, Chat ID, Gemini key and Auth0 values
+```
+
+Example `backend/.env` (minimum):
+
+```env
+BACKEND_URL=http://localhost:8000
+BACKEND_PORT=8000
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+GEMINI_API_KEY=
+
+AUTH0_DOMAIN=
+AUTH0_CLIENT_ID=
+AUTH0_CLIENT_SECRET=
+AUTH0_AUDIENCE=https://agent-lock-api
+AUTH0_CALLBACK_URL=http://localhost:8000/auth/callback
+AUTH0_SCOPE=openid profile email offline_access
+AUTH0_TOKEN_VAULT_ENABLED=true
+AUTH0_GOOGLE_CONNECTION_NAME=google-oauth2
+AUTH0_GOOGLE_AUDIENCE=https://www.googleapis.com/
+AUTH0_GOOGLE_SCOPES=https://www.googleapis.com/auth/gmail.send
 ```
 
 ### 2. Install Dependencies
@@ -314,6 +334,47 @@ When a HIGH or CRITICAL action is detected:
 
 Rather than exposing hardcoded credentials, Agent-Lock requests short-lived tokens from Auth0 scoped to the minimum permissions required for each tool. The agent only ever sees the ephemeral session token — never the master credentials.
 
+### Token Vault (Connected Accounts) — Implemented
+
+Agent-Lock now supports real Auth0 Token Vault exchange for connected accounts (Google/GitHub/Slack) using:
+
+- `grant_type=urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token`
+- `requested_token_type=http://auth0.com/oauth/token-type/federated-connection-access-token`
+- `connection=<provider-connection-name>`
+
+This is used when an action requires end-user context. For these provider calls, Agent-Lock can run in **broker mode**:
+
+- Action is approved/blocked as usual.
+- Agent-Lock exchanges the user token via Token Vault.
+- Agent-Lock calls the provider API itself.
+- The provider token is not returned to the agent.
+
+#### New broker endpoints
+
+- `GET /vault/status`
+- `POST /vault/google/gmail/send`
+
+`/vault/google/gmail/send` sends an email through Gmail API using Token Vault exchange from the current authenticated user session or bearer token.
+
+#### Quick broker test
+
+1. Authenticate user:
+   - Open `http://localhost:8000/auth/login?connection=google-oauth2`
+2. Check status:
+   - `GET http://localhost:8000/vault/status`
+3. Send test email:
+
+```json
+POST /vault/google/gmail/send
+{
+  "to": "you@example.com",
+  "subject": "Agent-Lock Token Vault test",
+  "body_text": "Hello from Agent-Lock broker mode"
+}
+```
+
+If this works, your hackathon requirement for Token Vault is materially satisfied.
+
 | Scope | Used for |
 |---|---|
 | `read:files` | File read operations |
@@ -343,7 +404,7 @@ agent-lock/
 ├── backend/                # FastAPI governance backend
 │   ├── main.py             # App entry point + route registration
 │   ├── models.py           # Pydantic request/response models
-│   ├── store.py            # In-memory state store (pending actions)
+│   ├── store.py            # SQLite-backed persistent state store (pending actions)
 │   ├── config.py           # Backend settings (.env loader)
 │   ├── policies.json       # Custom risk rules
 │   ├── engine/             # Risk classifier + intent validator (Gemini)
@@ -383,9 +444,9 @@ These are active bugs and limitations in the current version:
 | 1 | `vscode__replace_lines_code` and `vscode__create_file_code` return no confirmation on write — tools execute but don't always report success/failure | VS Code MCP plugin | Verify edits manually after each write |
 | 2 | `vscode__list_files_code` fails with "Separator is not found" when called with absolute paths — only works with relative paths from workspace root | VS Code MCP plugin | Always use relative paths (e.g. `backend/` not `C:\...`) |
 | 3 | `filesystem` MCP restricted to `C:\Users\ediva\Documents` — write access denied for projects outside that directory | Filesystem MCP config | Move project inside Documents or update allowed paths in `claude_desktop_config.json` |
-| 4 | In-memory store (`backend/store.py`) does not survive backend restarts — all pending approvals lost on crash | Backend | Restart backend and reissue the tool call |
+| 4 | MCP config drift can leave enabled targets disconnected until dashboard toggles/reloads config | MCP monitor | Use `/mcp` diagnostics and target toggle to resync |
 | 5 | Telegram `409 Conflict` if Agent-Lock and OpenClaw share the same bot token — `getUpdates` polling clashes | Notifications | Register a separate bot via `@BotFather` |
-| 6 | Empty `user_intent` (e.g. `"[OpenClaw session]"`) causes Gemini to be skipped — risk scored by static rules only | Intent Validator | Pass a real user message through the session capture hooks |
+| 6 | Installing backend deps on Python 3.14 may fail for `pydantic-core` in some environments | Backend setup | Use Python 3.12 virtualenv for testing/CI |
 
 ---
 
@@ -395,21 +456,21 @@ These are active bugs and limitations in the current version:
 
 - [ ] **Fix VS Code MCP write confirmation** — investigate why `create_file_code` / `replace_lines_code` return no result object; add explicit success/error response in the plugin
 - [ ] **Expand filesystem MCP allowed paths** — update `claude_desktop_config.json` to include `C:\nueva-carpeta` so the governance layer can read/write project files directly
-- [ ] **Persist pending actions** — replace `store.py` in-memory dict with Redis or SQLite so approvals survive backend restarts
+- [x] **Persist pending actions** — `store.py` now uses SQLite to survive backend restarts
 
 ### Short Term
 
 - [ ] **Dashboard policy editor** — live `policies.json` editing via Next.js UI without restarting the backend
 - [ ] **Webhook approval channel** — alternative to Telegram (Slack, Discord, or HTTP webhook) for environments where Telegram is blocked
 - [ ] **Per-server risk overrides** — define different risk thresholds per target server in `mcp_config.json` (e.g. `filesystem` always HIGH, `github` read-only = LOW)
-- [ ] **Auth0 scope auto-mapping** — infer the correct Auth0 scope from the tool name automatically instead of hardcoding it
+- [~] **Auth0 scope auto-mapping** — partial: provider detection + Token Vault exchange + broker mode added; complete per-tool mapping still pending
 
 ### Medium Term
 
 - [ ] **Multi-agent session isolation** — track `user_intent` and approval state per session ID so concurrent agents don't share approval context
 - [ ] **OpenTelemetry tracing** — distributed tracing across gateway → backend → target server for full observability
 - [ ] **Rate limiting per tool** — configurable call limits per tool per session to prevent runaway agents
-- [ ] **Dashboard audit viewer** — real-time log stream with filters by risk level, server, decision, and time range
+- [x] **Dashboard audit viewer** — `/logs` page with signature verification filters and CSV/JSON export
 
 ### Long Term
 

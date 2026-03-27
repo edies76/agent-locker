@@ -38,6 +38,9 @@ class AgentLockMCPConfig:
     # ── Backend ───────────────────────────────────────────────────────────────
     # URL of the Agent-Lock FastAPI backend (risk classification, Telegram, audit).
     backend_url: str = "http://localhost:8000"
+    # Optional end-user Auth0 subject token to unlock Token Vault brokered calls.
+    # For production prefer short-lived runtime injection via env var.
+    subject_token: str | None = None
 
     # ── Telegram (optional — backend also has its own token) ─────────────────
     telegram_bot_token: str | None = None
@@ -86,6 +89,7 @@ class AgentLockMCPConfig:
         return cls(
             target_servers=servers,
             backend_url=data.get("backend_url", "http://localhost:8000"),
+            subject_token=data.get("subject_token"),
             telegram_bot_token=data.get("telegram_bot_token"),
             telegram_chat_id=data.get("telegram_chat_id"),
             auto_approve_low_risk=data.get("auto_approve_low_risk", True),
@@ -115,6 +119,7 @@ class AgentLockMCPConfig:
                 for s in self.target_servers
             ],
             "backend_url": self.backend_url,
+            "subject_token": self.subject_token,
             "telegram_bot_token": self.telegram_bot_token,
             "telegram_chat_id": self.telegram_chat_id,
             "auto_approve_low_risk": self.auto_approve_low_risk,
@@ -183,6 +188,8 @@ def load_config(config_path: str | None = None) -> AgentLockMCPConfig:
         print(f"[Agent-Lock] Loading config from {path}", file=sys.stderr)
         try:
             cfg = AgentLockMCPConfig.from_file(path)
+            if not cfg.subject_token:
+                cfg.subject_token = os.environ.get("AGENT_LOCK_SUBJECT_TOKEN")
             return cfg
         except Exception as exc:
             print(
@@ -197,7 +204,7 @@ def load_config(config_path: str | None = None) -> AgentLockMCPConfig:
         f"[Agent-Lock] No config found at {path}. Creating default template ...",
         file=sys.stderr,
     )
-    default = AgentLockMCPConfig()
+    default = AgentLockMCPConfig(subject_token=os.environ.get("AGENT_LOCK_SUBJECT_TOKEN"))
     try:
         default.to_file(path)
         print(

@@ -70,6 +70,12 @@ async def get_settings_view() -> dict[str, Any]:
             "client_id_preview": _mask(s.auth0_client_id),
             "callback_url": s.auth0_callback_url,
             "scope": s.auth0_scope,
+            "token_vault_enabled": bool(s.auth0_token_vault_enabled),
+            "google_connection_name": s.auth0_google_connection_name,
+            "google_scopes": s.auth0_google_scopes,
+            "google_audience": s.auth0_google_audience,
+            "github_connection_name": s.auth0_github_connection_name,
+            "slack_connection_name": s.auth0_slack_connection_name,
         },
         "server": {
             "backend_url": s.backend_url,

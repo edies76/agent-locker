@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     auth0_google_audience: str = "https://www.googleapis.com/"
     auth0_google_scopes: str = "https://www.googleapis.com/auth/gmail.send"
     auth0_google_connection_name: str = "google-oauth2"
+    auth0_github_connection_name: str = "github"
+    auth0_slack_connection_name: str = "slack"
+    auth0_token_vault_enabled: bool = True
 
     # Telegram
     telegram_bot_token: str = ""

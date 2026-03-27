@@ -73,9 +73,12 @@ Hybrid decision engine assigning levels: `LOW`, `HIGH`, `CRITICAL`.
 
 ### 🔑 Token Vault (`backend/auth/token_vault.py`)
 Integrates with **Auth0** to eliminate "hardcoded" credentials.
-- Requests ephemeral (short-lived) access tokens.
-- Assigns **Scopes** based on the tool (e.g., `read:files`, `write:db`).
-- The agent never sees the master "Secret Key", only the session token.
+- Supports two flows:
+  - M2M scoped token (`client_credentials`) for generic internal scopes.
+  - **Auth0 Token Vault connected-account exchange** using:
+    `urn:auth0:params:oauth:grant-type:token-exchange:federated-connection-access-token`
+    with `connection=<provider>`.
+- For provider integrations (Google/GitHub/Slack), Agent-Lock can run in broker mode and call external APIs itself (`/vault/*`) so provider tokens are not exposed to agents.
 
 ### 📱 Notification System (`backend/notifications/telegram_bot.py`)
 Handles the **Human-in-the-loop (HITL)** flow.
@@ -99,8 +102,8 @@ Interception layer running inside the OpenClaw process.
 2. **Analysis:** The backend receives the context and runs the Intent Validator + Risk Classifier.
 3. **Automatic Decision (LOW Risk):**
    - Access token requested from Auth0.
-   - Backend responds immediately with the token.
-   - Plugin executes the tool.
+   - If provider integration is brokered: backend keeps provider token internal and executes through `/vault/*` endpoint path.
+   - Otherwise backend may return scoped token for compatible tool integrations.
 4. **Manual Decision (HIGH/CRITICAL Risk):**
    - Backend responds with `PENDING` status.
    - Plugin enters a polling loop.

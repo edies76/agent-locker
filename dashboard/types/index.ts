@@ -103,6 +103,36 @@ export interface MCPTimingsResponse {
   }>
 }
 
+export interface MCPDiagnostics {
+  connected: boolean
+  seconds_ago: number | null
+  config_path: string
+  configured_count: number
+  connected_count: number
+  timings: MCPTimingAverages
+  disconnected_enabled: string[]
+  warnings: string[]
+  recommendations: string[]
+  healthy: boolean
+  error?: string
+}
+
+export interface AuditLogItem {
+  action_id: string
+  timestamp: string
+  tool_name: string
+  args: Record<string, unknown>
+  raw_command?: string
+  user_intent: string
+  agent_id?: string
+  risk_level: RiskLevel
+  intent_score: number
+  analysis: string
+  decision: ActionStatus
+  decided_at?: string
+  _signature_valid?: boolean
+}
+
 export interface Settings {
   telegram: {
     configured: boolean
@@ -120,6 +150,12 @@ export interface Settings {
     client_id_preview: string | null
     callback_url: string
     scope: string
+    token_vault_enabled?: boolean
+    google_connection_name?: string
+    google_scopes?: string
+    google_audience?: string
+    github_connection_name?: string
+    slack_connection_name?: string
   }
   server: {
     backend_url: string

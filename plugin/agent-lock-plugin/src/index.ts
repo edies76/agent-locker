@@ -17,11 +17,36 @@
  * A message is only silently dropped if it is completely empty.
  */
 
-const BACKEND_URL = process.env.AGENT_LOCK_URL ?? "http://localhost:8000";
+import fs from "node:fs";
+import path from "node:path";
 
-const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? "500");
-const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? "2000");
-const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? "info").toLowerCase();
+type AgentLockFileConfig = {
+    backend_url?: string;
+    status_poll_ms?: number;
+    status_poll_ms_max?: number;
+    log_level?: string;
+    subject_token?: string;
+};
+
+function loadFileConfig(): AgentLockFileConfig {
+    try {
+        const configPath = path.join(__dirname, "agent-lock.config.json");
+        if (!fs.existsSync(configPath)) return {};
+        const raw = fs.readFileSync(configPath, "utf8");
+        const parsed = JSON.parse(raw) as AgentLockFileConfig;
+        return parsed ?? {};
+    } catch {
+        return {};
+    }
+}
+
+const FILE_CONFIG = loadFileConfig();
+
+const BACKEND_URL = process.env.AGENT_LOCK_URL ?? FILE_CONFIG.backend_url ?? "https://agent-lock-backend-api-7.azurewebsites.net";
+
+const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? FILE_CONFIG.status_poll_ms ?? "500");
+const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? FILE_CONFIG.status_poll_ms_max ?? "2000");
+const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? FILE_CONFIG.log_level ?? "info").toLowerCase();
 
 const LEVEL_WEIGHT: Record<string, number> = {
     debug: 10,
@@ -76,7 +101,7 @@ const pending = new Map<string, (d: "approve" | "deny") => void>();
 
 async function post(url: string, body: unknown) {
     const start = Date.now();
-    const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN;
+    const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token;
     const r = await fetch(url, {
         method: "POST",
         headers: {
@@ -301,7 +326,7 @@ export default function register(api: any) {
                 agent_id: "openclaw",
                 session_key: sessionKey,
                 raw_command: rawCommand,
-                subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN,
+                subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token,
             });
             log("debug", "Intercept response received", {
                 tool_name: toolName,

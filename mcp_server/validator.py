@@ -205,6 +205,9 @@ async def _call_intercept(
         "user_intent": user_intent,  # now populated from the gateway's capture strategies
         "agent_id": "mcp-gateway",
     }
+    subject_token = getattr(config, "subject_token", None)
+    if subject_token:
+        payload["subject_token"] = subject_token
 
     if user_intent:
         logger.info(

@@ -213,6 +213,23 @@ def _management_tools() -> list[types.Tool]:
             ),
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="agent_lock__vault_gmail_send",
+            description=(
+                "Send an email via Agent-Lock brokered Gmail flow using Auth0 Token Vault. "
+                "Requires configured subject_token and connected Google account."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "body_text": {"type": "string"},
+                    "body_html": {"type": "string"},
+                },
+                "required": ["to", "subject", "body_text"],
+            },
+        ),
     ]
 
 
@@ -390,6 +407,62 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
 
         # ── Management tools ──────────────────────────────────────────────────
         if name.startswith(MGMT_PREFIX):
+            if name == "agent_lock__vault_gmail_send":
+                to = str(args.get("to", "")).strip()
+                subject = str(args.get("subject", "")).strip()
+                body_text = str(args.get("body_text", "")).strip()
+                body_html = args.get("body_html")
+                if not to or not subject or not body_text:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text="❌ Missing required args: to, subject, body_text",
+                        )
+                    ]
+                if not config.subject_token:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=(
+                                "❌ Missing subject_token in MCP config. "
+                                "Set `subject_token` in ~/.agent-lock/mcp_config.json or "
+                                "AGENT_LOCK_SUBJECT_TOKEN env."
+                            ),
+                        )
+                    ]
+                try:
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        resp = await client.post(
+                            f"{config.backend_url}/vault/google/gmail/send",
+                            json={
+                                "to": to,
+                                "subject": subject,
+                                "body_text": body_text,
+                                "body_html": body_html,
+                            },
+                            headers={"Authorization": f"Bearer {config.subject_token}"},
+                        )
+                        if resp.status_code >= 400:
+                            return [
+                                types.TextContent(
+                                    type="text",
+                                    text=f"❌ Vault broker failed ({resp.status_code}): {resp.text[:400]}",
+                                )
+                            ]
+                        data = resp.json()
+                        return [
+                            types.TextContent(
+                                type="text",
+                                text=json.dumps(data, indent=2, ensure_ascii=False),
+                            )
+                        ]
+                except Exception as exc:
+                    return [
+                        types.TextContent(
+                            type="text",
+                            text=f"❌ Vault broker request error: {exc}",
+                        )
+                    ]
             return await _handle_management(name, config, proxy)
 
         # ── Proxied tools ─────────────────────────────────────────────────────

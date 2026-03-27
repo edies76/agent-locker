@@ -1,11 +1,21 @@
 {
-    "name": "agent-lock",
+    "name": "@agentlock/agent-lock",
     "version": "1.0.0",
     "description": "Agent-Lock: Governance layer for OpenClaw AI agents — Gemini risk analysis + human-in-the-loop approval",
     "main": "dist/index.js",
+    "bin": {
+        "agent-lock": "dist/cli.js"
+    },
+    "files": [
+        "dist",
+        "openclaw.plugin.json",
+        "plugin.json",
+        "README.md"
+    ],
     "scripts": {
         "build": "tsc",
-        "dev": "tsc --watch"
+        "dev": "tsc --watch",
+        "prepack": "npm run build"
     },
     "keywords": [
         "openclaw",
@@ -15,8 +25,8 @@
         "ai-agents"
     ],
     "devDependencies": {
-        "typescript": "^5.4.5",
-        "@types/node": "^20.14.0"
+        "@types/node": "^20.14.0",
+        "typescript": "^5.4.5"
     },
     "peerDependencies": {
         "openclaw": ">=2026.1.0"

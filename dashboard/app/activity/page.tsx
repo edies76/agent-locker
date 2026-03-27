@@ -7,6 +7,10 @@ import { Action, MCPTargetsResponse } from "@/types"
 import { useToast } from "../components/Toast"
 import { exportToJSON, exportToCSV } from "@/lib/export"
 import { debounce } from "@/lib/cache"
+import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
+import Button from "@/app/components/ui/Button"
+import Badge from "@/app/components/ui/Badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableEmpty } from "@/app/components/ui/Table"
 
 type FilterRisk = "ALL" | "LOW" | "HIGH" | "CRITICAL"
 type FilterStatus = "ALL" | "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED"
@@ -51,7 +55,7 @@ export default function ActivityPage() {
         fetchMCPTargets(),
       ])
       setActions(Array.isArray(activityData) ? activityData : [])
-      setTargets(targetData)
+      setTargets(targetData as MCPTargetsResponse)
       setError(null)
     } catch {
       setError("No se pudo cargar la actividad")
@@ -235,247 +239,283 @@ export default function ActivityPage() {
 
   return (
     <div className="space-y-6">
-      <section className="glass-panel rounded-2xl px-6 py-5 border">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-sky-300">Activity Intelligence</p>
-            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">Tool Timing y Separacion por MCP</h1>
-            <p className="text-sm text-slate-300/80 mt-1">
-              Cada llamada muestra su duracion y cada servidor MCP conectado tiene su bloque independiente.
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--text-primary)]">Activity Intelligence</h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            Tool timing and MCP server separation
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button onClick={load} variant="secondary" size="sm">
+            Refresh
+          </Button>
+          <Badge variant="neutral">
+            {filtered.length} visible
+          </Badge>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">With Timing</p>
+            <p className="text-3xl font-semibold text-[var(--text-primary)] mt-1">{timingSummary.measured}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Avg Gateway</p>
+            <p className="text-3xl font-semibold text-[var(--accent-primary)] mt-1">
+              {timingSummary.avgGateway !== null ? `${timingSummary.avgGateway.toFixed(1)} ms` : "N/A"}
             </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={load} className="btn-glow text-sm font-semibold px-4 py-2 rounded-lg">
-              Actualizar
-            </button>
-            <span className="chip text-xs text-slate-300 rounded-full px-3 py-1">
-              {filtered.length} eventos visibles
-            </span>
-          </div>
-        </div>
-      </section>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">Avg Overhead</p>
+            <p className="text-3xl font-semibold text-[var(--warning)] mt-1">
+              {timingSummary.avgOverhead !== null ? `${timingSummary.avgOverhead.toFixed(1)} ms` : "N/A"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wider">MCP Connected</p>
+            <p className="text-3xl font-semibold text-[var(--success)] mt-1">{connectedServers.length}</p>
+          </CardContent>
+        </Card>
+      </div>
 
-      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="glass-panel rounded-xl p-4 border">
-          <p className="text-xs uppercase tracking-wider text-slate-400">Con timing</p>
-          <p className="text-3xl font-semibold text-white mt-1">{timingSummary.measured}</p>
-        </div>
-        <div className="glass-panel rounded-xl p-4 border">
-          <p className="text-xs uppercase tracking-wider text-slate-400">Gateway promedio</p>
-          <p className="text-3xl font-semibold text-sky-300 mt-1">
-            {timingSummary.avgGateway !== null ? `${timingSummary.avgGateway.toFixed(1)} ms` : "N/A"}
-          </p>
-        </div>
-        <div className="glass-panel rounded-xl p-4 border">
-          <p className="text-xs uppercase tracking-wider text-slate-400">Overhead promedio</p>
-          <p className="text-3xl font-semibold text-amber-300 mt-1">
-            {timingSummary.avgOverhead !== null ? `${timingSummary.avgOverhead.toFixed(1)} ms` : "N/A"}
-          </p>
-        </div>
-        <div className="glass-panel rounded-xl p-4 border">
-          <p className="text-xs uppercase tracking-wider text-slate-400">MCP conectados</p>
-          <p className="text-3xl font-semibold text-emerald-300 mt-1">{connectedServers.length}</p>
-        </div>
-      </section>
+      {/* Filters */}
+      <Card>
+        <CardContent className="space-y-4">
+          {/* Search bar with regex toggle */}
+          <div className="flex flex-col lg:flex-row gap-3">
+            <div className="flex-1 flex gap-2">
+              <input
+                type="text"
+                placeholder={regexMode ? "Regex search (e.g., tool_.*delete)" : "Search by tool, server, analysis, or args"}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="flex-1 input"
+              />
+              <button
+                onClick={() => setRegexMode(!regexMode)}
+                className={`px-3 py-2 rounded-md text-xs font-mono transition-colors ${
+                  regexMode
+                    ? 'bg-[var(--accent-primary)] text-white'
+                    : 'bg-[var(--bg-tertiary)] text-[var(--text-secondary)]'
+                }`}
+                title="Toggle regex mode"
+              >
+                .*
+              </button>
+            </div>
+            
+            {/* Export buttons */}
+            <div className="flex gap-2">
+              <Button
+                onClick={handleExportJSON}
+                disabled={filtered.length === 0}
+                variant="secondary"
+                size="sm"
+              >
+                📥 JSON
+              </Button>
+              <Button
+                onClick={handleExportCSV}
+                disabled={filtered.length === 0}
+                variant="secondary"
+                size="sm"
+              >
+                📊 CSV
+              </Button>
+              <Button
+                onClick={clearFilters}
+                variant="ghost"
+                size="sm"
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
 
-      <section className="glass-panel rounded-xl p-4 border space-y-3">
-        {/* Search bar with regex toggle */}
-        <div className="flex flex-col lg:flex-row gap-3">
-          <div className="flex-1 flex gap-2">
+          {/* Date range picker */}
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-[var(--text-tertiary)] text-xs">Date range:</span>
             <input
-              type="text"
-              placeholder={regexMode ? "Regex search (e.g., tool_.*delete)" : "Search by tool, server, analysis, or args"}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-2 text-sm focus:outline-none focus:border-sky-400/60"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="input text-xs"
+              placeholder="From"
             />
-            <button
-              onClick={() => setRegexMode(!regexMode)}
-              className={`px-3 py-2 rounded-lg text-xs font-mono transition-colors ${
-                regexMode
-                  ? 'bg-purple-700/30 border-purple-600/50 text-purple-200'
-                  : 'bg-slate-900/40 border-slate-600/40 text-slate-400'
-              } border`}
-              title="Toggle regex mode"
-            >
-              .*
-            </button>
+            <span className="text-[var(--text-tertiary)]">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="input text-xs"
+              placeholder="To"
+            />
+            {filtered.length !== actions.length && (
+              <span className="text-[var(--text-tertiary)] text-xs ml-auto">
+                {filtered.length} of {actions.length} items
+              </span>
+            )}
+          </div>
+
+          {/* Risk filters */}
+          <div className="flex flex-wrap gap-2">
+            <span className="text-[var(--text-tertiary)] text-xs mr-2">Risk:</span>
+            {riskFilters.map((r) => (
+              <button
+                key={r}
+                onClick={() => setRiskFilter(r)}
+                className={`px-3 py-1 rounded-md text-xs transition-all ${
+                  riskFilter === r 
+                    ? "bg-[var(--accent-primary)] text-white" 
+                    : "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                }`}
+              >
+                {r}
+              </button>
+            ))}
           </div>
           
-          {/* Export buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleExportJSON}
-              disabled={filtered.length === 0}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-sky-700/30 border-sky-600/50 text-sky-200 border hover:bg-sky-700/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              📥 JSON
-            </button>
-            <button
-              onClick={handleExportCSV}
-              disabled={filtered.length === 0}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-700/30 border-emerald-600/50 text-emerald-200 border hover:bg-emerald-700/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              📊 CSV
-            </button>
-            <button
-              onClick={clearFilters}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-700/30 border-slate-600/50 text-slate-300 border hover:bg-slate-700/40 transition-colors"
-            >
-              Clear
-            </button>
+          {/* Status filters */}
+          <div className="flex flex-wrap gap-2">
+            <span className="text-[var(--text-tertiary)] text-xs mr-2">Status:</span>
+            {statusFilters.map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 rounded-md text-xs transition-all ${
+                  statusFilter === s 
+                    ? "bg-[var(--accent-primary)] text-white" 
+                    : "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        {/* Date range picker */}
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="text-slate-400 text-xs">Date range:</span>
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-1.5 text-xs focus:outline-none focus:border-sky-400/60"
-            placeholder="From"
-          />
-          <span className="text-slate-600">→</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="rounded-lg bg-slate-900/40 border border-slate-600/40 text-slate-100 px-3 py-1.5 text-xs focus:outline-none focus:border-sky-400/60"
-            placeholder="To"
-          />
-          <span className="text-slate-500 text-xs ml-auto">
-            {filtered.length !== actions.length && `${filtered.length} of ${actions.length} items`}
-          </span>
-        </div>
-
-        {/* Risk filters */}
-        <div className="flex flex-wrap gap-2">
-          {riskFilters.map((r) => (
-            <button
-              key={r}
-              onClick={() => setRiskFilter(r)}
-              className={`chip rounded-full text-xs px-3 py-1 transition-all ${
-                riskFilter === r ? "text-sky-200 border-sky-300/70 bg-sky-900/20" : "text-slate-300 hover:bg-slate-800/30"
-              }`}
-            >
-              {r}
-            </button>
-          ))}
-        </div>
-        
-        {/* Status filters */}
-        <div className="flex flex-wrap gap-2">
-          {statusFilters.map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`chip rounded-full text-xs px-3 py-1 transition-all ${
-                statusFilter === s ? "text-emerald-200 border-emerald-300/70 bg-emerald-900/20" : "text-slate-300 hover:bg-slate-800/30"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="glass-panel rounded-xl border overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-100">Recuento de duracion por tool</h2>
-          <span className="text-xs text-slate-400">Ordenado por mayor latencia promedio</span>
-        </div>
-
-        {loading ? (
-          <div className="px-4 py-6 text-sm text-slate-400">Cargando...</div>
-        ) : error ? (
-          <div className="px-4 py-6 text-sm text-red-300">{error}</div>
-        ) : toolDurationRows.length === 0 ? (
-          <div className="px-4 py-6 text-sm text-slate-400">No hay datos de timing todavia.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs uppercase tracking-wider text-slate-400 bg-slate-900/40 border-b border-slate-700/40">
-                  <th className="px-4 py-2 text-left">Tool</th>
-                  <th className="px-4 py-2 text-left">Avg gateway</th>
-                  <th className="px-4 py-2 text-left">Muestras</th>
-                  <th className="px-4 py-2 text-left">MCP servers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {toolDurationRows.map((row, idx) => (
-                  <tr key={row.tool} className={idx % 2 === 0 ? "bg-slate-900/20" : "bg-slate-900/5"}>
-                    <td className="px-4 py-2 font-mono text-slate-100">{row.tool}</td>
-                    <td className="px-4 py-2 text-sky-300 font-mono">{row.avgMs.toFixed(1)} ms</td>
-                    <td className="px-4 py-2 text-slate-300">{row.count}</td>
-                    <td className="px-4 py-2 text-slate-300">{row.servers.length ? row.servers.join(", ") : "N/A"}</td>
-                  </tr>
+      {/* Tool Duration Table */}
+      <Card>
+        <CardHeader
+          title="Duration by Tool"
+          subtitle="Ordered by highest avg latency"
+        />
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="px-6 py-8 text-sm text-[var(--text-tertiary)]">Loading...</div>
+          ) : error ? (
+            <div className="px-6 py-8 text-sm text-[var(--error)]">{error}</div>
+          ) : toolDurationRows.length === 0 ? (
+            <Table>
+              <TableBody>
+                <TableEmpty colSpan={4} message="No timing data available yet" />
+              </TableBody>
+            </Table>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tool</TableHead>
+                  <TableHead>Avg Gateway</TableHead>
+                  <TableHead>Samples</TableHead>
+                  <TableHead>MCP Servers</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {toolDurationRows.map((row) => (
+                  <TableRow key={row.tool}>
+                    <TableCell className="font-mono">{row.tool}</TableCell>
+                    <TableCell className="text-[var(--accent-primary)] font-mono">{row.avgMs.toFixed(1)} ms</TableCell>
+                    <TableCell>{row.count}</TableCell>
+                    <TableCell>{row.servers.length ? row.servers.join(", ") : "N/A"}</TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      <section className="space-y-4">
+      {/* Activity by MCP Server */}
+      <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">Actividad separada por MCP conectado</h2>
-          <span className="text-xs text-slate-400">Fuente: Dashboard + heartbeat MCP</span>
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Activity by Connected MCP</h2>
+          <span className="text-xs text-[var(--text-tertiary)]">Source: Dashboard + MCP heartbeat</span>
         </div>
 
         {connectedServers.length === 0 ? (
-          <div className="glass-panel rounded-xl border px-4 py-5 text-sm text-slate-400">
-            No hay MCP conectados en este momento.
-          </div>
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-[var(--text-tertiary)]">
+              No MCP servers connected at this moment
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {groupedByConnectedServer.map((group) => (
-              <div key={group.serverName} className="glass-panel rounded-xl border overflow-hidden">
-                <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-white font-mono">{group.serverName}</p>
-                    <p className="text-xs text-slate-400">{group.count} acciones</p>
-                  </div>
-                  <span className="chip text-xs text-slate-300 rounded-full px-3 py-1">
-                    avg {group.avgMs !== null ? `${group.avgMs.toFixed(1)} ms` : "N/A"}
-                  </span>
-                </div>
+              <Card key={group.serverName}>
+                <CardHeader
+                  title={group.serverName}
+                  subtitle={`${group.count} actions`}
+                  action={
+                    <Badge variant="neutral">
+                      avg {group.avgMs !== null ? `${group.avgMs.toFixed(1)} ms` : "N/A"}
+                    </Badge>
+                  }
+                />
 
-                {group.items.length === 0 ? (
-                  <div className="px-4 py-5 text-sm text-slate-400">Sin eventos para este MCP con tus filtros actuales.</div>
-                ) : (
-                  <div className="divide-y divide-slate-700/25">
-                    {group.items.map((action) => (
-                      <Link
-                        key={action.action_id}
-                        href={`/activity/${action.action_id}`}
-                        className="block px-4 py-3 hover:bg-sky-900/15 transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-mono text-slate-100">{action.tool_name}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{new Date(action.timestamp).toLocaleString()}</p>
+                <CardContent className="p-0">
+                  {group.items.length === 0 ? (
+                    <div className="px-6 py-8 text-sm text-[var(--text-tertiary)] text-center">
+                      No events for this MCP with current filters
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-[var(--border-color)]">
+                      {group.items.map((action) => (
+                        <Link
+                          key={action.action_id}
+                          href={`/activity/${action.action_id}`}
+                          className="block px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-mono text-[var(--text-primary)]">{action.tool_name}</p>
+                              <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                                {new Date(action.timestamp).toLocaleString()}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs text-[var(--accent-primary)] font-mono">
+                                {toMs(action.execution?.timings_ms?.total_gateway_ms) !== null
+                                  ? `${toMs(action.execution?.timings_ms?.total_gateway_ms)!.toFixed(1)} ms`
+                                  : "N/A"}
+                              </p>
+                              <Badge variant="neutral" className="mt-1">
+                                {action.decision}
+                              </Badge>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-xs text-sky-300 font-mono">
-                              {toMs(action.execution?.timings_ms?.total_gateway_ms) !== null
-                                ? `${toMs(action.execution?.timings_ms?.total_gateway_ms)!.toFixed(1)} ms`
-                                : "N/A"}
-                            </p>
-                            <p className="text-xs text-slate-400">{action.decision}</p>
-                          </div>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}
-      </section>
+      </div>
     </div>
   )
 }

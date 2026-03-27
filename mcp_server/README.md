@@ -94,12 +94,17 @@ Edit it to add your target MCP servers:
     }
   ],
   "backend_url": "http://localhost:8000",
+  "subject_token": "",
   "auto_approve_low_risk": true,
   "require_approval_for_high": true,
   "require_approval_for_critical": true,
   "approval_timeout_seconds": 300
 }
 ```
+
+`subject_token` is optional but required for brokered Token Vault tools like
+`agent_lock__vault_gmail_send`. You can also provide it via
+`AGENT_LOCK_SUBJECT_TOKEN` environment variable.
 
 > **Note:** `telegram_bot_token` and `telegram_chat_id` are optional here —
 > the backend's `.env` file already configures the Telegram bot used for
@@ -187,6 +192,30 @@ Telegram notification sent to you:
 
 If you don't respond within `approval_timeout_seconds` (default: 5 minutes),
 the action is cancelled and Claude is told to retry after approving.
+
+---
+
+## Token Vault Broker Tool
+
+The gateway now exposes:
+
+- `agent_lock__vault_gmail_send`
+
+This calls backend `POST /vault/google/gmail/send` and keeps provider tokens
+inside Agent-Lock. Required:
+
+1. Auth0 Token Vault configured for Google connected account.
+2. Valid `subject_token` in config or env.
+
+Example call arguments:
+
+```json
+{
+  "to": "you@example.com",
+  "subject": "Token Vault test",
+  "body_text": "hello from broker mode"
+}
+```
 
 ---
 

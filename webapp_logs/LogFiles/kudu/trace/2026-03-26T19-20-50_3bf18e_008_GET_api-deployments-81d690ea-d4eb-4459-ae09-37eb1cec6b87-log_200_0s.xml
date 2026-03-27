@@ -1,0 +1,6 @@
+<step title="Incoming Request" date="2026-03-26T19:20:50.443" instance="3bf18e" url="/api/deployments/81d690ea-d4eb-4459-ae09-37eb1cec6b87/log" method="GET" type="request" pid="767,1,14" Accept="*/*" Host="agent-lock-backend-api-7.scm.azurewebsites.net" User-Agent="AZURECLI/2.84.0 (MSI)" Accept-Encoding="gzip, deflate" Authorization="Bea..." x-ms-client-request-id="e1f300e1-2948-11f1-a81e-f4390925bd2a" X-ARR-LOG-ID="e1f300e1-2948-11f1-a81e-f4390925bd2a" CLIENT-IP="77.247.123.39:61391" X-SITE-DEPLOYMENT-ID="agent-lock-backend-api-7" WAS-DEFAULT-HOSTNAME="agent-lock-backend-api-7.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/api/deployments/81d690ea-d4eb-4459-ae09-37eb1cec6b87/log" X-Client-IP="77.247.123.39" X-Client-Port="61391" >
+  <step title="DeploymentService.GetLogEntry" date="2026-03-26T19:20:50.453" >
+    <step title="DeploymentManager.GetLogEntries(id:81d690ea-d4eb-4459-ae09-37eb1cec6b87)" date="2026-03-26T19:20:50.456" /><!-- duration: 20ms -->
+  </step><!-- duration: 28ms -->
+  <step title="Outgoing response" date="2026-03-26T19:20:50.487" type="response" statusCode="200" statusText="OK" /><!-- duration: 5ms -->
+</step><!-- duration: 54ms -->

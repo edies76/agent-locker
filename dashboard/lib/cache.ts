@@ -42,7 +42,8 @@ class APICache {
 
   invalidatePattern(pattern: string): void {
     const regex = new RegExp(pattern)
-    for (const key of this.cache.keys()) {
+    const keys = Array.from(this.cache.keys())
+    for (const key of keys) {
       if (regex.test(key)) {
         this.cache.delete(key)
       }
@@ -56,12 +57,30 @@ class APICache {
   size(): number {
     // Clean expired entries first
     const now = Date.now()
-    for (const [key, entry] of this.cache.entries()) {
+    const entries = Array.from(this.cache.entries())
+    for (const [key, entry] of entries) {
       if (now > entry.expiresAt) {
         this.cache.delete(key)
       }
     }
     return this.cache.size
+  }
+
+  get sizeGetter(): number {
+    return this.size()
+  }
+
+  memoryUsage(): number {
+    // Rough estimate of memory usage in bytes
+    let size = 0
+    const entries = Array.from(this.cache.entries())
+    for (const [key, entry] of entries) {
+      // Rough string size + object size
+      size += key.length * 2 // UTF-16
+      size += JSON.stringify(entry.data).length * 2
+      size += 24 // timestamp + expiresAt overhead
+    }
+    return size
   }
 }
 

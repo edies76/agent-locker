@@ -17,7 +17,7 @@ settings = get_settings()
 
 
 @router.get("/login")
-async def login() -> RedirectResponse:
+async def login(connection: str | None = None) -> RedirectResponse:
     """
     Redirects the user to Auth0 Universal Login (Authorization Code Flow).
     """
@@ -30,6 +30,8 @@ async def login() -> RedirectResponse:
         "audience": settings.auth0_audience,
         "state": state,
     }
+    if connection:
+        params["connection"] = connection
     url = f"https://{settings.auth0_domain}/authorize?{urlencode(params)}"
     resp = RedirectResponse(url=url, status_code=302)
     resp.set_cookie("agent_lock_state", state, httponly=True, samesite="lax")

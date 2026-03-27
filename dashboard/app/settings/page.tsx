@@ -1,11 +1,246 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { fetchSettings, fetchPolicies, updatePolicies, testTelegram } from "@/lib/api"
+import { fetchSettings, fetchPolicies, updatePolicies, testTelegram, fetchTokenVaultStatus } from "@/lib/api"
 import { Settings, PoliciesResponse } from "@/types"
+import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
+import Button from "@/app/components/ui/Button"
+import Input from "@/app/components/ui/Input"
+import Badge from "@/app/components/ui/Badge"
+import { useToast } from "../components/Toast"
 
 function Skeleton({ className }: { className?: string }) {
-  return <div className={`animate-pulse bg-slate-700/40 rounded-lg ${className ?? ""}`} />
+  return <div className={`animate-pulse bg-[var(--bg-tertiary)] rounded-lg ${className ?? ""}`} />
+}
+
+// ─── OpenClaw Section ──────────────────────────────────────────────────────────
+interface OpenClawConfig {
+  telegramBotToken: string
+  telegramPhone: string
+  isConfigured: boolean
+  isConnected: boolean
+  lastConnection?: string
+}
+
+function OpenClawSection() {
+  const [config, setConfig] = useState<OpenClawConfig>({
+    telegramBotToken: "",
+    telegramPhone: "",
+    isConfigured: false,
+    isConnected: false,
+  })
+  const [isLoading, setIsLoading] = useState(false)
+  const [isTesting, setIsTesting] = useState(false)
+  const { showToast } = useToast()
+
+  useEffect(() => {
+    const saved = localStorage.getItem("openclaw_config")
+    if (saved) {
+      try {
+        setConfig(JSON.parse(saved))
+      } catch (e) {
+        console.error("Failed to parse config:", e)
+      }
+    }
+  }, [])
+
+  const handleSave = async () => {
+    if (!config.telegramBotToken || !config.telegramPhone) {
+      showToast({
+        type: "error",
+        title: "Missing configuration",
+        message: "Please fill in all fields",
+      })
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const newConfig = {
+        ...config,
+        isConfigured: true,
+      }
+      localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+      setConfig(newConfig)
+      
+      window.dispatchEvent(new Event("openclaw_config_changed"))
+      
+      showToast({
+        type: "success",
+        title: "Configuration saved",
+        message: "OpenClaw settings have been saved",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Save failed",
+        message: String(error),
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleTestConnection = async () => {
+    if (!config.telegramBotToken || !config.telegramPhone) {
+      showToast({
+        type: "error",
+        title: "Missing configuration",
+        message: "Please save your configuration first",
+      })
+      return
+    }
+
+    setIsTesting(true)
+    try {
+      const res = await testTelegram()
+      if (!res?.ok) {
+        throw new Error(res?.message ?? "Telegram test failed")
+      }
+      
+      const newConfig = {
+        ...config,
+        isConnected: true,
+        lastConnection: new Date().toISOString(),
+      }
+      localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+      setConfig(newConfig)
+      
+      window.dispatchEvent(new Event("openclaw_config_changed"))
+      
+      showToast({
+        type: "success",
+        title: "Connection successful",
+        message: "OpenClaw is now connected - Chat page is now available",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Connection failed",
+        message: String(error),
+      })
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  const handleDisconnect = () => {
+    const newConfig = {
+      ...config,
+      isConnected: false,
+    }
+    localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+    setConfig(newConfig)
+    
+    window.dispatchEvent(new Event("openclaw_config_changed"))
+    
+    showToast({
+      type: "info",
+      title: "Disconnected",
+      message: "OpenClaw has been disconnected",
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="🤖 OpenClaw Agent"
+        subtitle="Configure and connect to your OpenClaw agent via Telegram"
+        action={
+          config.isConnected ? (
+            <Badge variant="success" dot>Connected</Badge>
+          ) : config.isConfigured ? (
+            <Badge variant="warning" dot>Configured</Badge>
+          ) : (
+            <Badge variant="neutral" dot>Not Configured</Badge>
+          )
+        }
+      />
+      <CardContent className="space-y-6">
+        {/* Connection Status */}
+        <div className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--text-secondary)]">Status:</span>
+            <span className="text-[var(--text-primary)] font-medium">
+              {config.isConnected ? "Connected & Ready" : config.isConfigured ? "Configured, Not Connected" : "Not Configured"}
+            </span>
+          </div>
+          {config.lastConnection && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--text-secondary)]">Last Connection:</span>
+              <span className="text-[var(--text-primary)]">
+                {new Date(config.lastConnection).toLocaleString()}
+              </span>
+            </div>
+          )}
+          
+          <div className="flex gap-3 pt-3">
+            <Button
+              onClick={handleTestConnection}
+              loading={isTesting}
+              disabled={!config.isConfigured || config.isConnected}
+              size="sm"
+            >
+              Test Connection
+            </Button>
+            {config.isConnected && (
+              <Button onClick={handleDisconnect} variant="danger" size="sm">
+                Disconnect
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Configuration Form */}
+        <div className="space-y-4">
+          <Input
+            label="Telegram Bot Token"
+            type="password"
+            placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+            value={config.telegramBotToken}
+            onChange={(e) => setConfig({ ...config, telegramBotToken: e.target.value })}
+            hint="Get your bot token from @BotFather on Telegram"
+            disabled={config.isConnected}
+          />
+
+          <Input
+            label="Telegram Phone Number"
+            type="tel"
+            placeholder="+1234567890"
+            value={config.telegramPhone}
+            onChange={(e) => setConfig({ ...config, telegramPhone: e.target.value })}
+            hint="Your phone number registered with Telegram (with country code)"
+            disabled={config.isConnected}
+          />
+
+          <div className="pt-2">
+            <Button onClick={handleSave} loading={isLoading} disabled={config.isConnected}>
+              Save Configuration
+            </Button>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <details className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+          <summary className="px-4 py-3 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-secondary)] font-medium">
+            📖 How to Configure OpenClaw
+          </summary>
+          <div className="px-4 py-4 border-t border-[var(--border-color)]">
+            <ol className="list-decimal list-inside space-y-2 text-sm text-[var(--text-secondary)]">
+              <li>Open Telegram and search for <strong>@BotFather</strong></li>
+              <li>Send <code className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-primary)]">/newbot</code> to create a new bot</li>
+              <li>Follow the instructions and copy your bot token</li>
+              <li>Paste the token in the field above</li>
+              <li>Enter your Telegram phone number (with country code, e.g., +1234567890)</li>
+              <li>Click "Save Configuration" to store your settings</li>
+              <li>Click "Test Connection" to verify OpenClaw can connect</li>
+              <li>Once connected, the Chat page will appear in the sidebar</li>
+            </ol>
+          </div>
+        </details>
+      </CardContent>
+    </Card>
+  )
 }
 
 function SectionCard({
@@ -16,12 +251,10 @@ function SectionCard({
   children: React.ReactNode
 }) {
   return (
-    <div className="bg-brand-card border border-brand-border rounded-xl overflow-hidden">
-      <div className="px-5 py-4 border-b border-brand-border">
-        <h2 className="text-base font-semibold text-slate-200">{title}</h2>
-      </div>
-      <div className="px-5 py-5 space-y-4">{children}</div>
-    </div>
+    <Card>
+      <CardHeader title={title} />
+      <CardContent className="space-y-4">{children}</CardContent>
+    </Card>
   )
 }
 
@@ -284,6 +517,27 @@ function GeminiSection({ settings }: { settings: Settings | null }) {
 // ─── Auth0 Section ─────────────────────────────────────────────────────────────
 function Auth0Section({ settings }: { settings: Settings | null }) {
   const au = settings?.auth0
+  const [vault, setVault] = useState<{
+    enabled?: boolean
+    auth0_configured?: boolean
+    authenticated?: boolean
+    login_url?: string
+  } | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const data = await fetchTokenVaultStatus()
+        if (mounted) setVault(data)
+      } catch {
+        if (mounted) setVault(null)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   return (
     <SectionCard title="🔐 Auth0 Token Vault">
@@ -301,9 +555,42 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
           <ConfigRow label="Client ID" value={au.client_id_preview} mono />
           <ConfigRow label="Callback URL" value={au.callback_url} mono />
           <ConfigRow label="Scope" value={au.scope} mono />
+          <ConfigRow label="Token Vault Enabled" value={au.token_vault_enabled ? "Yes" : "No"} />
+          <ConfigRow label="Google Connection" value={au.google_connection_name} mono />
+          <ConfigRow label="Google Audience" value={au.google_audience} mono />
+          <ConfigRow label="Google Scopes" value={au.google_scopes} mono />
+          <ConfigRow label="GitHub Connection" value={au.github_connection_name} mono />
+          <ConfigRow label="Slack Connection" value={au.slack_connection_name} mono />
         </div>
       ) : (
         <Skeleton className="h-32" />
+      )}
+
+      {vault && (
+        <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-xs text-slate-300 space-y-1">
+          <p>
+            Vault runtime:{" "}
+            <span className={vault.enabled ? "text-emerald-300" : "text-red-300"}>
+              {vault.enabled ? "enabled" : "disabled"}
+            </span>
+          </p>
+          <p>
+            User session for connected accounts:{" "}
+            <span className={vault.authenticated ? "text-emerald-300" : "text-amber-300"}>
+              {vault.authenticated ? "authenticated" : "missing"}
+            </span>
+          </p>
+          {!vault.authenticated && vault.login_url && (
+            <a
+              href={vault.login_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              Connect account (Auth0 login)
+            </a>
+          )}
+        </div>
       )}
 
       {/* Explanation box */}
@@ -320,10 +607,9 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
           <div className="bg-emerald-900/20 border border-emerald-800/30 rounded-lg px-3 py-3">
             <p className="text-xs font-bold text-emerald-400 mb-2">✅ After Agent-Lock</p>
             <p className="text-xs text-slate-400 leading-relaxed">
-              The agent receives a 60-second token with only the minimum permission it needs
-              (e.g. <code className="font-mono text-emerald-400">read:files</code>,{" "}
-              <code className="font-mono text-emerald-400">write:db</code>). Expired tokens are
-              worthless.
+              For connected providers (Google/GitHub/Slack), Agent-Lock now uses Auth0 Token Vault
+              token exchange and can broker API calls server-side so the agent does not need to
+              hold provider tokens.
             </p>
           </div>
         </div>
@@ -349,6 +635,7 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
             </code>
           </span>,
           "Create a Machine-to-Machine application and authorize it against your API",
+          "Enable Token Vault and configure Connected Accounts for your provider connection (for demo: google-oauth2)",
           <span key="4">
             Copy the <strong className="text-slate-300">Domain</strong>,{" "}
             <strong className="text-slate-300">Client ID</strong>, and{" "}
@@ -370,6 +657,7 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
             </code>
           </span>,
           "Restart the backend server",
+          "For brokered Gmail demo, call POST /vault/google/gmail/send after authenticating with /auth/login?connection=google-oauth2",
         ]}
       />
     </SectionCard>
@@ -389,7 +677,7 @@ function PoliciesSection() {
   const loadPolicies = useCallback(async () => {
     try {
       const data = await fetchPolicies()
-      setPolicies(data)
+      setPolicies(data as PoliciesResponse)
       setJsonText(JSON.stringify(data, null, 2))
       setError(false)
     } catch {
@@ -617,7 +905,7 @@ export default function SettingsPage() {
   const loadSettings = useCallback(async () => {
     try {
       const data = await fetchSettings()
-      setSettings(data)
+      setSettings(data as Settings)
       setError(false)
     } catch {
       setError(true)
@@ -679,6 +967,7 @@ export default function SettingsPage() {
       {/* Settings sections */}
       {!loading && (
         <div className="space-y-6">
+          <OpenClawSection />
           <TelegramSection settings={settings} />
           <GeminiSection settings={settings} />
           <Auth0Section settings={settings} />
