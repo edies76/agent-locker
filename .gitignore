@@ -10,3 +10,4 @@ build/
 coverage/
 *.log
 dashboard/.next/
+backend/

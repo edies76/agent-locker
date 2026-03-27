@@ -123,8 +123,15 @@ AUTH0_GOOGLE_SCOPES=https://www.googleapis.com/auth/gmail.send
 ### 2. Install Dependencies
 
 ```powershell
-# From project root — builds the OpenClaw plugin and installs it
-.\install-plugin.ps1
+# Backend deps
+cd backend
+python -m venv venv
+.\venv\Scripts\pip install -r ..\requirements.txt
+cd ..
+
+# Plugin (public npm package)
+npm i -g @agentlock/agent-lock
+agent-lock install
 ```
 
 ### 3. Run
@@ -389,9 +396,6 @@ If this works, your hackathon requirement for Token Vault is materially satisfie
 agent-lock/
 ├── agent-lock.py           # CLI entry point (start / stop / status)
 ├── mcp_launcher.py         # MCP gateway launcher helper
-├── launch.ps1              # One-command launcher (backend + gateway)
-├── install-plugin.ps1      # OpenClaw plugin installer
-├── install-mcp.bat         # MCP dependency installer
 │
 ├── mcp_server/             # MCP Gateway — Claude Desktop integration
 │   ├── server.py           # Core server: list_tools + call_tool handlers

@@ -1,1 +1,0 @@
-npx -y -p localtunnel lt --port 8001 > tunnel.log 2>&1
