@@ -6,9 +6,20 @@ Originally built for **OpenClaw**, Agent-Lock now ships a full **MCP Gateway** t
 
 ---
 
-## 📐 Architecture Overview
+## 📐 Architectural Separation Overview
 
-```
+Agent-Lock is split into two physical repositories to enforce security boundaries and simplify deployment:
+
+1. **Frontend & MCP Layer (This Repository)**
+   - Houses the local `mcp_server` (proxy for Claude/Manus/Cursor), the `dashboard/` (Next.js), and the `plugin/` integrations.
+   - Designed to run **locally on the user's/developer's machine** to maintain secure filesystem access.
+   
+2. **Governance Backend ([edies76/backend-agentlock](https://github.com/edies76/backend-agentlock))**
+   - The centralized policy engine containing Auth, Risk Classification, Telegram Approvals, and Audit Logs.
+   - Hosted remotely. 
+   - **Production URL:** `https://agent-lock-backend-api-7.azurewebsites.net`
+
+All frontend apps in this repo communicate with the live Azure Web App out of the box.
 
 ## 🧭 Integration Modes (Choose One or Both)
 
