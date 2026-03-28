@@ -25,4 +25,4 @@ Write-Host "[3/3] Arrancando el servidor local de Uvicorn en el puerto 8000..." 
 Write-Host "(Presiona CTRL+C para detener el servidor)" -ForegroundColor DarkGray
 Write-Host ""
 
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn main:app --host 0.0.0.0 --port 8000
