@@ -9,10 +9,10 @@ cd backend
 
 :: Verificar si el entorno virtual existe
 if not exist "venv\Scripts\activate.bat" (
-    echo [1/3] Entorno virtual no encontrado. Creando entorno pip (venv)...
+    echo [1/3] Entorno virtual no encontrado. Creando entorno pip venv
     python -m venv venv
     
-    echo [2/3] Instalando dependencias requeridas...
+    echo [2/3] Instalando dependencias requeridas
     call venv\Scripts\activate.bat
     pip install -r requirements.txt
 ) else (
@@ -22,7 +22,7 @@ if not exist "venv\Scripts\activate.bat" (
 )
 
 echo.
-echo [3/3] Arrancando el servidor local de Uvicorn en el puerto 8000...
+echo [3/3] Arrancando el servidor local de Uvicorn en el puerto 8000
 echo (Presiona CTRL+C para detener el servidor)
 echo.
 
