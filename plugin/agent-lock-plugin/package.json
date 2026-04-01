@@ -1,6 +1,6 @@
 {
   "name": "@agentlock/agent-lock",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Agent-Lock: Governance layer for OpenClaw AI agents — Gemini risk analysis + human-in-the-loop approval",
   "main": "dist/index.js",
   "bin": {

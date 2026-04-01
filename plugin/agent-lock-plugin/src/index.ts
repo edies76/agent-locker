@@ -116,6 +116,13 @@ function getIntent(key: string): string {
 
 const pending = new Map<string, (d: "approve" | "deny") => void>();
 
+function jsonToolResult(payload: unknown) {
+    return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        details: payload,
+    };
+}
+
 async function post(url: string, body: unknown, customHeaders?: Record<string, string>) {
     const start = Date.now();
     const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token;
@@ -132,7 +139,9 @@ async function post(url: string, body: unknown, customHeaders?: Record<string, s
         });
         if (!r.ok) {
             const errorText = await r.text().catch(() => "");
-            throw new Error(`HTTP ${r.status}: ${errorText}`);
+            const err = new Error(`HTTP ${r.status}: ${errorText}`) as Error & { status?: number };
+            err.status = r.status;
+            throw err;
         }
         activeBackendUrl = baseUrl;
         return r;
@@ -338,8 +347,9 @@ export default function register(api: any) {
         // Manual approval tool
         api.registerTool({
             name: "agent_lock_respond",
+            label: "Agent-Lock Respond",
             description: "Records the user's decision for a pending Agent-Lock action.",
-            inputSchema: {
+            parameters: {
                 type: "object",
                 properties: {
                     action_id: { type: "string", description: "ID of the pending action" },
@@ -347,7 +357,21 @@ export default function register(api: any) {
                 },
                 required: ["action_id", "decision"],
             },
-            handler: async ({ action_id, decision }: { action_id: string; decision: "approve" | "deny" }) => {
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const action_id = typeof params.action_id === "string" ? params.action_id : "";
+                const decision =
+                    params.decision === "approve" || params.decision === "deny"
+                        ? params.decision
+                        : undefined;
+
+                if (!action_id || !decision) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_INPUT",
+                        message: "action_id and decision (approve|deny) are required.",
+                    });
+                }
+
                 try {
                     await post(`/approve/${action_id}`, {
                         decision: decision === "approve" ? "YES" : "NO",
@@ -357,9 +381,12 @@ export default function register(api: any) {
                 if (resolve) {
                     resolve(decision);
                     pending.delete(action_id);
-                    return { success: true, message: decision === "approve" ? "✅ Approved." : "🚫 Blocked." };
+                    return jsonToolResult({
+                        success: true,
+                        message: decision === "approve" ? "✅ Approved." : "🚫 Blocked.",
+                    });
                 }
-                return { success: false, message: "Action not found." };
+                return jsonToolResult({ success: false, message: "Action not found." });
             },
         });
         log("info", "agent_lock_respond tool registered");
@@ -368,8 +395,9 @@ export default function register(api: any) {
         // Gmail Send Tool (calls backend broker endpoint)
         api.registerTool({
             name: "agent_lock_gmail_send",
+            label: "Agent-Lock Gmail Send",
             description: "Send email via Gmail using Agent-Lock Token Vault (zero-config, audited, secure)",
-            inputSchema: {
+            parameters: {
                 type: "object",
                 properties: {
                     to: { type: "string", description: "Recipient email" },
@@ -378,46 +406,57 @@ export default function register(api: any) {
                 },
                 required: ["to", "subject", "body_text"],
             },
-            handler: async (args: any) => {
-                log("info", "Gmail send via Token Vault", { to: args.to, subject: args.subject });
-                
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const to = typeof params.to === "string" ? params.to : "";
+                const subject = typeof params.subject === "string" ? params.subject : "";
+                const body_text = typeof params.body_text === "string" ? params.body_text : "";
+                log("info", "Gmail send via Token Vault", { to, subject });
+
+                if (!to || !subject || !body_text) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_INPUT",
+                        message: "to, subject and body_text are required.",
+                    });
+                }
+
                 try {
                     const response = await post("/vault/google/gmail/send", {
-                        to: args.to,
-                        subject: args.subject,
-                        body_text: args.body_text,
+                        to,
+                        subject,
+                        body_text,
                     });
-                    
-                    log("info", "Gmail sent successfully", { 
-                        to: args.to, 
-                        message_id: response.id 
+
+                    log("info", "Gmail sent successfully", {
+                        to,
+                        message_id: (response as any).message_id,
                     });
-                    
-                    return {
+
+                    return jsonToolResult({
                         success: true,
-                        message: `✅ Email sent to ${args.to}`,
+                        message: `✅ Email sent to ${to}`,
                         details: response,
-                    };
-                } catch (error: any) {
-                    log("error", "Gmail send failed", { 
-                        to: args.to, 
-                        error: error.message 
                     });
-                    
-                    // Check if it's an auth error (401)
-                    if (error.message && error.message.includes("401")) {
-                        return {
+                } catch (error: any) {
+                    const errorMessage = error?.message ?? "Unknown error";
+                    log("error", "Gmail send failed", {
+                        to,
+                        error: errorMessage,
+                    });
+
+                    if (errorMessage.includes("401")) {
+                        return jsonToolResult({
                             success: false,
                             error: "AUTH_REQUIRED",
                             message: `🔐 Authentication required. Please login at: ${activeBackendUrl}/auth/login?connection=google-oauth2`,
-                        };
+                        });
                     }
-                    
-                    return {
+
+                    return jsonToolResult({
                         success: false,
                         error: "BROKER_FAILED",
-                        message: `❌ Failed to send email: ${error.message}`,
-                    };
+                        message: `❌ Failed to send email: ${errorMessage}`,
+                    });
                 }
             },
         });
@@ -426,44 +465,59 @@ export default function register(api: any) {
         // GitHub Create Issue Tool
         api.registerTool({
             name: "agent_lock_github_create_issue",
+            label: "Agent-Lock GitHub Create Issue",
             description: "Create GitHub issue using Agent-Lock Token Vault (zero-config)",
-            inputSchema: {
+            parameters: {
                 type: "object",
                 properties: {
                     owner: { type: "string", description: "Repository owner" },
                     repo: { type: "string", description: "Repository name" },
                     title: { type: "string", description: "Issue title" },
+                    body: { type: "string", description: "Issue body" },
                 },
                 required: ["owner", "repo", "title"],
             },
-            handler: async (args: any) => {
-                log("info", "GitHub issue creation via Token Vault", { owner: args.owner, repo: args.repo });
-                
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const owner = typeof params.owner === "string" ? params.owner : "";
+                const repo = typeof params.repo === "string" ? params.repo : "";
+                const title = typeof params.title === "string" ? params.title : "";
+                const body = typeof params.body === "string" ? params.body : "";
+                log("info", "GitHub issue creation via Token Vault", { owner, repo });
+
+                if (!owner || !repo || !title) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_INPUT",
+                        message: "owner, repo and title are required.",
+                    });
+                }
+
                 try {
-                    const response = await post("/vault/github/issue", {
-                        owner: args.owner,
-                        repo: args.repo,
-                        title: args.title,
-                        body: args.body || "",
+                    const response = await post("/vault/github/issues/create", {
+                        owner,
+                        repo,
+                        title,
+                        body,
                     });
-                    
-                    log("info", "GitHub issue created successfully", { 
-                        issue_url: response.html_url 
+
+                    log("info", "GitHub issue created successfully", {
+                        issue_url: (response as any).issue_url,
                     });
-                    
-                    return {
+
+                    return jsonToolResult({
                         success: true,
-                        message: `✅ Issue created: ${response.html_url}`,
+                        message: `✅ Issue created: ${(response as any).issue_url ?? "created"}`,
                         details: response,
-                    };
+                    });
                 } catch (error: any) {
-                    log("error", "GitHub issue creation failed", { error: error.message });
-                    
-                    return {
+                    const errorMessage = error?.message ?? "Unknown error";
+                    log("error", "GitHub issue creation failed", { error: errorMessage });
+
+                    return jsonToolResult({
                         success: false,
                         error: "BROKER_FAILED",
-                        message: `❌ Failed to create issue: ${error.message}`,
-                    };
+                        message: `❌ Failed to create issue: ${errorMessage}`,
+                    });
                 }
             },
         });
@@ -472,8 +526,9 @@ export default function register(api: any) {
         // Slack Send Tool
         api.registerTool({
             name: "agent_lock_slack_send",
+            label: "Agent-Lock Slack Send",
             description: "Send Slack message using Agent-Lock Token Vault (zero-config)",
-            inputSchema: {
+            parameters: {
                 type: "object",
                 properties: {
                     channel: { type: "string", description: "Channel ID or name" },
@@ -481,32 +536,43 @@ export default function register(api: any) {
                 },
                 required: ["channel", "text"],
             },
-            handler: async (args: any) => {
-                log("info", "Slack message via Token Vault", { channel: args.channel });
-                
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const channel = typeof params.channel === "string" ? params.channel : "";
+                const text = typeof params.text === "string" ? params.text : "";
+                log("info", "Slack message via Token Vault", { channel });
+
+                if (!channel || !text) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_INPUT",
+                        message: "channel and text are required.",
+                    });
+                }
+
                 try {
-                    const response = await post("/vault/slack/send", {
-                        channel: args.channel,
-                        text: args.text,
+                    const response = await post("/vault/slack/messages/send", {
+                        channel,
+                        text,
                     });
-                    
-                    log("info", "Slack message sent successfully", { 
-                        channel: args.channel 
+
+                    log("info", "Slack message sent successfully", {
+                        channel,
                     });
-                    
-                    return {
+
+                    return jsonToolResult({
                         success: true,
-                        message: `✅ Message sent to ${args.channel}`,
+                        message: `✅ Message sent to ${channel}`,
                         details: response,
-                    };
+                    });
                 } catch (error: any) {
-                    log("error", "Slack send failed", { error: error.message });
-                    
-                    return {
+                    const errorMessage = error?.message ?? "Unknown error";
+                    log("error", "Slack send failed", { error: errorMessage });
+
+                    return jsonToolResult({
                         success: false,
                         error: "BROKER_FAILED",
-                        message: `❌ Failed to send message: ${error.message}`,
-                    };
+                        message: `❌ Failed to send message: ${errorMessage}`,
+                    });
                 }
             },
         });
@@ -515,44 +581,59 @@ export default function register(api: any) {
         // Calendar Create Tool
         api.registerTool({
             name: "agent_lock_calendar_create",
+            label: "Agent-Lock Calendar Create",
             description: "Create Google Calendar event using Agent-Lock Token Vault (zero-config)",
-            inputSchema: {
+            parameters: {
                 type: "object",
                 properties: {
                     summary: { type: "string", description: "Event title" },
                     start_time: { type: "string", description: "Start time (ISO 8601)" },
                     end_time: { type: "string", description: "End time (ISO 8601)" },
+                    description: { type: "string", description: "Event description" },
                 },
                 required: ["summary", "start_time", "end_time"],
             },
-            handler: async (args: any) => {
-                log("info", "Calendar event creation via Token Vault", { summary: args.summary });
-                
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const summary = typeof params.summary === "string" ? params.summary : "";
+                const start_time = typeof params.start_time === "string" ? params.start_time : "";
+                const end_time = typeof params.end_time === "string" ? params.end_time : "";
+                const description = typeof params.description === "string" ? params.description : "";
+                log("info", "Calendar event creation via Token Vault", { summary });
+
+                if (!summary || !start_time || !end_time) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_INPUT",
+                        message: "summary, start_time and end_time are required.",
+                    });
+                }
+
                 try {
-                    const response = await post("/vault/calendar/create", {
-                        summary: args.summary,
-                        start_time: args.start_time,
-                        end_time: args.end_time,
-                        description: args.description || "",
+                    const response = await post("/vault/google/calendar/events", {
+                        summary,
+                        start_time,
+                        end_time,
+                        description,
                     });
-                    
-                    log("info", "Calendar event created successfully", { 
-                        event_link: response.htmlLink 
+
+                    log("info", "Calendar event created successfully", {
+                        event_link: (response as any).event_link,
                     });
-                    
-                    return {
+
+                    return jsonToolResult({
                         success: true,
-                        message: `✅ Event created: ${args.summary}`,
+                        message: `✅ Event created: ${summary}`,
                         details: response,
-                    };
+                    });
                 } catch (error: any) {
-                    log("error", "Calendar creation failed", { error: error.message });
-                    
-                    return {
+                    const errorMessage = error?.message ?? "Unknown error";
+                    log("error", "Calendar creation failed", { error: errorMessage });
+
+                    return jsonToolResult({
                         success: false,
                         error: "BROKER_FAILED",
-                        message: `❌ Failed to create event: ${error.message}`,
-                    };
+                        message: `❌ Failed to create event: ${errorMessage}`,
+                    });
                 }
             },
         });
