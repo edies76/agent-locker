@@ -34,16 +34,18 @@ function RiskBadge({ level }: { level: string }) {
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, 'success' | 'warning' | 'danger' | 'neutral'> = {
     AUTO_APPROVED: 'success',
-    HUMAN_APPROVED: 'success',
+    APPROVED: 'success',
     BLOCKED: 'danger',
     PENDING: 'warning',
+    AUTH_REQUIRED: 'neutral',
     TIMEOUT: 'neutral'
   }
   const labels: Record<string, string> = {
     AUTO_APPROVED: 'Auto',
-    HUMAN_APPROVED: 'Approved',
+    APPROVED: 'Approved',
     BLOCKED: 'Blocked',
     PENDING: 'Pending',
+    AUTH_REQUIRED: 'Auth Required',
     TIMEOUT: 'Timeout'
   }
   return <Badge variant={variants[status] || 'neutral'} size="sm">{labels[status] || status}</Badge>
@@ -69,11 +71,11 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (forceRefresh = false) => {
     try {
       const [statsData, activityData] = await Promise.all([
-        fetchStats(),
-        fetchActivity(15)
+        fetchStats({ refresh: forceRefresh }),
+        fetchActivity(15, { refresh: forceRefresh })
       ])
       setStats(statsData as Stats)
       if (Array.isArray(activityData)) setActivity(activityData)
@@ -95,11 +97,11 @@ export default function OverviewPage() {
   }, [])
 
   useEffect(() => {
-    loadAll()
+    loadAll(false)
     checkHealth()
 
     const interval = setInterval(() => {
-      loadAll()
+      loadAll(false)
       checkHealth()
     }, 5000)
 
@@ -133,7 +135,7 @@ export default function OverviewPage() {
               {lastUpdated.toLocaleTimeString()}
             </span>
           )}
-          <Button variant="secondary" size="sm" onClick={loadAll}>
+          <Button variant="secondary" size="sm" onClick={() => loadAll(true)}>
             Refresh
           </Button>
         </div>
@@ -156,7 +158,7 @@ export default function OverviewPage() {
           <div className="text-center py-8">
             <p className="text-lg font-medium" style={{ color: 'var(--danger)' }}>Failed to load data</p>
             <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>Make sure the backend is running</p>
-            <Button variant="secondary" className="mt-4" onClick={loadAll}>Retry</Button>
+            <Button variant="secondary" className="mt-4" onClick={() => { void loadAll(true) }}>Retry</Button>
           </div>
         </Card>
       ) : (

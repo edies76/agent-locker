@@ -1,73 +1,119 @@
-const BASE = "https://agent-lock-backend-api-7.azurewebsites.net"
-
 import { cachedFetch, apiCache } from "./cache"
+import { resolveBackendEndpoint, getLastBackendResolution } from "./backendEndpoint"
+
+async function buildUrl(path: string): Promise<string> {
+  const { baseUrl } = await resolveBackendEndpoint()
+  return `${baseUrl}${path}`
+}
+
+async function cachedFromPath<T>(
+  path: string,
+  options?: {
+    ttl?: number
+    skip?: boolean
+    refresh?: boolean
+  }
+): Promise<T> {
+  const url = await buildUrl(path)
+  return cachedFetch<T>(url, options)
+}
+
+export async function getBackendConnectionInfo() {
+  return (await resolveBackendEndpoint()) ?? getLastBackendResolution()
+}
 
 export async function fetchHealth() {
-  const res = await fetch(`${BASE}/health`, { cache: "no-store" })
+  const res = await fetch(await buildUrl("/health"), { cache: "no-store" })
   return res.json()
 }
 
 export async function fetchStats(options?: { refresh?: boolean }) {
-  return cachedFetch(`${BASE}/dashboard/stats`, {
+  return cachedFromPath(`/dashboard/stats`, {
     ttl: 5000, // 5s cache
     refresh: options?.refresh,
   })
 }
 
 export async function fetchTrends(hours = 24, options?: { refresh?: boolean }) {
-  return cachedFetch(`${BASE}/dashboard/trends?hours=${hours}`, {
+  return cachedFromPath(`/dashboard/trends?hours=${hours}`, {
     ttl: 30000, // 30s cache for trends (expensive calculation)
     refresh: options?.refresh,
   })
 }
 
 export async function fetchActivity(limit = 50, options?: { refresh?: boolean }) {
-  return cachedFetch(`${BASE}/dashboard/activity?limit=${limit}`, {
+  return cachedFromPath(`/dashboard/activity?limit=${limit}`, {
     ttl: 3000, // 3s cache for activity
     refresh: options?.refresh,
   })
 }
 
 export async function fetchActivityItem(actionId: string) {
-  return cachedFetch(`${BASE}/dashboard/activity/${actionId}`, {
+  return cachedFromPath(`/dashboard/activity/${actionId}`, {
     ttl: 10000, // 10s cache for individual items
   })
 }
 
 export async function fetchPending() {
-  // Never cache pending approvals - always fresh
-  const res = await fetch(`${BASE}/dashboard/pending`, { cache: "no-store" })
-  return res.json()
+  // Never cache pending approvals - always fresh.
+  // Retry once with forced endpoint re-resolution in case the cached backend became unavailable.
+  const attempt = async (forceResolve: boolean) => {
+    const { baseUrl } = await resolveBackendEndpoint(forceResolve)
+    const res = await fetch(`${baseUrl}/dashboard/pending`, { cache: "no-store" })
+    if (!res.ok) {
+      const body = await res.text()
+      throw new Error(body || `Pending fetch failed (${res.status})`)
+    }
+    return res.json()
+  }
+
+  try {
+    return await attempt(false)
+  } catch {
+    try {
+      return await attempt(true)
+    } catch {
+      // Keep approvals page usable even if backend is temporarily unreachable.
+      return []
+    }
+  }
 }
 
 export async function fetchMCPStatus() {
-  return cachedFetch(`${BASE}/dashboard/mcp/status`, {
+  return cachedFromPath(`/dashboard/mcp/status`, {
     ttl: 10000, // 10s cache
   })
 }
 
 export async function fetchMCPTargets() {
-  return cachedFetch(`${BASE}/dashboard/mcp/targets`, {
+  return cachedFromPath(`/dashboard/mcp/targets`, {
     ttl: 15000, // 15s cache - config doesn't change often
   })
 }
 
+export async function fetchMCPTargetDetail(serverName: string) {
+  return cachedFromPath(`/dashboard/mcp/targets/${encodeURIComponent(serverName)}`, {
+    ttl: 3000,
+  })
+}
+
 export async function fetchMCPTimings(limit = 100) {
-  return cachedFetch(`${BASE}/dashboard/mcp/timings?limit=${limit}`, {
+  return cachedFromPath(`/dashboard/mcp/timings?limit=${limit}`, {
     ttl: 5000,
   })
 }
 
 export async function fetchMCPDiagnostics(options?: { refresh?: boolean }) {
-  return cachedFetch(`${BASE}/dashboard/mcp/diagnostics`, {
+  return cachedFromPath(`/dashboard/mcp/diagnostics`, {
     ttl: 10000,
     refresh: options?.refresh,
   })
 }
 
 export async function toggleMCPTarget(serverName: string, enabled: boolean) {
+  const base = await buildUrl("")
   const res = await fetch(
-    `${BASE}/dashboard/mcp/targets/${encodeURIComponent(serverName)}/toggle`,
+    `${base}/dashboard/mcp/targets/${encodeURIComponent(serverName)}/toggle`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -80,13 +126,13 @@ export async function toggleMCPTarget(serverName: string, enabled: boolean) {
 }
 
 export async function fetchSettings() {
-  return cachedFetch(`${BASE}/settings`, {
+  return cachedFromPath(`/settings`, {
     ttl: 30000, // 30s cache - settings rarely change
   })
 }
 
 export async function fetchPolicies() {
-  return cachedFetch(`${BASE}/settings/policies`, {
+  return cachedFromPath(`/settings/policies`, {
     ttl: 30000,
   })
 }
@@ -95,21 +141,22 @@ export async function updatePolicies(body: {
   policies: unknown[]
   global_config: Record<string, unknown>
 }) {
-  const res = await fetch(`${BASE}/settings/policies`, {
+  const policyUrl = await buildUrl(`/settings/policies`)
+  const res = await fetch(policyUrl, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
   
   // Invalidate settings cache after update
-  apiCache.invalidate(`fetch:${BASE}/settings/policies`)
-  apiCache.invalidate(`fetch:${BASE}/settings`)
+  apiCache.invalidatePattern("/settings/policies")
+  apiCache.invalidatePattern("/settings")
   
   return res.json()
 }
 
 export async function testTelegram() {
-  const res = await fetch(`${BASE}/settings/telegram/test`, {
+  const res = await fetch(await buildUrl(`/settings/telegram/test`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -118,26 +165,47 @@ export async function testTelegram() {
 }
 
 export async function fetchTokenVaultStatus() {
-  const res = await fetch(`${BASE}/vault/status`, { cache: "no-store" })
+  const res = await fetch(await buildUrl(`/vault/status`), { cache: "no-store" })
   return res.json()
 }
 
 export async function approveAction(action_id: string, decision: "YES" | "NO") {
-  const res = await fetch(`${BASE}/approve/${action_id}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision }),
-  })
+  const attempt = async (forceResolve: boolean) => {
+    const { baseUrl } = await resolveBackendEndpoint(forceResolve)
+    const res = await fetch(`${baseUrl}/approve/${action_id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.detail || data?.error || `Approval failed (${res.status})`)
+    }
+    return data
+  }
+
+  let data: any
+  try {
+    data = await attempt(false)
+  } catch {
+    data = await attempt(true)
+  }
+
+  const status = String(data?.status || "")
+  if (status !== "APPROVED" && status !== "BLOCKED") {
+    throw new Error(`Unexpected approval status: ${status || "unknown"}`)
+  }
   
   // Invalidate related caches after approval
   apiCache.invalidatePattern('dashboard/stats')
   apiCache.invalidatePattern('dashboard/activity')
-  
-  return res.json()
+  apiCache.invalidatePattern('dashboard/pending')
+
+  return data
 }
 
 export async function fetchLogs(limit = 50) {
-  return cachedFetch(`${BASE}/logs?limit=${limit}`, {
+  return cachedFromPath(`/logs?limit=${limit}`, {
     ttl: 10000,
   })
 }
@@ -167,7 +235,7 @@ export async function fetchLogsFiltered(query: LogsQuery = {}) {
   if (query.from_ts) params.set("from_ts", query.from_ts)
   if (query.to_ts) params.set("to_ts", query.to_ts)
   const qs = params.toString()
-  return cachedFetch(`${BASE}/logs${qs ? `?${qs}` : ""}`, {
+  return cachedFromPath(`/logs${qs ? `?${qs}` : ""}`, {
     ttl: 5000,
     refresh: query.refresh,
   })

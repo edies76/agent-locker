@@ -189,19 +189,28 @@ export default function ApprovalsPage() {
   const [pending, setPending] = useState<Action[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [recentDecisions, setRecentDecisions] = useState<Record<string, number>>({})
   const { showToast } = useToast()
 
   const loadPending = useCallback(async () => {
     try {
       const data = await fetchPending()
       if (Array.isArray(data)) {
-        setPending(data)
+        const now = Date.now()
+        const activeLocks = Object.fromEntries(
+          Object.entries(recentDecisions).filter(([, expiresAt]) => expiresAt > now)
+        )
+        if (Object.keys(activeLocks).length !== Object.keys(recentDecisions).length) {
+          setRecentDecisions(activeLocks)
+        }
+
+        setPending(data.filter((item) => !activeLocks[item.action_id]))
       }
     } catch (e) {
       console.error('Failed to load pending', e)
     }
     setLoading(false)
-  }, [])
+  }, [recentDecisions])
 
   useEffect(() => {
     loadPending()
@@ -217,9 +226,18 @@ export default function ApprovalsPage() {
         title: decision === 'YES' ? 'Action approved' : 'Action rejected' 
       })
       setPending(p => p.filter(a => a.action_id !== actionId))
+      setRecentDecisions((prev) => ({ ...prev, [actionId]: Date.now() + 15000 }))
       setSelectedIndex(i => Math.min(i, Math.max(0, pending.length - 2)))
-    } catch {
-      showToast({ type: 'error', title: 'Failed to process decision' })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to process decision'
+      const isStale = /already processed|not found|409|404/i.test(message)
+
+      if (isStale) {
+        setPending((p) => p.filter((a) => a.action_id !== actionId))
+        showToast({ type: 'warning', title: 'Request was stale and was removed', message })
+      } else {
+        showToast({ type: 'error', title: 'Failed to process decision', message })
+      }
       throw new Error('Failed')
     }
   }, [showToast, pending.length])

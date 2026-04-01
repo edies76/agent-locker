@@ -47,6 +47,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
     APPROVED: "bg-emerald-900/60 text-emerald-300 border border-emerald-700/50",
     PENDING: "bg-amber-900/60 text-amber-300 border border-amber-700/50",
     BLOCKED: "bg-red-900/60 text-red-300 border border-red-700/50",
+    AUTH_REQUIRED: "bg-purple-900/60 text-purple-300 border border-purple-700/50",
   }
 
   const iconMap: Record<ActionStatus, string> = {
@@ -54,6 +55,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
     APPROVED: "🛡️",
     PENDING: "⏳",
     BLOCKED: "🚫",
+    AUTH_REQUIRED: "🔐",
   }
 
   const labelMap: Record<ActionStatus, string> = {
@@ -61,6 +63,7 @@ export function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {
     APPROVED: "Approved",
     PENDING: "Pending",
     BLOCKED: "Blocked",
+    AUTH_REQUIRED: "Auth Required",
   }
 
   return (

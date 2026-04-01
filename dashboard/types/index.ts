@@ -1,5 +1,5 @@
 export type RiskLevel = "LOW" | "HIGH" | "CRITICAL"
-export type ActionStatus = "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED"
+export type ActionStatus = "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED" | "AUTH_REQUIRED"
 
 export interface Action {
   action_id: string
@@ -66,6 +66,7 @@ export interface MCPTargetServer {
   enabled: boolean
   connected: boolean
   command: string
+  args?: string[]
 }
 
 export interface MCPTargetsResponse {
@@ -111,10 +112,57 @@ export interface MCPDiagnostics {
   connected_count: number
   timings: MCPTimingAverages
   disconnected_enabled: string[]
+  disconnected_details?: Array<{
+    name: string
+    enabled: boolean
+    connected: boolean
+    command?: string
+    resolved_command?: string | null
+    command_found?: boolean
+    endpoint?: string
+    endpoint_reachable?: boolean
+    startup_hint?: string
+  }>
   warnings: string[]
   recommendations: string[]
+  telegram_runtime?: {
+    polling_enabled: boolean
+    polling_active: boolean
+    polling_conflict: boolean
+    lock_owner: boolean
+    last_error: string
+  }
+  root_cause_code?: string
+  root_cause_message?: string
+  next_step?: string
   healthy: boolean
   error?: string
+}
+
+export interface MCPTargetDetail {
+  name: string
+  enabled: boolean
+  connected: boolean
+  command: string
+  args: string[]
+  resolved_command?: string | null
+  command_found?: boolean
+  endpoint?: string | null
+  endpoint_reachable?: boolean | null
+  endpoint_status?: string | null
+  connection_reason_code?: string
+  connection_reason?: string
+  startup_hint?: string
+}
+
+export interface MCPTargetDetailResponse {
+  ok: boolean
+  error?: string
+  warning?: string
+  config_path?: string
+  target?: MCPTargetDetail
+  observed_connected_servers?: string[]
+  restart_required_after_toggle?: boolean
 }
 
 export interface AuditLogItem {

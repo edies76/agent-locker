@@ -19,6 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import pkg from "../package.json";
 
 type AgentLockFileConfig = {
     backend_url?: string;
@@ -42,11 +43,15 @@ function loadFileConfig(): AgentLockFileConfig {
 
 const FILE_CONFIG = loadFileConfig();
 
-const BACKEND_URL = process.env.AGENT_LOCK_URL ?? FILE_CONFIG.backend_url ?? "https://agent-lock-backend-api-7.azurewebsites.net";
+const LOCAL_BACKEND_URL = "http://localhost:8000";
+const CLOUD_BACKEND_URL = process.env.AGENT_LOCK_URL ?? FILE_CONFIG.backend_url ?? "https://agent-lock-backend-api-7.azurewebsites.net";
+let activeBackendUrl = LOCAL_BACKEND_URL;
+let cloudFallbackAnnounced = false;
 
 const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? FILE_CONFIG.status_poll_ms ?? "500");
 const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? FILE_CONFIG.status_poll_ms_max ?? "2000");
 const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? FILE_CONFIG.log_level ?? "info").toLowerCase();
+const PLUGIN_VERSION = (pkg as { version?: string }).version ?? "unknown";
 
 const LEVEL_WEIGHT: Record<string, number> = {
     debug: 10,
@@ -99,36 +104,100 @@ function getIntent(key: string): string {
 
 const pending = new Map<string, (d: "approve" | "deny") => void>();
 
-async function post(url: string, body: unknown) {
+async function post(url: string, body: unknown, customHeaders?: Record<string, string>) {
     const start = Date.now();
     const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token;
-    const r = await fetch(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            ...(extraAuth ? { "Authorization": `Bearer ${extraAuth}` } : {}),
-        },
-        body: JSON.stringify(body),
-    });
-    log("debug", "HTTP POST completed", {
-        url,
-        status: r.status,
-        latency_ms: Date.now() - start,
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
+
+    const attempt = async (baseUrl: string) => {
+        const r = await fetch(`${baseUrl}${url}`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                ...(extraAuth ? { "Authorization": `Bearer ${extraAuth}` } : {}),
+                ...(customHeaders ?? {}),
+            },
+            body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        activeBackendUrl = baseUrl;
+        return r;
+    };
+
+    try {
+        const response = await attempt(LOCAL_BACKEND_URL);
+        if (cloudFallbackAnnounced) {
+            cloudFallbackAnnounced = false;
+            log("info", "Local backend recovered", { backend_url: LOCAL_BACKEND_URL });
+        }
+        log("debug", "HTTP POST completed", {
+            url: `${LOCAL_BACKEND_URL}${url}`,
+            status: response.status,
+            latency_ms: Date.now() - start,
+        });
+        return response.json();
+    } catch (localErr) {
+        if (CLOUD_BACKEND_URL === LOCAL_BACKEND_URL) {
+            throw localErr;
+        }
+
+        const response = await attempt(CLOUD_BACKEND_URL);
+        if (!cloudFallbackAnnounced) {
+            cloudFallbackAnnounced = true;
+            log("warn", "Local backend unavailable, using cloud fallback", {
+                local_backend_url: LOCAL_BACKEND_URL,
+                cloud_backend_url: CLOUD_BACKEND_URL,
+            });
+        }
+        log("debug", "HTTP POST completed", {
+            url: `${CLOUD_BACKEND_URL}${url}`,
+            status: response.status,
+            latency_ms: Date.now() - start,
+        });
+        return response.json();
+    }
 }
 
 async function get(url: string) {
     const start = Date.now();
-    const r = await fetch(url);
-    log("debug", "HTTP GET completed", {
-        url,
-        status: r.status,
-        latency_ms: Date.now() - start,
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
+    const attempt = async (baseUrl: string) => {
+        const r = await fetch(`${baseUrl}${url}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        activeBackendUrl = baseUrl;
+        return r;
+    };
+
+    try {
+        const response = await attempt(LOCAL_BACKEND_URL);
+        if (cloudFallbackAnnounced) {
+            cloudFallbackAnnounced = false;
+            log("info", "Local backend recovered", { backend_url: LOCAL_BACKEND_URL });
+        }
+        log("debug", "HTTP GET completed", {
+            url: `${LOCAL_BACKEND_URL}${url}`,
+            status: response.status,
+            latency_ms: Date.now() - start,
+        });
+        return response.json();
+    } catch (localErr) {
+        if (CLOUD_BACKEND_URL === LOCAL_BACKEND_URL) {
+            throw localErr;
+        }
+
+        const response = await attempt(CLOUD_BACKEND_URL);
+        if (!cloudFallbackAnnounced) {
+            cloudFallbackAnnounced = true;
+            log("warn", "Local backend unavailable, using cloud fallback", {
+                local_backend_url: LOCAL_BACKEND_URL,
+                cloud_backend_url: CLOUD_BACKEND_URL,
+            });
+        }
+        log("debug", "HTTP GET completed", {
+            url: `${CLOUD_BACKEND_URL}${url}`,
+            status: response.status,
+            latency_ms: Date.now() - start,
+        });
+        return response.json();
+    }
 }
 
 // ── Extracts sessionKey from an event context ─────────────────────────────────
@@ -239,16 +308,8 @@ export default function register(api: any) {
                 const fallbackKey = sessionOf(msg);
                 const storedFallback = (fallbackKey !== sessionKey) ? store(fallbackKey, text) : false;
 
-                if (storedPrimary) {
-                    log("info", "Intent captured", {
-                        session_key: sessionKey,
-                        preview: text.slice(0, 80),
-                    });
-                } else if (storedFallback) {
-                    log("info", "Intent captured (fallback key)", {
-                        session_key: fallbackKey,
-                        preview: text.slice(0, 80),
-                    });
+                if (storedPrimary || storedFallback) {
+                    // Intentionally silent to avoid leaking user intent content in logs.
                 }
             }
             return undefined;
@@ -257,8 +318,9 @@ export default function register(api: any) {
         // If this OpenClaw build doesn't support the event, intent capture falls back to defaults.
     }
 
-    // ── Strategy 4: manual response tool ──────────────────────────────────────
+    // ── Strategy 4: manual response tool + Token Vault Tools ────────────────
     if (typeof api.registerTool === "function") {
+        // Manual approval tool
         api.registerTool({
             name: "agent_lock_respond",
             description: "Records the user's decision for a pending Agent-Lock action.",
@@ -272,7 +334,7 @@ export default function register(api: any) {
             },
             handler: async ({ action_id, decision }: { action_id: string; decision: "approve" | "deny" }) => {
                 try {
-                    await post(`${BACKEND_URL}/approve/${action_id}`, {
+                    await post(`/approve/${action_id}`, {
                         decision: decision === "approve" ? "YES" : "NO",
                     });
                 } catch {}
@@ -286,13 +348,200 @@ export default function register(api: any) {
             },
         });
         log("info", "agent_lock_respond tool registered");
-    }
 
+        // ── Token Vault Tools ─────────────────────────────────────────────────────
+        // Gmail Send Tool (calls backend broker endpoint)
+        api.registerTool({
+            name: "agent_lock_gmail_send",
+            description: "Send email via Gmail using Agent-Lock Token Vault (zero-config, audited, secure)",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    to: { type: "string", description: "Recipient email" },
+                    subject: { type: "string", description: "Email subject" },
+                    body_text: { type: "string", description: "Email body" },
+                },
+                required: ["to", "subject", "body_text"],
+            },
+            handler: async (args: any) => {
+                log("info", "Gmail send via Token Vault", { to: args.to, subject: args.subject });
+                
+                try {
+                    const response = await post("/vault/gmail/send", {
+                        to: args.to,
+                        subject: args.subject,
+                        body_text: args.body_text,
+                    });
+                    
+                    log("info", "Gmail sent successfully via Token Vault", { 
+                        to: args.to, 
+                        message_id: response.message_id 
+                    });
+                    
+                    return {
+                        success: true,
+                        message: `✅ Email sent to ${args.to} via Agent-Lock Token Vault`,
+                        details: response,
+                    };
+                } catch (error: any) {
+                    log("error", "Gmail send failed", { 
+                        to: args.to, 
+                        error: error.message 
+                    });
+                    
+                    return {
+                        success: false,
+                        error: "BROKER_FAILED",
+                        message: `❌ Failed to send email: ${error.message}`,
+                    };
+                }
+            },
+        });
+        log("info", "agent_lock_gmail_send tool registered (Token Vault)");
+
+        // GitHub Create Issue Tool
+        api.registerTool({
+            name: "agent_lock_github_create_issue",
+            description: "Create GitHub issue using Agent-Lock Token Vault (zero-config)",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    owner: { type: "string", description: "Repository owner" },
+                    repo: { type: "string", description: "Repository name" },
+                    title: { type: "string", description: "Issue title" },
+                },
+                required: ["owner", "repo", "title"],
+            },
+            handler: async (args: any) => {
+                log("info", "GitHub issue creation via Token Vault", { owner: args.owner, repo: args.repo });
+                
+                try {
+                    const response = await post("/vault/github/issue", {
+                        owner: args.owner,
+                        repo: args.repo,
+                        title: args.title,
+                        body: args.body || "",
+                    });
+                    
+                    log("info", "GitHub issue created successfully", { 
+                        issue_url: response.html_url 
+                    });
+                    
+                    return {
+                        success: true,
+                        message: `✅ Issue created: ${response.html_url}`,
+                        details: response,
+                    };
+                } catch (error: any) {
+                    log("error", "GitHub issue creation failed", { error: error.message });
+                    
+                    return {
+                        success: false,
+                        error: "BROKER_FAILED",
+                        message: `❌ Failed to create issue: ${error.message}`,
+                    };
+                }
+            },
+        });
+        log("info", "agent_lock_github_create_issue tool registered (Token Vault)");
+
+        // Slack Send Tool
+        api.registerTool({
+            name: "agent_lock_slack_send",
+            description: "Send Slack message using Agent-Lock Token Vault (zero-config)",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    channel: { type: "string", description: "Channel ID or name" },
+                    text: { type: "string", description: "Message text" },
+                },
+                required: ["channel", "text"],
+            },
+            handler: async (args: any) => {
+                log("info", "Slack message via Token Vault", { channel: args.channel });
+                
+                try {
+                    const response = await post("/vault/slack/send", {
+                        channel: args.channel,
+                        text: args.text,
+                    });
+                    
+                    log("info", "Slack message sent successfully", { 
+                        channel: args.channel 
+                    });
+                    
+                    return {
+                        success: true,
+                        message: `✅ Message sent to ${args.channel}`,
+                        details: response,
+                    };
+                } catch (error: any) {
+                    log("error", "Slack send failed", { error: error.message });
+                    
+                    return {
+                        success: false,
+                        error: "BROKER_FAILED",
+                        message: `❌ Failed to send message: ${error.message}`,
+                    };
+                }
+            },
+        });
+        log("info", "agent_lock_slack_send tool registered (Token Vault)");
+
+        // Calendar Create Tool
+        api.registerTool({
+            name: "agent_lock_calendar_create",
+            description: "Create Google Calendar event using Agent-Lock Token Vault (zero-config)",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    summary: { type: "string", description: "Event title" },
+                    start_time: { type: "string", description: "Start time (ISO 8601)" },
+                    end_time: { type: "string", description: "End time (ISO 8601)" },
+                },
+                required: ["summary", "start_time", "end_time"],
+            },
+            handler: async (args: any) => {
+                log("info", "Calendar event creation via Token Vault", { summary: args.summary });
+                
+                try {
+                    const response = await post("/vault/calendar/create", {
+                        summary: args.summary,
+                        start_time: args.start_time,
+                        end_time: args.end_time,
+                        description: args.description || "",
+                    });
+                    
+                    log("info", "Calendar event created successfully", { 
+                        event_link: response.htmlLink 
+                    });
+                    
+                    return {
+                        success: true,
+                        message: `✅ Event created: ${args.summary}`,
+                        details: response,
+                    };
+                } catch (error: any) {
+                    log("error", "Calendar creation failed", { error: error.message });
+                    
+                    return {
+                        success: false,
+                        error: "BROKER_FAILED",
+                        message: `❌ Failed to create event: ${error.message}`,
+                    };
+                }
+            },
+        });
+        log("info", "agent_lock_calendar_create tool registered (Token Vault)");
+    }
     // ── Intercept tool calls ──────────────────────────────────────────────────
     api.on("before_tool_call", async (event: any) => {
         const toolName: string = event.toolName ?? event.tool_name ?? "unknown";
         // OpenClaw puts args in event.params (confirmed by production testing)
         const args: Record<string, unknown> = event.params ?? event.args ?? {};
+
+        // Log ALL tool calls including agent_lock_* tools
+        console.log(`[Agent-Lock][DEBUG] before_tool_call fired: ${toolName}`);
 
         if (toolName === "agent_lock_respond") return undefined;
 
@@ -305,21 +554,16 @@ export default function register(api: any) {
             typeof args.code === "string" ? args.code :
             typeof args.script === "string" ? args.script : undefined;
 
-        const intentPreview = userIntent
-            ? `"${userIntent.slice(0, 60)}"`
-            : "(not captured — Gemini semantic validation will be skipped)";
-
-        log("info", "Intercepting tool call", {
+        log("info", "Tool intercepted", {
             tool_name: toolName,
             session_key: sessionKey,
-            raw_preview: (rawCommand ?? JSON.stringify(args)).slice(0, 80),
-            intent_preview: intentPreview,
+            plugin_version: PLUGIN_VERSION,
         });
 
         let result: any;
         try {
             const interceptStart = Date.now();
-            result = await post(`${BACKEND_URL}/intercept`, {
+            result = await post(`/intercept`, {
                 tool_name: toolName,
                 args,
                 user_intent: userIntent,
@@ -338,17 +582,35 @@ export default function register(api: any) {
             log("error", "Backend unavailable, fail-closed block", {
                 tool_name: toolName,
                 session_key: sessionKey,
+                plugin_version: PLUGIN_VERSION,
             });
             return { block: true, blockReason: "🦞 Agent-Lock backend unavailable — action blocked (fail-closed)." };
         }
 
         const { action_id, status, analysis, auth_token } = result;
-        log("info", "Decision received", {
+        log("info", "Intercept decision", {
             action_id,
             tool_name: toolName,
             status,
-            analysis_preview: String(analysis).slice(0, 80),
+            plugin_version: PLUGIN_VERSION,
         });
+
+        if (status === "AUTH_REQUIRED") {
+            const loginUrl =
+                typeof result?.login_url === "string" && result.login_url.trim().length > 0
+                    ? result.login_url
+                    : `${activeBackendUrl}/auth/login`;
+            log("warn", "User authentication required before tool execution", {
+                action_id,
+                tool_name: toolName,
+                plugin_version: PLUGIN_VERSION,
+                login_url: loginUrl,
+            });
+            return {
+                block: true,
+                blockReason: `🦞 Agent-Lock requires user authentication first. Login: ${loginUrl}`,
+            };
+        }
 
         // If the backend already returned an injectable Auth0 token (AUTO_APPROVED path),
         // attach it to the tool call so downstream integrations (e.g. Gmail) can rely
@@ -385,7 +647,7 @@ export default function register(api: any) {
                 let polls = 0;
                 const iv = setInterval(async () => {
                     try {
-                        const s = await get(`${BACKEND_URL}/status/${action_id}`);
+                        const s = await get(`/status/${action_id}`);
                         if (s.status !== "PENDING") {
                             clearInterval(iv);
                             pending.delete(action_id);
@@ -436,7 +698,7 @@ export default function register(api: any) {
                         });
                         const slowIv = setInterval(async () => {
                             try {
-                                const s = await get(`${BACKEND_URL}/status/${action_id}`);
+                                const s = await get(`/status/${action_id}`);
                                 if (s.status !== "PENDING") {
                                     clearInterval(slowIv);
                                     pending.delete(action_id);
@@ -469,8 +731,14 @@ export default function register(api: any) {
         return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
     });
 
-    log("info", "Plugin active", {
-        backend_url: BACKEND_URL,
+    // Simple version log on startup
+    log("info", `Agent-Lock v${PLUGIN_VERSION} loaded`);
+    
+    // Detailed config in debug mode only
+    log("debug", "Plugin configuration", {
+        backend_url: activeBackendUrl,
+        backend_local_url: LOCAL_BACKEND_URL,
+        backend_cloud_url: CLOUD_BACKEND_URL,
         poll_ms: STATUS_POLL_MS,
         poll_ms_max: STATUS_POLL_MS_MAX,
         log_level: LOG_LEVEL,

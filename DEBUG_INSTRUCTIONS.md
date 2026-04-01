@@ -26,9 +26,9 @@ I've added comprehensive debugging to the plugin to identify why the user intent
    python agent-lock.py start
    ```
 
-2. **Restart OpenClaw** (important!):
+2. **Restart OpenClaw Gateway** (important!):
    ```powershell
-   openclaw restart
+   openclaw gateway restart
    ```
 
 3. **Test with a simple command**:

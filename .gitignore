@@ -11,3 +11,4 @@ coverage/
 *.log
 dashboard/.next/
 backend/
+dashboard/.env.local

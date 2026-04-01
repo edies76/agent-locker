@@ -95,6 +95,57 @@ Operational check:
 
 ## 🚀 Quick Start
 
+## 👥 Super-Easy MCP Setup (For Other Users)
+
+If you want teammates to use Agent-Lock MCP with almost zero friction on Windows:
+
+1. Download this repository (ZIP) and extract it.
+2. Double-click [installers/mcp/install-mcp.bat](installers/mcp/install-mcp.bat).
+3. Open and edit `%USERPROFILE%\\.agent-lock\\mcp_config.json` to add `target_servers`.
+4. Double-click [installers/mcp/start-mcp.bat](installers/mcp/start-mcp.bat) to run MCP in stdio mode.
+
+Optional testing mode:
+
+- Use [installers/mcp/start-mcp-http.bat](installers/mcp/start-mcp-http.bat) to run MCP over HTTP on port `8001`.
+- SSE endpoint for clients: `http://localhost:8001/sse`
+
+Default backend used by installer config:
+
+- Azure backend URL: `https://agent-lock-backend-api-7.azurewebsites.net`
+
+Notes:
+
+- The installer creates `.mcp-venv` automatically and installs dependencies.
+- Existing `%USERPROFILE%\\.agent-lock\\mcp_config.json` is never overwritten.
+
+## 🖱️ One-Click Local Starters
+
+To make local usage easy for teammates, installers are grouped under [installers](installers):
+
+- MCP installers:
+  - [installers/mcp/install-mcp.bat](installers/mcp/install-mcp.bat)
+  - [installers/mcp/start-mcp.bat](installers/mcp/start-mcp.bat)
+  - [installers/mcp/start-mcp-http.bat](installers/mcp/start-mcp-http.bat)
+
+- Backend starters:
+  - [installers/backend/run-backend.bat](installers/backend/run-backend.bat)
+  - [installers/backend/run-backend.ps1](installers/backend/run-backend.ps1)
+- Frontend starters:
+  - [installers/frontend/start-frontend.bat](installers/frontend/start-frontend.bat)
+  - [installers/frontend/start-frontend.ps1](installers/frontend/start-frontend.ps1)
+
+Typical local workflow:
+
+1. Double-click backend starter.
+2. Double-click frontend starter.
+3. Open `http://localhost:3000`.
+
+Important (Telegram 409 conflict prevention):
+
+- Local backend starters set `TELEGRAM_POLLING_ENABLED=false` by default.
+- This prevents `getUpdates` conflicts when cloud backend is already polling with the same bot token.
+- If you intentionally want Telegram polling locally, run with `TELEGRAM_POLLING_ENABLED=true` and ensure only one polling instance uses that bot token.
+
 ### Requirements
 
 - [Node.js](https://nodejs.org/) & `npm`
@@ -127,8 +178,10 @@ AUTH0_CALLBACK_URL=http://localhost:8000/auth/callback
 AUTH0_SCOPE=openid profile email offline_access
 AUTH0_TOKEN_VAULT_ENABLED=true
 AUTH0_GOOGLE_CONNECTION_NAME=google-oauth2
+AUTH0_GITHUB_CONNECTION_NAME=github
+AUTH0_SLACK_CONNECTION_NAME=slack
 AUTH0_GOOGLE_AUDIENCE=https://www.googleapis.com/
-AUTH0_GOOGLE_SCOPES=https://www.googleapis.com/auth/gmail.send
+AUTH0_GOOGLE_SCOPES=https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar
 ```
 
 ### 2. Install Dependencies
@@ -369,10 +422,13 @@ This is used when an action requires end-user context. For these provider calls,
 
 #### New broker endpoints
 
-- `GET /vault/status`
-- `POST /vault/google/gmail/send`
+- `GET /vault/status` - Check Token Vault authentication status
+- `POST /vault/google/gmail/send` - Send email via Gmail API
+- `POST /vault/github/issues/create` - Create GitHub issue
+- `POST /vault/slack/messages/send` - Send Slack message
+- `POST /vault/google/calendar/events` - Create Google Calendar event
 
-`/vault/google/gmail/send` sends an email through Gmail API using Token Vault exchange from the current authenticated user session or bearer token.
+These endpoints use Token Vault exchange from the current authenticated user session or bearer token to call external APIs server-side (broker mode).
 
 #### Quick broker test
 

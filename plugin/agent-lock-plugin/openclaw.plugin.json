@@ -1,7 +1,7 @@
 {
     "id": "agent-lock",
     "name": "agent-lock",
-    "version": "1.0.0",
+    "version": "1.0.5",
     "description": "Agent-Lock Governance Layer",
     "configSchema": {
         "type": "object",

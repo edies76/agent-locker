@@ -13,7 +13,7 @@ import Badge from "@/app/components/ui/Badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableEmpty } from "@/app/components/ui/Table"
 
 type FilterRisk = "ALL" | "LOW" | "HIGH" | "CRITICAL"
-type FilterStatus = "ALL" | "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED"
+type FilterStatus = "ALL" | "PENDING" | "AUTO_APPROVED" | "APPROVED" | "BLOCKED" | "AUTH_REQUIRED"
 
 function avg(values: number[]): number | null {
   if (!values.length) return null
@@ -182,7 +182,7 @@ export default function ActivityPage() {
   }, [connectedServers, filtered])
 
   const riskFilters: FilterRisk[] = ["ALL", "LOW", "HIGH", "CRITICAL"]
-  const statusFilters: FilterStatus[] = ["ALL", "PENDING", "AUTO_APPROVED", "APPROVED", "BLOCKED"]
+  const statusFilters: FilterStatus[] = ["ALL", "PENDING", "AUTO_APPROVED", "APPROVED", "BLOCKED", "AUTH_REQUIRED"]
 
   // Export handlers
   const handleExportJSON = useCallback(() => {

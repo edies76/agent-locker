@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   fetchMCPStatus,
@@ -120,8 +121,8 @@ export default function MCPMonitorPage() {
         }
         showToast({
           type: "success",
-          title: `${name} ${enabled ? "enabled" : "disabled"}`,
-          duration: 2500,
+          title: result?.note || `${name} ${enabled ? "enabled" : "disabled"}`,
+          duration: 3500,
         })
         await load()
       } catch {
@@ -218,17 +219,25 @@ export default function MCPMonitorPage() {
                         <p className="text-xs text-slate-400 truncate">{s.command || "No command metadata"}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleToggle(s.name, !s.enabled)}
-                      disabled={togglingServer === s.name}
-                      className={`rounded-md px-3 py-1 text-xs font-semibold border transition-colors ${
-                        s.enabled
-                          ? "text-amber-200 border-amber-500/40 hover:bg-amber-500/15"
-                          : "text-emerald-200 border-emerald-500/40 hover:bg-emerald-500/15"
-                      } disabled:opacity-50`}
-                    >
-                      {togglingServer === s.name ? "Updating..." : s.enabled ? "Disable" : "Enable"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/mcp/${encodeURIComponent(s.name)}`}
+                        className="rounded-md px-3 py-1 text-xs font-semibold border text-cyan-200 border-cyan-500/35 hover:bg-cyan-500/15"
+                      >
+                        Detalles
+                      </Link>
+                      <button
+                        onClick={() => handleToggle(s.name, !s.enabled)}
+                        disabled={togglingServer === s.name}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold border transition-colors ${
+                          s.enabled
+                            ? "text-amber-200 border-amber-500/40 hover:bg-amber-500/15"
+                            : "text-emerald-200 border-emerald-500/40 hover:bg-emerald-500/15"
+                        } disabled:opacity-50`}
+                      >
+                        {togglingServer === s.name ? "Updating..." : s.enabled ? "Disable" : "Enable"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -249,6 +258,46 @@ export default function MCPMonitorPage() {
           </div>
           <div className="p-4 space-y-4">
             <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Causa exacta</p>
+              <div className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-3 py-3">
+                <p className="text-xs text-cyan-200 font-mono">
+                  {(diagnostics?.root_cause_code || "UNKNOWN").toUpperCase()}
+                </p>
+                <p className="text-sm text-slate-100 mt-1">
+                  {diagnostics?.root_cause_message || "No diagnostic summary available."}
+                </p>
+                <p className="text-xs text-slate-300 mt-2">
+                  Siguiente paso: {diagnostics?.next_step || "Review MCP warnings and backend logs."}
+                </p>
+              </div>
+            </div>
+
+            {!!diagnostics?.disconnected_details?.length && (
+              <div>
+                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Targets desconectados</p>
+                <ul className="space-y-2">
+                  {diagnostics.disconnected_details.map((item) => (
+                    <li
+                      key={item.name}
+                      className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2"
+                    >
+                      <span className="font-mono text-rose-100">{item.name}</span>
+                      {item.command ? ` | command: ${item.command}` : " | command: N/A"}
+                      {item.endpoint ? ` | endpoint: ${item.endpoint}` : ""}
+                      {typeof item.command_found === "boolean"
+                        ? ` | command_found: ${item.command_found ? "yes" : "no"}`
+                        : ""}
+                      {typeof item.endpoint_reachable === "boolean"
+                        ? ` | endpoint_reachable: ${item.endpoint_reachable ? "yes" : "no"}`
+                        : ""}
+                      {item.startup_hint ? ` | hint: ${item.startup_hint}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div>
               <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Warnings</p>
               {diagnostics?.warnings?.length ? (
                 <ul className="space-y-2">
@@ -261,6 +310,26 @@ export default function MCPMonitorPage() {
               ) : (
                 <p className="text-sm text-emerald-300">No warnings detected.</p>
               )}
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Telegram polling</p>
+              <div className="rounded-md border border-slate-700/40 bg-slate-900/30 px-3 py-3 space-y-1">
+                <p className="text-sm text-slate-100">
+                  Enabled: {diagnostics?.telegram_runtime?.polling_enabled ? "Yes" : "No"}
+                </p>
+                <p className="text-sm text-slate-100">
+                  Active: {diagnostics?.telegram_runtime?.polling_active ? "Yes" : "No"}
+                </p>
+                <p className={`text-sm ${diagnostics?.telegram_runtime?.polling_conflict ? "text-rose-300" : "text-emerald-300"}`}>
+                  Conflict: {diagnostics?.telegram_runtime?.polling_conflict ? "Detected" : "No"}
+                </p>
+                {!!diagnostics?.telegram_runtime?.last_error && (
+                  <p className="text-xs text-rose-200 mt-2 border border-rose-500/20 bg-rose-500/10 rounded px-2 py-1">
+                    {diagnostics.telegram_runtime.last_error}
+                  </p>
+                )}
+              </div>
             </div>
 
             <div>

@@ -1,5 +1,7 @@
 // Server-Sent Events (SSE) client for real-time updates
 
+import { resolveBackendEndpoint } from "./backendEndpoint"
+
 type SSEEvent = {
   type: string
   data: any
@@ -14,13 +16,20 @@ class SSEClient {
   private maxReconnectAttempts = 5
   private reconnectDelay = 1000
 
-  connect(url: string = 'https://agent-lock-backend-api-7.azurewebsites.net/events/stream') {
+  async connect(url?: string) {
     if (this.eventSource) {
       console.warn('SSE already connected')
       return
     }
 
-    console.log('🔌 Connecting to SSE stream...')
+    if (!url) {
+      const resolution = await resolveBackendEndpoint()
+      url = `${resolution.baseUrl}/events/stream`
+      console.log(`🔌 Connecting to SSE stream via ${resolution.source.toUpperCase()} backend...`)
+    } else {
+      console.log('🔌 Connecting to SSE stream...')
+    }
+
     this.eventSource = new EventSource(url)
 
     this.eventSource.onopen = () => {
@@ -38,7 +47,9 @@ class SSEClient {
         this.reconnectAttempts++
         const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1)
         console.log(`🔄 Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`)
-        setTimeout(() => this.connect(url), delay)
+        setTimeout(() => {
+          void this.connect()
+        }, delay)
       } else {
         console.error('💥 Max reconnection attempts reached')
       }
@@ -128,6 +139,6 @@ export const sseClient = new SSEClient()
 if (typeof window !== 'undefined') {
   // Wait a bit for initial page load
   setTimeout(() => {
-    sseClient.connect()
+    void sseClient.connect()
   }, 1000)
 }
