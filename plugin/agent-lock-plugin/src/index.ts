@@ -19,7 +19,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import pkg from "../package.json";
+
+// Load version from package.json in same directory as this file
+function loadVersion(): string {
+    try {
+        const pkgPath = path.join(__dirname, "package.json");
+        const raw = fs.readFileSync(pkgPath, "utf8");
+        const pkg = JSON.parse(raw);
+        return pkg.version ?? "unknown";
+    } catch {
+        return "unknown";
+    }
+}
+
+const PLUGIN_VERSION = loadVersion();
 
 type AgentLockFileConfig = {
     backend_url?: string;
@@ -51,7 +64,6 @@ let cloudFallbackAnnounced = false;
 const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? FILE_CONFIG.status_poll_ms ?? "500");
 const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? FILE_CONFIG.status_poll_ms_max ?? "2000");
 const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? FILE_CONFIG.log_level ?? "info").toLowerCase();
-const PLUGIN_VERSION = (pkg as { version?: string }).version ?? "unknown";
 
 const LEVEL_WEIGHT: Record<string, number> = {
     debug: 10,
