@@ -1,0 +1,49 @@
+{
+  "name": "@agentlock/mcp-server",
+  "version": "1.0.0",
+  "description": "Agent-Lock MCP Server: Governance gateway for Claude Desktop, ChatGPT, and MCP-compatible clients",
+  "main": "dist/index.js",
+  "bin": {
+    "agent-lock-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "python",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "copy-python": "node scripts/copy-python.js",
+    "prepack": "npm run build && npm run copy-python"
+  },
+  "keywords": [
+    "mcp",
+    "agent-lock",
+    "claude-desktop",
+    "chatgpt",
+    "governance",
+    "ai-agents",
+    "security",
+    "approval",
+    "risk-classification"
+  ],
+  "author": "Agent-Lock Team",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentlock/agent-lock.git"
+  },
+  "homepage": "https://github.com/agentlock/agent-lock#readme",
+  "bugs": {
+    "url": "https://github.com/agentlock/agent-lock/issues"
+  },
+  "license": "MIT"
+}

@@ -39,23 +39,33 @@ const navItems = [
     )
   },
   { 
-    href: "/chat", 
-    label: "Chat", 
+    href: "/plugin", 
+    label: "Plugin", 
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M3 13V5a2 2 0 012-2h8a2 2 0 012 2v6a2 2 0 01-2 2H6l-3 2z" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M5 4h8a2 2 0 012 2v6a2 2 0 01-2 2H9l-3 3v-3H5a2 2 0 01-2-2V6a2 2 0 012-2z" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     )
   },
   { 
     href: "/mcp", 
-    label: "MCP Monitor", 
+    label: "MCP", 
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
         <rect x="3" y="3" width="4" height="4" rx="0.5" />
         <rect x="11" y="3" width="4" height="4" rx="0.5" />
         <rect x="7" y="11" width="4" height="4" rx="0.5" />
         <path d="M5 7v2m0 2v0M13 7v4M9 11V9" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  { 
+    href: "/mcp/setup", 
+    label: "MCP Setup", 
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="9" cy="9" r="2.5" />
+        <path d="M9 2v2M9 14v2M2 9h2M14 9h2M4.2 4.2l1.4 1.4M12.4 12.4l1.4 1.4M4.2 13.8l1.4-1.4M12.4 5.6l1.4-1.4" />
       </svg>
     )
   },
@@ -93,35 +103,7 @@ export default function Sidebar() {
   const pathname = usePathname()
   const [pendingCount, setPendingCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
-  const [openClawConnected, setOpenClawConnected] = useState(false)
   const { theme, resolvedTheme, setTheme, mounted } = useTheme()
-
-  // Check OpenClaw connection status
-  useEffect(() => {
-    const checkOpenClawStatus = () => {
-      try {
-        const saved = localStorage.getItem("openclaw_config")
-        if (saved) {
-          const config = JSON.parse(saved)
-          setOpenClawConnected(config.isConnected === true)
-        } else {
-          setOpenClawConnected(false)
-        }
-      } catch {
-        setOpenClawConnected(false)
-      }
-    }
-
-    checkOpenClawStatus()
-
-    // Listen for config changes
-    const handleConfigChange = () => checkOpenClawStatus()
-    window.addEventListener("openclaw_config_changed", handleConfigChange)
-
-    return () => {
-      window.removeEventListener("openclaw_config_changed", handleConfigChange)
-    }
-  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -234,13 +216,7 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 py-3 overflow-y-auto">
         <div className="px-2 space-y-0.5">
-          {navItems.filter((item) => {
-            // Hide chat if OpenClaw is not connected
-            if (item.href === "/chat" && !openClawConnected) {
-              return false
-            }
-            return true
-          }).map((item) => {
+          {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
             const showBadge = item.href === "/approvals" && pendingCount > 0
             

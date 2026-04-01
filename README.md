@@ -63,6 +63,93 @@ Operational check:
 - Use separate Telegram bots for OpenClaw and Agent-Lock to avoid update conflicts.
 
 ---
+
+## ✅ Verified Runtime Notes (2026-04-01)
+
+This section documents what was validated in a live environment and what was changed to stabilize the Auth flow.
+
+### Auth + URL verification
+
+- Public backend in use: `https://agent-lock-backend-api-7.azurewebsites.net`
+- `GET /auth/login` now redirects with:
+  - `redirect_uri=https://agent-lock-backend-api-7.azurewebsites.net/auth/callback`
+  - signed `state` format `nonce.signature` (state hardening enabled)
+- Auth0 application (`My App`, client `GIu3JAdUIQ6o01Uq1iqpdLfQWFP4rpV6`) was verified/updated with:
+  - Allowed Callback URLs:
+    - `https://agent-lock-backend-api-7.azurewebsites.net/auth/callback`
+    - `http://localhost:8000/auth/callback`
+  - Allowed Logout URLs:
+    - `https://agent-lock-backend-api-7.azurewebsites.net`
+    - `http://localhost:8000/`
+  - Allowed Origins / Web Origins:
+    - `https://agent-lock-backend-api-7.azurewebsites.net`
+    - `http://localhost:8000`
+
+### AUTH_REQUIRED behavior hardening
+
+- Duplicate AUTH_REQUIRED actions are deduplicated (same active `action_id`) to avoid notification spam.
+- Added Telegram re-notify cooldown support for stale auth-required actions:
+  - `AUTH_REQUIRED_RENOTIFY_SECONDS` (config key: `auth_required_renotify_seconds`, default `60`)
+- Persisted auth-required notification state in SQLite:
+  - `auth_notification_sent`
+  - `auth_last_notified_at`
+
+### Telegram auth UX
+
+- Auth-required message includes explicit login link text and clickable link.
+- Local URL fallback behavior improved.
+- Cloud URL is now preferred via `PUBLIC_BASE_URL`.
+
+### Logging noise reduction
+
+- Plugin runtime logging reduced in installed config:
+  - `C:\Users\ediva\.openclaw\extensions\agent-lock\agent-lock.config.json`
+  - `log_level: "error"` (or `"warn"` for moderate verbosity)
+- AUTH_REQUIRED warn log is now throttled per action/tool to reduce repeated noise.
+
+### Important repository/deploy note
+
+- In this repository, `backend/` is currently ignored by `.gitignore`.
+- That means backend fixes do **not** deploy through regular git push in this repo.
+- For cloud rollout, deploy backend directly (zip deploy) or use the backend repository/pipeline that tracks backend files.
+
+---
+
+## 🔢 Mandatory Versioning Policy (Required)
+
+Every code/documentation change in Agent-Lock must bump version and update docs.
+
+### Rules
+
+1. **No change without version bump.**
+2. **Update version before local install/deploy.**
+3. **Reflect version and behavior changes in documentation (`README.md` and plugin docs).**
+
+### Current plugin version line
+
+- Latest local plugin updates validated through:
+  - `1.1.1` → `1.1.2` → `1.1.3`
+
+### Standard local update command
+
+```powershell
+cd plugin\agent-lock-plugin
+.\update-local.ps1
+```
+
+This script:
+- bumps `package.json` version (1.1.x policy),
+- syncs `openclaw.plugin.json`,
+- builds and installs into OpenClaw extensions.
+
+After running it, restart gateway:
+
+```powershell
+openclaw gateway
+```
+
+---
+
 ┌─────────────────────────────────────────────────┐
 │           AI Client (Claude / OpenClaw)         │
 └───────────────────────┬─────────────────────────┘

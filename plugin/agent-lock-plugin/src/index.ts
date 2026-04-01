@@ -40,6 +40,10 @@ type AgentLockFileConfig = {
     status_poll_ms_max?: number;
     log_level?: string;
     subject_token?: string;
+    dashboard_bridge_token?: string;
+    preferred_channel?: string;
+    available_channels?: string[];
+    client_label?: string;
 };
 
 function loadFileConfig(): AgentLockFileConfig {
@@ -58,12 +62,19 @@ const FILE_CONFIG = loadFileConfig();
 
 const LOCAL_BACKEND_URL = "http://localhost:8000";
 const CLOUD_BACKEND_URL = process.env.AGENT_LOCK_URL ?? FILE_CONFIG.backend_url ?? "https://agent-lock-backend-api-7.azurewebsites.net";
-let activeBackendUrl = LOCAL_BACKEND_URL;
+const PREFER_CLOUD = (process.env.AGENT_LOCK_PREFER_CLOUD ?? "true").toLowerCase() !== "false";
+let activeBackendUrl = PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL;
 let cloudFallbackAnnounced = false;
 
 const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? FILE_CONFIG.status_poll_ms ?? "500");
 const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? FILE_CONFIG.status_poll_ms_max ?? "2000");
 const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? FILE_CONFIG.log_level ?? "info").toLowerCase();
+const DASHBOARD_BRIDGE_TOKEN = process.env.AGENT_LOCK_DASHBOARD_BRIDGE_TOKEN ?? FILE_CONFIG.dashboard_bridge_token ?? "";
+const PREFERRED_CHANNEL = (process.env.AGENT_LOCK_PREFERRED_CHANNEL ?? FILE_CONFIG.preferred_channel ?? "agentlock_dashboard").toLowerCase();
+const AVAILABLE_CHANNELS = Array.isArray(FILE_CONFIG.available_channels) && FILE_CONFIG.available_channels.length > 0
+    ? FILE_CONFIG.available_channels
+    : ["agentlock_dashboard", "whatsapp", "telegram"];
+const CLIENT_LABEL = process.env.AGENT_LOCK_CLIENT_LABEL ?? FILE_CONFIG.client_label ?? "openclaw";
 
 const LEVEL_WEIGHT: Record<string, number> = {
     debug: 10,
@@ -96,6 +107,12 @@ function log(
     console.log(line);
 }
 
+function logBlue(message: string): void {
+    const BLUE = "\x1b[94m";
+    const RESET = "\x1b[0m";
+    console.log(`${BLUE}[Agent-Lock] ${message}${RESET}`);
+}
+
 // Cache: session → latest user message
 const intentCache = new Map<string, string>();
 let intentGlobal = ""; // Global fallback when sessionKey is unavailable
@@ -115,6 +132,9 @@ function getIntent(key: string): string {
 }
 
 const pending = new Map<string, (d: "approve" | "deny") => void>();
+const authRequiredLogGate = new Map<string, number>();
+const AUTH_REQUIRED_LOG_COOLDOWN_MS = 60_000;
+let activeChannel = PREFERRED_CHANNEL;
 
 function jsonToolResult(payload: unknown) {
     return {
@@ -147,33 +167,31 @@ async function post(url: string, body: unknown, customHeaders?: Record<string, s
         return r;
     };
 
+    const primary = PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL;
+    const secondary = PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL;
     try {
-        const response = await attempt(LOCAL_BACKEND_URL);
+        const response = await attempt(primary);
         if (cloudFallbackAnnounced) {
             cloudFallbackAnnounced = false;
-            log("info", "Local backend recovered", { backend_url: LOCAL_BACKEND_URL });
         }
         log("debug", "HTTP POST completed", {
-            url: `${LOCAL_BACKEND_URL}${url}`,
+            url: `${primary}${url}`,
             status: response.status,
             latency_ms: Date.now() - start,
         });
         return response.json();
-    } catch (localErr) {
-        if (CLOUD_BACKEND_URL === LOCAL_BACKEND_URL) {
-            throw localErr;
-        }
-
-        const response = await attempt(CLOUD_BACKEND_URL);
+    } catch (primaryErr) {
+        if (secondary === primary) throw primaryErr;
+        const response = await attempt(secondary);
         if (!cloudFallbackAnnounced) {
             cloudFallbackAnnounced = true;
-            log("warn", "Local backend unavailable, using cloud fallback", {
-                local_backend_url: LOCAL_BACKEND_URL,
-                cloud_backend_url: CLOUD_BACKEND_URL,
+            log("warn", "Primary backend unavailable, using fallback", {
+                primary_backend_url: primary,
+                fallback_backend_url: secondary,
             });
         }
         log("debug", "HTTP POST completed", {
-            url: `${CLOUD_BACKEND_URL}${url}`,
+            url: `${secondary}${url}`,
             status: response.status,
             latency_ms: Date.now() - start,
         });
@@ -190,33 +208,32 @@ async function get(url: string) {
         return r;
     };
 
+    const primary = PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL;
+    const secondary = PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL;
     try {
-        const response = await attempt(LOCAL_BACKEND_URL);
+        const response = await attempt(primary);
         if (cloudFallbackAnnounced) {
             cloudFallbackAnnounced = false;
-            log("info", "Local backend recovered", { backend_url: LOCAL_BACKEND_URL });
         }
         log("debug", "HTTP GET completed", {
-            url: `${LOCAL_BACKEND_URL}${url}`,
+            url: `${primary}${url}`,
             status: response.status,
             latency_ms: Date.now() - start,
         });
         return response.json();
-    } catch (localErr) {
-        if (CLOUD_BACKEND_URL === LOCAL_BACKEND_URL) {
-            throw localErr;
-        }
+    } catch (primaryErr) {
+        if (secondary === primary) throw primaryErr;
 
-        const response = await attempt(CLOUD_BACKEND_URL);
+        const response = await attempt(secondary);
         if (!cloudFallbackAnnounced) {
             cloudFallbackAnnounced = true;
-            log("warn", "Local backend unavailable, using cloud fallback", {
-                local_backend_url: LOCAL_BACKEND_URL,
-                cloud_backend_url: CLOUD_BACKEND_URL,
+            log("warn", "Primary backend unavailable, using fallback", {
+                primary_backend_url: primary,
+                fallback_backend_url: secondary,
             });
         }
         log("debug", "HTTP GET completed", {
-            url: `${CLOUD_BACKEND_URL}${url}`,
+            url: `${secondary}${url}`,
             status: response.status,
             latency_ms: Date.now() - start,
         });
@@ -318,11 +335,47 @@ function _deepFindUserMessage(obj: any, depth = 0, seen = new WeakSet<object>())
 }
 
 export default function register(api: any) {
+    const sendPluginHeartbeat = async () => {
+        if (!DASHBOARD_BRIDGE_TOKEN) return;
+        try {
+            await post(`/dashboard/plugin/heartbeat`, {
+                token: DASHBOARD_BRIDGE_TOKEN,
+                client_id: CLIENT_LABEL,
+                plugin_version: PLUGIN_VERSION,
+                available_channels: AVAILABLE_CHANNELS,
+                active_channel: activeChannel,
+                metadata: {
+                    backend_url: activeBackendUrl,
+                },
+            });
+        } catch (error: any) {
+            log("debug", "Plugin heartbeat failed", {
+                error: error?.message ?? "unknown",
+            });
+        }
+    };
+
+    if (DASHBOARD_BRIDGE_TOKEN) {
+        void sendPluginHeartbeat();
+        setInterval(() => {
+            void sendPluginHeartbeat();
+        }, 15000);
+    }
+
     // ── Capture user intent from inbound messages ───────────────────────────
     // OpenClaw WhatsApp emits `message_received` with (message, meta)
     try {
         api.on("message_received", (msg: any, meta: any) => {
             const text = msg?.content;
+            const detectedChannel = String(meta?.channelId ?? meta?.metadata?.originatingChannel ?? "").toLowerCase();
+            if (detectedChannel.includes("whatsapp")) {
+                activeChannel = "whatsapp";
+            } else if (detectedChannel.includes("telegram")) {
+                activeChannel = "telegram";
+            } else if (PREFERRED_CHANNEL) {
+                activeChannel = PREFERRED_CHANNEL;
+            }
+
             if (text && typeof text === "string" && text.trim().length > 0) {
                 // Prefer the metadata object since it contains channelId/accountId/conversationId
                 const sessionKey = sessionOf(meta ?? msg);
@@ -335,6 +388,8 @@ export default function register(api: any) {
                 if (storedPrimary || storedFallback) {
                     // Intentionally silent to avoid leaking user intent content in logs.
                 }
+
+                void sendPluginHeartbeat();
             }
             return undefined;
         });
@@ -645,8 +700,8 @@ export default function register(api: any) {
         // OpenClaw puts args in event.params (confirmed by production testing)
         const args: Record<string, unknown> = event.params ?? event.args ?? {};
 
-        // Log ALL tool calls including agent_lock_* tools
-        console.log(`[Agent-Lock][DEBUG] before_tool_call fired: ${toolName}`);
+        // Debug-only hook trace
+        log("debug", "before_tool_call fired", { tool_name: toolName });
 
         if (toolName === "agent_lock_respond") return undefined;
 
@@ -705,12 +760,18 @@ export default function register(api: any) {
                 typeof result?.login_url === "string" && result.login_url.trim().length > 0
                     ? result.login_url
                     : `${activeBackendUrl}/auth/login`;
-            log("warn", "User authentication required before tool execution", {
-                action_id,
-                tool_name: toolName,
-                plugin_version: PLUGIN_VERSION,
-                login_url: loginUrl,
-            });
+            const gateKey = `${toolName}:${action_id}`;
+            const now = Date.now();
+            const last = authRequiredLogGate.get(gateKey) ?? 0;
+            if (now - last >= AUTH_REQUIRED_LOG_COOLDOWN_MS) {
+                authRequiredLogGate.set(gateKey, now);
+                log("warn", "User authentication required before tool execution", {
+                    action_id,
+                    tool_name: toolName,
+                    plugin_version: PLUGIN_VERSION,
+                    login_url: loginUrl,
+                });
+            }
             return {
                 block: true,
                 blockReason: `🦞 Agent-Lock requires user authentication first. Login: ${loginUrl}`,
@@ -836,8 +897,9 @@ export default function register(api: any) {
         return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
     });
 
-    // Simple version log on startup
-    log("info", `Agent-Lock v${PLUGIN_VERSION} loaded`);
+    // Version banner in blue + backend info
+    logBlue(`version v${PLUGIN_VERSION}`);
+    log("info", `🦞 Agent-Lock Plugin v${PLUGIN_VERSION} | Backend: ${activeBackendUrl}`);
     
     // Detailed config in debug mode only
     log("debug", "Plugin configuration", {

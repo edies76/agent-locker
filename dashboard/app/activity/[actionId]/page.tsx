@@ -183,6 +183,47 @@ export default function ActivityDetailPage() {
             <h2 className="text-sm font-semibold text-slate-200 mb-3">Analysis</h2>
             <p className="text-sm text-slate-300 leading-relaxed">{item.analysis || "-"}</p>
           </div>
+
+          {item.decision === "AUTH_REQUIRED" && (
+            <div className="rounded-xl border border-purple-800 bg-purple-950/30 p-4">
+              <h2 className="text-sm font-semibold text-purple-200 mb-3">Authentication Required</h2>
+              <p className="text-sm text-purple-100">
+                This action is waiting for user login before execution can continue.
+              </p>
+              <div className="mt-3 space-y-1 text-xs text-purple-200/90">
+                <p>
+                  <span className="font-semibold">Login URL:</span>{" "}
+                  {item.login_url ? (
+                    <a href={item.login_url} target="_blank" rel="noreferrer" className="underline">
+                      {item.login_url}
+                    </a>
+                  ) : (
+                    "N/A"
+                  )}
+                </p>
+                <p>
+                  <span className="font-semibold">Auth timeout:</span>{" "}
+                  {item.auth_expires_at ? new Date(item.auth_expires_at).toLocaleString() : "N/A"}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {item.status_history && item.status_history.length > 0 && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+              <h2 className="text-sm font-semibold text-slate-200 mb-3">Status History</h2>
+              <div className="space-y-2">
+                {item.status_history.map((entry, idx) => (
+                  <div key={`${entry.timestamp}-${idx}`} className="text-xs text-slate-300 border border-slate-800 rounded px-3 py-2">
+                    <p>
+                      <span className="font-semibold">{entry.status}</span> — {new Date(entry.timestamp).toLocaleString()}
+                    </p>
+                    {entry.reason && <p className="text-slate-400 mt-1">{entry.reason}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       ) : null}
     </div>

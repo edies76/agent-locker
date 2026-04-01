@@ -200,6 +200,9 @@ the action is cancelled and Claude is told to retry after approving.
 The gateway now exposes:
 
 - `agent_lock__vault_gmail_send`
+- `agent_lock__vault_github_create_issue`
+- `agent_lock__vault_slack_send`
+- `agent_lock__vault_calendar_create_event`
 
 This calls backend `POST /vault/google/gmail/send` and keeps provider tokens
 inside Agent-Lock. Required:
@@ -214,6 +217,17 @@ Example call arguments:
   "to": "you@example.com",
   "subject": "Token Vault test",
   "body_text": "hello from broker mode"
+}
+```
+
+GitHub issue example:
+
+```json
+{
+  "owner": "my-org",
+  "repo": "my-repo",
+  "title": "Agent-Lock broker test",
+  "body": "created via token vault broker"
 }
 ```
 

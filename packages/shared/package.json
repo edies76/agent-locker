@@ -1,0 +1,18 @@
+{
+    "name": "@agentlock/shared",
+    "version": "1.0.0",
+    "description": "Shared configuration and utilities for Agent-Lock packages",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "typescript": "^5.4.5"
+    }
+}

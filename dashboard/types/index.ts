@@ -14,6 +14,13 @@ export interface Action {
   analysis: string
   decision: ActionStatus
   decided_at?: string
+  login_url?: string
+  auth_expires_at?: string
+  status_history?: Array<{
+    status: ActionStatus
+    timestamp: string
+    reason?: string
+  }>
   _signature_valid?: boolean
   _source?: "store" | "log"
   execution?: {
@@ -163,6 +170,55 @@ export interface MCPTargetDetailResponse {
   target?: MCPTargetDetail
   observed_connected_servers?: string[]
   restart_required_after_toggle?: boolean
+}
+
+export interface PluginStatus {
+  plugin: string
+  telemetry_available: boolean
+  connected: boolean
+  last_seen: string | null
+  seconds_ago: number | null
+  actions_last_24h: number
+  pending: number
+  approved: number
+  blocked: number
+  pairings_count?: number
+  pairing_seconds_ago?: number | null
+  pairing?: PluginPairing
+  message: string
+  error?: string
+}
+
+export interface PluginPairing {
+  pairing_id: string
+  label: string
+  token: string
+  preferred_channel: string
+  available_channels: string[]
+  active_channel: string
+  client_id: string
+  plugin_version: string
+  last_heartbeat: string | null
+  connected: boolean
+  created_at: string
+  updated_at: string
+  metadata?: Record<string, unknown>
+}
+
+export interface PluginPairingsResponse {
+  count: number
+  items: PluginPairing[]
+}
+
+export interface PluginActionsResponse {
+  count: number
+  items: Action[]
+  inference?: {
+    uses_session_key?: boolean
+    uses_agent_id_contains_openclaw?: boolean
+    uses_agent_lock_tool_prefix?: boolean
+  }
+  error?: string
 }
 
 export interface AuditLogItem {

@@ -110,6 +110,49 @@ export async function fetchMCPDiagnostics(options?: { refresh?: boolean }) {
   })
 }
 
+export async function fetchPluginStatus(options?: { refresh?: boolean }) {
+  return cachedFromPath(`/dashboard/plugin/status`, {
+    ttl: 5000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function fetchPluginActions(limit = 30, options?: { refresh?: boolean }) {
+  return cachedFromPath(`/dashboard/plugin/actions?limit=${limit}`, {
+    ttl: 4000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function createPluginPairing(body: { label?: string; preferred_channel?: string }) {
+  const base = await buildUrl("")
+  const res = await fetch(`${base}/dashboard/plugin/pairings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return res.json()
+}
+
+export async function fetchPluginPairings(options?: { refresh?: boolean }) {
+  return cachedFromPath(`/dashboard/plugin/pairings`, {
+    ttl: 3000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function setPluginPairingChannel(pairingId: string, channel: string) {
+  const base = await buildUrl("")
+  const res = await fetch(`${base}/dashboard/plugin/pairings/${encodeURIComponent(pairingId)}/channel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel }),
+  })
+  apiCache.invalidatePattern("dashboard/plugin/pairings")
+  apiCache.invalidatePattern("dashboard/plugin/status")
+  return res.json()
+}
+
 export async function toggleMCPTarget(serverName: string, enabled: boolean) {
   const base = await buildUrl("")
   const res = await fetch(

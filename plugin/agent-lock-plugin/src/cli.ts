@@ -226,6 +226,24 @@ function update(): void {
   log(`   npm latest:        v${versionOrUnknown(latest)}`);
   log("");
 
+  const hasLatest =
+    Boolean(latest) &&
+    Boolean(currentGlobal) &&
+    Boolean(currentExtension) &&
+    compareSemver(currentGlobal as string, latest as string) >= 0 &&
+    compareSemver(currentExtension as string, latest as string) >= 0 &&
+    hasExtensionFiles() &&
+    isRegisteredInOpenClaw();
+
+  if (hasLatest) {
+    log("✅ Ya tienes la última versión instalada en global y OpenClaw.");
+    log("   No se requiere uninstall/install.");
+    log("");
+    log("Siguiente paso:");
+    log("  openclaw gateway restart");
+    return;
+  }
+
   log("1) Uninstalling current OpenClaw extension...");
   try {
     uninstall();
@@ -348,7 +366,7 @@ function install(): void {
     backend_url: detected,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
-    log_level: "info",
+    log_level: "warn",
   });
 
   log("✅ Agent-Lock installed for OpenClaw");
@@ -382,7 +400,7 @@ function connect(backendUrl?: string): void {
     backend_url: finalUrl,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
-    log_level: "info",
+    log_level: "warn",
   });
 
   log("✅ Agent-Lock connected");
