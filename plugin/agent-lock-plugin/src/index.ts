@@ -130,7 +130,10 @@ async function post(url: string, body: unknown, customHeaders?: Record<string, s
             },
             body: JSON.stringify(body),
         });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+            const errorText = await r.text().catch(() => "");
+            throw new Error(`HTTP ${r.status}: ${errorText}`);
+        }
         activeBackendUrl = baseUrl;
         return r;
     };
@@ -379,20 +382,20 @@ export default function register(api: any) {
                 log("info", "Gmail send via Token Vault", { to: args.to, subject: args.subject });
                 
                 try {
-                    const response = await post("/vault/gmail/send", {
+                    const response = await post("/vault/google/gmail/send", {
                         to: args.to,
                         subject: args.subject,
                         body_text: args.body_text,
                     });
                     
-                    log("info", "Gmail sent successfully via Token Vault", { 
+                    log("info", "Gmail sent successfully", { 
                         to: args.to, 
-                        message_id: response.message_id 
+                        message_id: response.id 
                     });
                     
                     return {
                         success: true,
-                        message: `✅ Email sent to ${args.to} via Agent-Lock Token Vault`,
+                        message: `✅ Email sent to ${args.to}`,
                         details: response,
                     };
                 } catch (error: any) {
@@ -400,6 +403,15 @@ export default function register(api: any) {
                         to: args.to, 
                         error: error.message 
                     });
+                    
+                    // Check if it's an auth error (401)
+                    if (error.message && error.message.includes("401")) {
+                        return {
+                            success: false,
+                            error: "AUTH_REQUIRED",
+                            message: `🔐 Authentication required. Please login at: ${activeBackendUrl}/auth/login?connection=google-oauth2`,
+                        };
+                    }
                     
                     return {
                         success: false,
