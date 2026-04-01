@@ -41,6 +41,13 @@ agent-lock update
 6. Step 3: reinstall extension into OpenClaw
 7. Final summary: `old -> new` versions and success/error state
 
+If npm is very slow in your environment, you can control update timeouts:
+
+```bash
+AGENT_LOCK_NPM_LOOKUP_TIMEOUT_MS=30000
+AGENT_LOCK_NPM_INSTALL_TIMEOUT_MS=300000
+```
+
 Check status:
 
 ```bash

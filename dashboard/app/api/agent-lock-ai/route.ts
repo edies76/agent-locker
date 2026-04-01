@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
+import fs from "node:fs"
+import path from "node:path"
 
 type ChatMessage = {
   role: "system" | "user" | "assistant"
@@ -14,6 +16,28 @@ function buildGeminiUrl(model: string, apiKey: string): string {
   const encodedModel = encodeURIComponent(model)
   const encodedKey = encodeURIComponent(apiKey)
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodedModel}:generateContent?key=${encodedKey}`
+}
+
+function readBackendGeminiKeyFromEnvFile(): string | null {
+  try {
+    const backendEnvPath = path.resolve(process.cwd(), "..", "backend", ".env")
+    if (!fs.existsSync(backendEnvPath)) return null
+
+    const raw = fs.readFileSync(backendEnvPath, "utf-8")
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith("#")) continue
+      const idx = trimmed.indexOf("=")
+      if (idx <= 0) continue
+      const key = trimmed.slice(0, idx).trim()
+      if (key !== "GEMINI_API_KEY") continue
+      const value = trimmed.slice(idx + 1).trim().replace(/^"|"$/g, "")
+      return value || null
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 function toGeminiContents(messages: ChatMessage[]): GeminiContent[] {
@@ -60,7 +84,8 @@ export async function POST(req: NextRequest) {
     const apiKey =
       process.env.AGENT_LOCK_GEMINI_API_KEY ||
       process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY
+      process.env.GOOGLE_API_KEY ||
+      readBackendGeminiKeyFromEnvFile()
 
     const model = process.env.AGENT_LOCK_GEMINI_MODEL ?? "gemini-3.0-flash"
 

@@ -22,6 +22,8 @@ type AgentLockRuntimeConfig = {
 };
 const OFFICIAL_BACKEND_URL = "https://agent-lock-backend-api-7.azurewebsites.net";
 const LOCAL_BACKEND_URL = "http://localhost:8000";
+const NPM_LOOKUP_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_LOOKUP_TIMEOUT_MS ?? "30000");
+const NPM_INSTALL_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_INSTALL_TIMEOUT_MS ?? "300000");
 
 function log(msg: string): void {
   process.stdout.write(`${msg}\n`);
@@ -76,6 +78,23 @@ function getExtensionInstalledVersion(): string | null {
 
 function versionOrUnknown(version: string | null): string {
   return version ?? "unknown";
+}
+
+function readOpenClawConfig(): OpenClawConfig {
+  const { openclawJson } = getInstallPaths();
+  return readJson<OpenClawConfig>(openclawJson, {});
+}
+
+function isRegisteredInOpenClaw(): boolean {
+  const cfg = readOpenClawConfig();
+  const allowed = (cfg.plugins?.allow ?? []).includes("agent-lock");
+  const enabled = cfg.plugins?.entries?.["agent-lock"]?.enabled === true;
+  return allowed && enabled;
+}
+
+function hasExtensionFiles(): boolean {
+  const { extDir } = getInstallPaths();
+  return fs.existsSync(path.join(extDir, "index.js")) && fs.existsSync(path.join(extDir, "openclaw.plugin.json"));
 }
 
 function registerInOpenClaw(openclawJson: string): void {
@@ -168,6 +187,7 @@ function getGlobalInstalledVersion(): string | null {
   const result = spawnSync("npm", ["list", "-g", "@agentlock/agent-lock", "--depth=0", "--json"], {
     encoding: "utf8",
     shell: process.platform === "win32",
+    timeout: NPM_LOOKUP_TIMEOUT_MS,
   });
   if ((result.status ?? 1) !== 0 || !result.stdout) return null;
   try {
@@ -184,6 +204,7 @@ function getLatestPublishedVersion(): string | null {
   const result = spawnSync("npm", ["view", "@agentlock/agent-lock", "version", "--json"], {
     encoding: "utf8",
     shell: process.platform === "win32",
+    timeout: NPM_LOOKUP_TIMEOUT_MS,
   });
   if ((result.status ?? 1) !== 0 || !result.stdout) return null;
   try {
@@ -219,6 +240,7 @@ function update(): void {
   const npmResult = spawnSync("npm", ["i", "-g", "@agentlock/agent-lock@latest"], {
     stdio: "inherit",
     shell: process.platform === "win32",
+    timeout: NPM_INSTALL_TIMEOUT_MS,
   });
   if (npmResult.error) {
     log("⚠️ Trying to restore previous OpenClaw extension after failed global install...");
@@ -238,6 +260,17 @@ function update(): void {
   }
   const updatedGlobal = getGlobalInstalledVersion();
   log(`✅ Step 2 complete. Global now: v${versionOrUnknown(updatedGlobal)}`);
+  log("");
+
+  log("   Verifying uninstall state before reinstall...");
+  const step1ExtRemoved = !hasExtensionFiles();
+  const step1Unregistered = !isRegisteredInOpenClaw();
+  log(`   - Extension files removed: ${step1ExtRemoved ? "yes" : "no"}`);
+  log(`   - OpenClaw registration removed: ${step1Unregistered ? "yes" : "no"}`);
+  if (!step1ExtRemoved || !step1Unregistered) {
+    fail("❌ Step 2.5 failed verification: uninstall did not fully clean OpenClaw state.");
+  }
+  log("✅ Step 2.5 verification complete.");
   log("");
 
   log("3) Reinstalling into OpenClaw with updated CLI...");
@@ -263,6 +296,17 @@ function update(): void {
   }
   const updatedExtension = getExtensionInstalledVersion();
   log(`✅ Step 3 complete. OpenClaw extension now: v${versionOrUnknown(updatedExtension)}`);
+  log("");
+
+  log("   Verifying final install state...");
+  const step3ExtInstalled = hasExtensionFiles();
+  const step3Registered = isRegisteredInOpenClaw();
+  log(`   - Extension files present: ${step3ExtInstalled ? "yes" : "no"}`);
+  log(`   - OpenClaw registration active: ${step3Registered ? "yes" : "no"}`);
+  if (!step3ExtInstalled || !step3Registered) {
+    fail("❌ Step 3.5 failed verification: install did not fully register in OpenClaw.");
+  }
+  log("✅ Step 3.5 verification complete.");
   log("");
 
   log("4) Verification summary");
