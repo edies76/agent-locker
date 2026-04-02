@@ -247,7 +247,7 @@ export default function ActivityPage() {
             Tool timing and MCP server separation
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <Button onClick={load} variant="secondary" size="sm">
             Refresh
           </Button>
@@ -316,7 +316,7 @@ export default function ActivityPage() {
             </div>
             
             {/* Export buttons */}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 onClick={handleExportJSON}
                 disabled={filtered.length === 0}
@@ -344,7 +344,7 @@ export default function ActivityPage() {
           </div>
 
           {/* Date range picker */}
-          <div className="flex flex-wrap items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-[var(--text-tertiary)] text-xs">Date range:</span>
             <input
               type="date"
@@ -362,7 +362,7 @@ export default function ActivityPage() {
               placeholder="To"
             />
             {filtered.length !== actions.length && (
-              <span className="text-[var(--text-tertiary)] text-xs ml-auto">
+              <span className="text-[var(--text-tertiary)] text-xs sm:ml-auto">
                 {filtered.length} of {actions.length} items
               </span>
             )}

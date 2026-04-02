@@ -354,7 +354,7 @@ function TelegramSection({ settings }: { settings: Settings | null }) {
 
   return (
     <SectionCard title="📱 Telegram Notifications">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <p className="text-sm text-slate-400">
           Receive approval requests directly in your Telegram chat
         </p>
@@ -921,7 +921,7 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Settings</h1>
           <p className="text-slate-500 text-sm mt-0.5">

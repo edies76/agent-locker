@@ -43,6 +43,13 @@
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+
+  /* Compatibility aliases used by some pages */
+  --bg-hover: #f1f5f9;
+  --border-color: var(--border-primary);
+  --brand-bg: #f8fafc;
+  --brand-card: #ffffff;
+  --brand-border: #e2e8f0;
 }
 
 /* Dark theme */
@@ -76,6 +83,13 @@
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+
+  /* Compatibility aliases used by some pages */
+  --bg-hover: #1f2937;
+  --border-color: var(--border-primary);
+  --brand-bg: #0f172a;
+  --brand-card: #111827;
+  --brand-border: #334155;
 }
 
 /* ============================================
@@ -166,6 +180,7 @@ body {
   justify-content: center;
   gap: 8px;
   padding: 8px 16px;
+  min-height: 36px;
   font-size: 13px;
   font-weight: 500;
   border-radius: var(--radius-md);
@@ -252,6 +267,7 @@ body {
 .input {
   width: 100%;
   padding: 8px 12px;
+  min-height: 38px;
   font-size: 14px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-primary);
@@ -289,6 +305,7 @@ body {
 .badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 500;
@@ -489,4 +506,98 @@ body {
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: 0.4; }
   50% { transform: scale(1.5); opacity: 0; }
+}
+
+/* ============================================
+   Compatibility Utility Classes
+   ============================================ */
+.glass-panel {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--bg-elevated) 94%, transparent), color-mix(in srgb, var(--bg-tertiary) 80%, transparent));
+  border-color: color-mix(in srgb, var(--border-primary) 88%, transparent);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-glow {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-hover));
+  color: white;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 70%, white 30%);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  box-shadow: 0 8px 20px -12px color-mix(in srgb, var(--accent-primary) 70%, transparent);
+}
+
+.btn-glow:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px -12px color-mix(in srgb, var(--accent-primary) 80%, transparent);
+}
+
+.chip {
+  background: color-mix(in srgb, var(--accent-muted) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 40%, transparent);
+}
+
+.bg-brand-bg { background: var(--brand-bg); }
+.bg-brand-card { background: var(--brand-card); }
+.border-brand-border { border-color: var(--brand-border); }
+
+.bg-brand-bg\/20 { background: color-mix(in srgb, var(--brand-bg) 20%, transparent); }
+.bg-brand-bg\/40 { background: color-mix(in srgb, var(--brand-bg) 40%, transparent); }
+.bg-brand-bg\/70 { background: color-mix(in srgb, var(--brand-bg) 70%, transparent); }
+.border-brand-border\/50 { border-color: color-mix(in srgb, var(--brand-border) 50%, transparent); }
+
+.hover\:bg-brand-bg\/70:hover { background: color-mix(in srgb, var(--brand-bg) 70%, transparent); }
+
+/* ============================================
+   Mobile Optimizations
+   ============================================ */
+@media (max-width: 767px) {
+  .card {
+    border-radius: 12px;
+  }
+
+  .card .btn,
+  .btn {
+    min-height: 42px;
+    padding: 10px 14px;
+  }
+
+  .input {
+    min-height: 42px;
+    padding: 10px 12px;
+  }
+
+  .badge {
+    font-size: 11px;
+    line-height: 1.2;
+    padding: 3px 8px;
+  }
+
+  .page-title {
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .page-subtitle {
+    font-size: 13px;
+  }
+
+  .table th,
+  .table td {
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
+
+  .table {
+    min-width: 640px;
+  }
+
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    font-size: 16px;
+  }
 }
