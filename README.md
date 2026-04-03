@@ -129,6 +129,43 @@ Every code/documentation change in Agent-Lock must bump version and update docs.
 
 - Latest local plugin updates validated through:
   - `1.1.1` → `1.1.2` → `1.1.3`
+  - `1.1.3` auth-flow hardening:
+    - AUTH_REQUIRED no longer exposes raw `login_url` in agent-facing `blockReason`.
+    - Plugin now waits for auth completion (status polling) before blocking, so login can finish in-band.
+    - Timeout is configurable via `AGENT_LOCK_AUTH_WAIT_MS` (default `600000`).
+  - `1.1.4` subject-token stabilization:
+    - Plugin now always sends a stable subject token (`default`) when env/config token is missing.
+    - Prevents repeated AUTH_REQUIRED loops caused by empty subject identity between chat/login flows.
+  - `1.1.5` forced Gmail relogin flow:
+    - For `agent_lock_gmail_send`, plugin can force a fresh auth path (new subject token suffix) to re-trigger login.
+    - After login completes and status becomes `PENDING`, plugin now continues into the approval flow automatically (instead of blocking as auth-required timeout).
+  - `1.1.6` auth flow normalization:
+    - Removed forced relogin behavior.
+    - Plugin now uses normal session-based login semantics: request login only when unauthenticated, and do not ask again once authenticated.
+  - `1.1.7` auth session tools:
+    - Added `agent_lock_auth_status` to inspect current login state/account from the agent.
+    - Added `agent_lock_auth_logout` to force logout so the next protected action requires login again.
+  - `1.1.8` CLI auth commands:
+    - Added `agent-lock login` (prints login URL bound to current subject token).
+    - Added `agent-lock auth-status` (shows authenticated account from backend `/auth/me`).
+    - Added `agent-lock logout` (forces backend logout for current subject token).
+  - `1.1.9` channel alignment hardening:
+    - `agent-lock login` now appends `subject_token` in the login URL query string, so browser login and CLI/plugin status checks are tied to the same identity channel.
+  - `1.1.10` interactive login + channel consistency:
+    - `agent-lock login` now opens browser automatically and waits interactively in terminal for login confirmation.
+    - CLI `logout` now uses `POST /auth/logout` first (compatible with backend), with GET fallback.
+    - Removed forced `connection=google-oauth2` from default login URLs to avoid "connection is not enabled" failures.
+    - Backend now binds `subject_token` from login flow to server session, so `/auth/me` and CLI/plugin auth channel stay aligned.
+  - `1.1.11` cloud session utility:
+    - Added `agent-lock cloud-logout` command to force logout directly against official cloud backend (`https://agent-lock-backend-api-7.azurewebsites.net`) using current `subject_token`.
+  - `1.1.12` unified logout behavior:
+    - `agent-lock logout` now logs out from configured backend and official cloud backend in one command.
+    - Added request timeout guard to avoid hanging CLI calls.
+    - `agent-lock cloud-logout` is now a compatibility alias of `logout`.
+  - `1.1.13` auth status detection:
+    - `agent-lock status` now queries `/auth/me` to verify actual authentication state.
+    - Shows `authenticated: true/false` and provides actionable guidance.
+    - Detects plugin connected but not authenticated vs fully authenticated states.
 
 ### Standard local update command
 

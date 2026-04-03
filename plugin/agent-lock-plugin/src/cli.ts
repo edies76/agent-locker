@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 
 type OpenClawConfig = {
   plugins?: {
@@ -24,6 +24,7 @@ const OFFICIAL_BACKEND_URL = "https://agent-lock-backend-api-7.azurewebsites.net
 const LOCAL_BACKEND_URL = "http://localhost:8000";
 const NPM_LOOKUP_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_LOOKUP_TIMEOUT_MS ?? "30000");
 const NPM_INSTALL_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_INSTALL_TIMEOUT_MS ?? "300000");
+const REQUEST_TIMEOUT_MS = Number(process.env.AGENT_LOCK_REQUEST_TIMEOUT_MS ?? "15000");
 
 function log(msg: string): void {
   process.stdout.write(`${msg}\n`);
@@ -150,6 +151,154 @@ function normalizeBaseUrl(url: string): string {
 
 function discoverBackendUrl(): string {
   return normalizeBaseUrl(OFFICIAL_BACKEND_URL);
+}
+
+function ensureRuntimeConfig(extDir: string): AgentLockRuntimeConfig {
+  const runtimePath = path.join(extDir, "agent-lock.config.json");
+  const current = readJson<Partial<AgentLockRuntimeConfig>>(runtimePath, {});
+  const subjectToken = typeof current.subject_token === "string" && current.subject_token.trim()
+    ? current.subject_token.trim()
+    : `agent-lock-${Date.now()}`;
+
+  const merged: AgentLockRuntimeConfig = {
+    backend_url: typeof current.backend_url === "string" && current.backend_url.trim()
+      ? current.backend_url
+      : discoverBackendUrl(),
+    status_poll_ms: typeof current.status_poll_ms === "number" ? current.status_poll_ms : 500,
+    status_poll_ms_max: typeof current.status_poll_ms_max === "number" ? current.status_poll_ms_max : 2000,
+    log_level: (current.log_level as AgentLockRuntimeConfig["log_level"]) ?? "warn",
+    subject_token: subjectToken,
+  };
+
+  writeRuntimeConfig(extDir, merged);
+  return merged;
+}
+
+async function backendGet(runtime: AgentLockRuntimeConfig, endpoint: string): Promise<any> {
+  return backendRequest(runtime, endpoint, "GET");
+}
+
+async function backendPost(runtime: AgentLockRuntimeConfig, endpoint: string, body: unknown = {}): Promise<any> {
+  return backendRequest(runtime, endpoint, "POST", body);
+}
+
+async function backendRequest(
+  runtime: AgentLockRuntimeConfig,
+  endpoint: string,
+  method: "GET" | "POST",
+  body?: unknown,
+): Promise<any> {
+  const base = normalizeBaseUrl(runtime.backend_url);
+  const url = `${base}${endpoint}`;
+  const headers: Record<string, string> = {};
+  if (runtime.subject_token) {
+    headers.Authorization = `Bearer ${runtime.subject_token}`;
+  }
+  if (method === "POST") {
+    headers["Content-Type"] = "application/json";
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
+    redirect: "follow",
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { raw: text };
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function openUrlInBrowser(url: string): boolean {
+  try {
+    if (process.platform === "win32") {
+      const result = spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" });
+      result.unref();
+      return true;
+    }
+    if (process.platform === "darwin") {
+      const result = spawn("open", [url], { detached: true, stdio: "ignore" });
+      result.unref();
+      return true;
+    }
+    const result = spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
+    result.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForEnterOrSpace(timeoutMs: number): Promise<"trigger" | "timeout"> {
+  if (!process.stdin.isTTY) {
+    return "timeout";
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const onData = (buf: Buffer) => {
+      const value = buf.toString("utf8");
+      if (value === "\r" || value === "\n" || value === " ") {
+        cleanup();
+        settled = true;
+        resolve("trigger");
+      }
+    };
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      try {
+        process.stdin.setRawMode(false);
+      } catch {}
+      process.stdin.pause();
+    };
+
+    try {
+      process.stdin.setRawMode(true);
+    } catch {
+      resolve("timeout");
+      return;
+    }
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+
+    setTimeout(() => {
+      if (settled) return;
+      cleanup();
+      resolve("timeout");
+    }, timeoutMs);
+  });
+}
+
+async function waitForLoginCompletion(runtime: AgentLockRuntimeConfig, maxWaitMs = 300000): Promise<boolean> {
+  const spinner = ["|", "/", "-", "\\"];
+  let i = 0;
+  const started = Date.now();
+  while (Date.now() - started < maxWaitMs) {
+    try {
+      const me = await backendGet(runtime, "/auth/me");
+      if (Boolean(me?.authenticated)) {
+        process.stdout.write("\r✅ Login confirmado.                              \n");
+        return true;
+      }
+    } catch {}
+    const mark = spinner[i % spinner.length];
+    process.stdout.write(`\r${mark} Esperando login en navegador...`);
+    i += 1;
+    await sleep(1500);
+  }
+  process.stdout.write("\r⏳ Tiempo de espera agotado.                      \n");
+  return false;
 }
 
 function restartOpenClawGateway(): void {
@@ -367,6 +516,7 @@ function install(): void {
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
     log_level: "warn",
+    subject_token: `agent-lock-${Date.now()}`,
   });
 
   log("✅ Agent-Lock installed for OpenClaw");
@@ -401,6 +551,7 @@ function connect(backendUrl?: string): void {
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
     log_level: "warn",
+    subject_token: `agent-lock-${Date.now()}`,
   });
 
   log("✅ Agent-Lock connected");
@@ -416,7 +567,7 @@ function connect(backendUrl?: string): void {
   log("  - Revisa Dashboard: /overview, /activity, /logs");
 }
 
-function status(): void {
+async function status(): Promise<void> {
   const { extDir, openclawJson } = getInstallPaths();
   const installed = fs.existsSync(path.join(extDir, "index.js"));
   const cfg = readJson<OpenClawConfig>(openclawJson, {});
@@ -435,11 +586,46 @@ function status(): void {
   log(`strategy:  local (${LOCAL_BACKEND_URL}) -> cloud fallback`);
   log(`connected: ${connected}`);
 
-  if (connected) {
+  // Check authentication status if backend is configured
+  let authenticated = false;
+  if (runtime.backend_url && runtime.subject_token) {
+    try {
+      if (process.env.DEBUG) {
+        console.error(`Checking auth: ${runtime.backend_url}/auth/me with token ${runtime.subject_token.substring(0, 20)}...`);
+      }
+      const data = await backendRequest(
+        runtime as AgentLockRuntimeConfig,
+        "/auth/me",
+        "GET"
+      );
+      if (process.env.DEBUG) {
+        console.error("Auth response:", JSON.stringify(data));
+      }
+      authenticated = data.authenticated === true;
+    } catch (error) {
+      // Backend might be down or request failed
+      if (process.env.DEBUG) {
+        console.error("Auth check failed:", error);
+      }
+    }
+  } else {
+    if (process.env.DEBUG) {
+      console.error(`Skipping auth check: backend_url=${runtime.backend_url}, subject_token=${runtime.subject_token ? 'present' : 'missing'}`);
+    }
+  }
+
+  log(`authenticated: ${authenticated}`);
+
+  if (connected && authenticated) {
     log("");
-    log("🎉 Felicidades, estás conectado.");
+    log("🎉 Felicidades, estás conectado y autenticado.");
     log("Reinicia OpenClaw con:");
     log("  openclaw gateway restart");
+  } else if (connected && !authenticated) {
+    log("");
+    log("⚠️  Plugin conectado pero no autenticado.");
+    log("Inicia sesión con:");
+    log("  agent-lock login");
   } else {
     log("");
     log("Aún no está completamente conectado. Haz esto:");
@@ -452,6 +638,95 @@ function status(): void {
     log("  2) agent-lock status");
     log("  3) openclaw gateway restart");
   }
+}
+
+async function login(): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const encodedSubject = encodeURIComponent(runtime.subject_token ?? "default");
+  const loginUrl = `${normalizeBaseUrl(runtime.backend_url)}/auth/login?subject_token=${encodedSubject}`;
+  log("🔐 Agent-Lock login");
+  log("Preparando para logearse...");
+  log("Presiona Enter o Espacio para abrir navegador (auto en 3s).");
+
+  const trigger = await waitForEnterOrSpace(3000);
+  if (trigger === "trigger") {
+    log("Abriendo navegador...");
+  } else {
+    log("Abriendo navegador automáticamente...");
+  }
+
+  const opened = openUrlInBrowser(loginUrl);
+  if (!opened) {
+    log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
+  }
+
+  const ok = await waitForLoginCompletion(runtime);
+  if (!ok) {
+    fail("Login no confirmado todavía. Intenta de nuevo: agent-lock login");
+  }
+}
+
+async function authStatus(): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  try {
+    const me = await backendGet(runtime, "/auth/me");
+    const authenticated = Boolean(me?.authenticated);
+    const sub = typeof me?.sub === "string" ? me.sub : "(none)";
+    const email = typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)";
+    log("🔎 Agent-Lock auth status");
+    log(`backend: ${runtime.backend_url}`);
+    log(`authenticated: ${authenticated}`);
+    log(`sub: ${sub}`);
+    log(`email: ${email}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    fail(`auth-status failed: ${msg}`);
+  }
+}
+
+async function logoutCmd(): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const targets = [normalizeBaseUrl(runtime.backend_url)];
+  if (normalizeBaseUrl(runtime.backend_url) !== OFFICIAL_BACKEND_URL) {
+    targets.push(OFFICIAL_BACKEND_URL);
+  }
+  const results: string[] = [];
+  let success = false;
+
+  for (const target of targets) {
+    const targetRuntime: AgentLockRuntimeConfig = { ...runtime, backend_url: target };
+    try {
+      await backendPost(targetRuntime, "/auth/logout", {});
+      results.push(`ok:${target}`);
+      success = true;
+      continue;
+    } catch (error) {
+      try {
+        await backendGet(targetRuntime, "/auth/logout");
+        results.push(`ok(get):${target}`);
+        success = true;
+      } catch (error2) {
+        const msg = error2 instanceof Error ? error2.message : String(error2);
+        results.push(`fail:${target}:${msg}`);
+      }
+    }
+  }
+
+  if (success) {
+    log("✅ Agent-Lock logged out");
+    log(`targets: ${results.join(" | ")}`);
+    log("Next protected action should require login again.");
+    return;
+  }
+
+  fail(`logout failed: ${results.join(" | ")}`);
+}
+
+async function cloudLogoutCmd(): Promise<void> {
+  await logoutCmd();
 }
 
 function uninstall(): void {
@@ -480,6 +755,10 @@ function usage(): void {
   log("  restart   Restart OpenClaw gateway");
   log("  uninstall Remove plugin from OpenClaw");
   log("  update    Update package and reinstall plugin");
+  log("  login     Open browser login and wait for confirmation");
+  log("  auth-status  Show current authenticated account");
+  log("  logout    Force logout (configured backend + cloud fallback)");
+  log("  cloud-logout  Alias of logout (deprecated)");
   log("");
   log("Examples:");
   log("  agent-lock install");
@@ -487,9 +766,13 @@ function usage(): void {
   log("  agent-lock restart");
   log("  agent-lock uninstall");
   log("  agent-lock update");
+  log("  agent-lock login");
+  log("  agent-lock auth-status");
+  log("  agent-lock logout");
+  log("  agent-lock cloud-logout");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const cmd = process.argv[2];
 
   if (!cmd || cmd === "--help" || cmd === "-h") {
@@ -501,7 +784,7 @@ function main(): void {
     return;
   }
   if (cmd === "status") {
-    status();
+    await status();
     return;
   }
   if (cmd === "connect") {
@@ -521,9 +804,25 @@ function main(): void {
     update();
     return;
   }
+  if (cmd === "login") {
+    await login();
+    return;
+  }
+  if (cmd === "auth-status") {
+    await authStatus();
+    return;
+  }
+  if (cmd === "logout") {
+    await logoutCmd();
+    return;
+  }
+  if (cmd === "cloud-logout") {
+    await cloudLogoutCmd();
+    return;
+  }
 
   fail(`Unknown command: ${cmd}`);
 }
 
-main();
+void main();
 

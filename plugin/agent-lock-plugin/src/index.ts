@@ -68,6 +68,7 @@ let cloudFallbackAnnounced = false;
 
 const STATUS_POLL_MS = Number(process.env.AGENT_LOCK_STATUS_POLL_MS ?? FILE_CONFIG.status_poll_ms ?? "500");
 const STATUS_POLL_MS_MAX = Number(process.env.AGENT_LOCK_STATUS_POLL_MS_MAX ?? FILE_CONFIG.status_poll_ms_max ?? "2000");
+const AUTH_REQUIRED_WAIT_MS = Number(process.env.AGENT_LOCK_AUTH_WAIT_MS ?? "600000");
 const LOG_LEVEL = (process.env.AGENT_LOCK_LOG_LEVEL ?? FILE_CONFIG.log_level ?? "info").toLowerCase();
 const DASHBOARD_BRIDGE_TOKEN = process.env.AGENT_LOCK_DASHBOARD_BRIDGE_TOKEN ?? FILE_CONFIG.dashboard_bridge_token ?? "";
 const PREFERRED_CHANNEL = (process.env.AGENT_LOCK_PREFERRED_CHANNEL ?? FILE_CONFIG.preferred_channel ?? "agentlock_dashboard").toLowerCase();
@@ -75,6 +76,7 @@ const AVAILABLE_CHANNELS = Array.isArray(FILE_CONFIG.available_channels) && FILE
     ? FILE_CONFIG.available_channels
     : ["agentlock_dashboard", "whatsapp", "telegram"];
 const CLIENT_LABEL = process.env.AGENT_LOCK_CLIENT_LABEL ?? FILE_CONFIG.client_label ?? "openclaw";
+const SUBJECT_TOKEN = process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token ?? "default";
 
 const LEVEL_WEIGHT: Record<string, number> = {
     debug: 10,
@@ -143,9 +145,14 @@ function jsonToolResult(payload: unknown) {
     };
 }
 
-async function post(url: string, body: unknown, customHeaders?: Record<string, string>) {
+async function post(
+    url: string,
+    body: unknown,
+    customHeaders?: Record<string, string>,
+    subjectTokenOverride?: string,
+) {
     const start = Date.now();
-    const extraAuth = process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token;
+    const extraAuth = subjectTokenOverride ?? SUBJECT_TOKEN;
 
     const attempt = async (baseUrl: string) => {
         const r = await fetch(`${baseUrl}${url}`, {
@@ -199,10 +206,20 @@ async function post(url: string, body: unknown, customHeaders?: Record<string, s
     }
 }
 
-async function get(url: string) {
+async function get(
+    url: string,
+    customHeaders?: Record<string, string>,
+    subjectTokenOverride?: string,
+) {
     const start = Date.now();
+    const extraAuth = subjectTokenOverride ?? SUBJECT_TOKEN;
     const attempt = async (baseUrl: string) => {
-        const r = await fetch(`${baseUrl}${url}`);
+        const r = await fetch(`${baseUrl}${url}`, {
+            headers: {
+                ...(extraAuth ? { "Authorization": `Bearer ${extraAuth}` } : {}),
+                ...(customHeaders ?? {}),
+            },
+        });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         activeBackendUrl = baseUrl;
         return r;
@@ -446,6 +463,81 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_respond tool registered");
 
+        // Auth Status Tool
+        api.registerTool({
+            name: "agent_lock_auth_status",
+            label: "Agent-Lock Auth Status",
+            description: "Shows current Agent-Lock auth status and connected user account.",
+            parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            execute: async () => {
+                try {
+                    const status = await get("/auth/me", undefined, SUBJECT_TOKEN) as any;
+                    const isAuthed = Boolean(status?.authenticated);
+                    const userSub = typeof status?.sub === "string" ? status.sub : "";
+                    const email =
+                        typeof status?.claims?.email === "string"
+                            ? status.claims.email
+                            : (typeof status?.email === "string" ? status.email : "");
+                    return jsonToolResult({
+                        success: true,
+                        authenticated: isAuthed,
+                        user: {
+                            sub: userSub || null,
+                            email: email || null,
+                        },
+                        login_url: `${activeBackendUrl}/auth/login`,
+                        logout_url: `${activeBackendUrl}/auth/logout`,
+                    });
+                } catch (error: any) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "AUTH_STATUS_FAILED",
+                        message: error?.message ?? "Failed to read auth status",
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_auth_status tool registered");
+
+        // Auth Logout Tool
+        api.registerTool({
+            name: "agent_lock_auth_logout",
+            label: "Agent-Lock Auth Logout",
+            description: "Forces Agent-Lock logout so next sensitive action requires login again.",
+            parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            execute: async () => {
+                try {
+                    // Prefer explicit logout endpoint call with subject identity.
+                    await post("/auth/logout", {}, undefined, SUBJECT_TOKEN);
+                } catch {
+                    try {
+                        await get("/auth/logout", undefined, SUBJECT_TOKEN);
+                    } catch (error: any) {
+                        return jsonToolResult({
+                            success: false,
+                            error: "LOGOUT_FAILED",
+                            message: error?.message ?? "Failed to logout",
+                        });
+                    }
+                }
+
+                return jsonToolResult({
+                    success: true,
+                    message: "✅ Agent-Lock session logged out. Next protected action should require login.",
+                    login_url: `${activeBackendUrl}/auth/login`,
+                });
+            },
+        });
+        log("info", "agent_lock_auth_logout tool registered");
+
         // ── Token Vault Tools ─────────────────────────────────────────────────────
         // Gmail Send Tool (calls backend broker endpoint)
         api.registerTool({
@@ -503,7 +595,7 @@ export default function register(api: any) {
                         return jsonToolResult({
                             success: false,
                             error: "AUTH_REQUIRED",
-                            message: `🔐 Authentication required. Please login at: ${activeBackendUrl}/auth/login?connection=google-oauth2`,
+                            message: "🔐 Authentication required. Complete Agent-Lock login and retry.",
                         });
                     }
 
@@ -703,7 +795,7 @@ export default function register(api: any) {
         // Debug-only hook trace
         log("debug", "before_tool_call fired", { tool_name: toolName });
 
-        if (toolName === "agent_lock_respond") return undefined;
+        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout") return undefined;
 
         const sessionKey = sessionOf(event);
 
@@ -730,7 +822,7 @@ export default function register(api: any) {
                 agent_id: "openclaw",
                 session_key: sessionKey,
                 raw_command: rawCommand,
-                subject_token: process.env.AGENT_LOCK_SUBJECT_TOKEN ?? FILE_CONFIG.subject_token,
+                subject_token: SUBJECT_TOKEN,
             });
             log("debug", "Intercept response received", {
                 tool_name: toolName,
@@ -748,14 +840,15 @@ export default function register(api: any) {
         }
 
         const { action_id, status, analysis, auth_token } = result;
+        let effectiveStatus = status as string;
         log("info", "Intercept decision", {
             action_id,
             tool_name: toolName,
-            status,
+            status: effectiveStatus,
             plugin_version: PLUGIN_VERSION,
         });
 
-        if (status === "AUTH_REQUIRED") {
+        if (effectiveStatus === "AUTH_REQUIRED") {
             const loginUrl =
                 typeof result?.login_url === "string" && result.login_url.trim().length > 0
                     ? result.login_url
@@ -772,10 +865,81 @@ export default function register(api: any) {
                     login_url: loginUrl,
                 });
             }
-            return {
-                block: true,
-                blockReason: `🦞 Agent-Lock requires user authentication first. Login: ${loginUrl}`,
-            };
+
+            // Wait for auth completion for this action before blocking.
+            const authResolution = await new Promise<"approved" | "pending" | "timeout">((resolve) => {
+                const startedAt = Date.now();
+                let polls = 0;
+                const fastInterval = Math.max(100, STATUS_POLL_MS);
+                let slowMode = false;
+                let timer: ReturnType<typeof setInterval> | undefined;
+
+                const stop = (state: "approved" | "pending" | "timeout") => {
+                    if (timer) clearInterval(timer);
+                    resolve(state);
+                };
+
+                const tick = async () => {
+                    try {
+                        const s = await get(`/status/${action_id}`);
+                        if (s.status === "APPROVED" || s.status === "AUTO_APPROVED") {
+                            const token = s.auth_token as string | undefined;
+                            if (token && typeof token === "string" && token.length > 0) {
+                                const params = (event.params ?? event.args ?? {}) as any;
+                                const headers = (params.headers ?? {}) as any;
+                                headers["Authorization"] = `Bearer ${token}`;
+                                params.headers = headers;
+                                params.authToken = token;
+                                params.auth_token = token;
+                                params.access_token = token;
+                                params.__agent_lock_token = token;
+                                event.params = params;
+                            }
+                            log("info", "Auth completed; resuming tool call", {
+                                action_id,
+                                tool_name: toolName,
+                                polls,
+                            });
+                            stop("approved");
+                            return;
+                        }
+                        if (s.status === "PENDING") {
+                            log("info", "Auth completed; awaiting user approval", {
+                                action_id,
+                                tool_name: toolName,
+                                polls,
+                            });
+                            stop("pending");
+                            return;
+                        }
+                    } catch {}
+
+                    polls += 1;
+                    if (!slowMode && polls >= 10 && STATUS_POLL_MS < STATUS_POLL_MS_MAX) {
+                        slowMode = true;
+                        if (timer) clearInterval(timer);
+                        timer = setInterval(tick, STATUS_POLL_MS_MAX);
+                    }
+                    if (Date.now() - startedAt >= AUTH_REQUIRED_WAIT_MS) {
+                        log("warn", "Auth wait timeout", {
+                            action_id,
+                            tool_name: toolName,
+                            timeout_ms: AUTH_REQUIRED_WAIT_MS,
+                            polls,
+                        });
+                        stop("timeout");
+                    }
+                };
+
+                timer = setInterval(tick, fastInterval);
+            });
+
+            if (authResolution === "approved") return undefined;
+            if (authResolution === "pending") {
+                effectiveStatus = "PENDING";
+            } else {
+                return { block: true, blockReason: "🦞 Agent-Lock: authentication required. Check your secure channel and retry." };
+            }
         }
 
         // If the backend already returned an injectable Auth0 token (AUTO_APPROVED path),
@@ -805,9 +969,9 @@ export default function register(api: any) {
             });
         }
 
-        if (status === "AUTO_APPROVED" || status === "APPROVED") return undefined;
+        if (effectiveStatus === "AUTO_APPROVED" || effectiveStatus === "APPROVED") return undefined;
 
-        if (status === "PENDING") {
+        if (effectiveStatus === "PENDING") {
             const decision = await new Promise<"approve" | "deny">((resolve) => {
                 pending.set(action_id, resolve);
                 let polls = 0;
@@ -908,6 +1072,7 @@ export default function register(api: any) {
         backend_cloud_url: CLOUD_BACKEND_URL,
         poll_ms: STATUS_POLL_MS,
         poll_ms_max: STATUS_POLL_MS_MAX,
+        auth_wait_ms: AUTH_REQUIRED_WAIT_MS,
         log_level: LOG_LEVEL,
     });
 }

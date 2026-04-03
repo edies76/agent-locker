@@ -13,6 +13,7 @@ import {
   fetchPluginStatus,
   setPluginPairingChannel,
 } from "@/lib/api"
+import { resolveBackendEndpoint } from "@/lib/backendEndpoint"
 import { Action, PluginActionsResponse, PluginPairing, PluginPairingsResponse, PluginStatus } from "@/types"
 
 type MessageType = "user" | "assistant" | "system" | "approval"
@@ -132,8 +133,10 @@ export default function PluginPage() {
   const [creatingToken, setCreatingToken] = useState(false)
   const [preferredChannel, setPreferredChannel] = useState<PreferredChannel>("agentlock_dashboard")
   const [latestToken, setLatestToken] = useState("")
+  const [socketConnected, setSocketConnected] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const socketRef = useRef<WebSocket | null>(null)
 
   const connected = useMemo(() => {
     return !!pluginStatus?.connected
@@ -196,6 +199,106 @@ export default function PluginPage() {
   }, [connected])
 
   useEffect(() => {
+    let cancelled = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+    const connect = async () => {
+      try {
+        const { baseUrl } = await resolveBackendEndpoint(true)
+        if (cancelled) return
+
+        const wsUrl = baseUrl.replace(/^http/i, "ws") + "/ws"
+        const ws = new WebSocket(wsUrl)
+        socketRef.current = ws
+
+        ws.onopen = () => {
+          if (cancelled) return
+          setSocketConnected(true)
+          setMessages((prev) => {
+            const exists = prev.some((m) => m.id === "ws-connected")
+            if (exists) return prev
+            return [
+              ...prev,
+              {
+                id: "ws-connected",
+                type: "system",
+                content: "Realtime gateway bridge connected.",
+                timestamp: new Date(),
+              },
+            ]
+          })
+        }
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data as string)
+
+            if (data?.type === "error") {
+              showToast({
+                type: "error",
+                title: "Gateway unavailable",
+                message: String(data?.message || "Could not deliver message to gateway"),
+              })
+              return
+            }
+
+            const method = String(data?.method || "")
+            const params = data?.params || {}
+            if (method !== "chat.send") return
+
+            const channel = String(params?.channel || "")
+            if (channel && channel !== "agentlock_dashboard") return
+
+            const text = String(params?.text || "").trim()
+            if (!text) return
+
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `assistant-${Date.now()}`,
+                type: "assistant",
+                content: text,
+                timestamp: new Date(),
+              },
+            ])
+          } catch {
+            // Ignore malformed WS payloads to keep chat resilient.
+          }
+        }
+
+        ws.onclose = () => {
+          if (cancelled) return
+          setSocketConnected(false)
+          reconnectTimer = setTimeout(() => {
+            void connect()
+          }, 2000)
+        }
+
+        ws.onerror = () => {
+          ws.close()
+        }
+      } catch {
+        if (cancelled) return
+        reconnectTimer = setTimeout(() => {
+          void connect()
+        }, 2000)
+      }
+    }
+
+    void connect()
+
+    return () => {
+      cancelled = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (socketRef.current) {
+        socketRef.current.close()
+        socketRef.current = null
+      }
+      setSocketConnected(false)
+    }
+  }, [showToast])
+
+  useEffect(() => {
     void loadOperationalData()
     const interval = setInterval(() => {
       void loadOperationalData()
@@ -248,6 +351,40 @@ export default function PluginPage() {
     }
   }
 
+  const buildConfigJson = useCallback(() => {
+    return JSON.stringify(
+      {
+        dashboard_bridge_token: latestToken || "<TOKEN>",
+        preferred_channel: preferredChannel,
+        available_channels: ["agentlock_dashboard", "whatsapp", "telegram"],
+        client_label: "openclaw",
+      },
+      null,
+      2
+    )
+  }, [latestToken, preferredChannel])
+
+  const copyText = async (text: string, okTitle: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      showToast({ type: "success", title: okTitle })
+    } catch {
+      showToast({ type: "error", title: "Copy failed" })
+    }
+  }
+
+  const downloadConfig = () => {
+    const blob = new Blob([buildConfigJson()], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "agent-lock.config.json"
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   async function handleApproval(actionId: string, decision: "YES" | "NO") {
     try {
       await approveAction(actionId, decision)
@@ -288,108 +425,32 @@ export default function PluginPage() {
       timestamp: new Date(),
     }
 
-    const next = [...messages, userMessage]
-    setMessages([...next, {
-      id: `assistant-${Date.now()}`,
-      type: "assistant",
-      content: "Searching Agent-Lock and plugin context...",
-      timestamp: new Date(),
-    }])
+    setMessages((prev) => [...prev, userMessage])
     setInput("")
     setSending(true)
 
     try {
-      const context = JSON.stringify({
-        plugin_status: pluginStatus,
-        plugin_recent_actions: pluginActions.slice(0, 5).map((a) => ({
-          action_id: a.action_id,
-          tool_name: a.tool_name,
-          decision: a.decision,
-          risk_level: a.risk_level,
-          timestamp: a.timestamp,
-        })),
-        pending_count: pending.length,
-      })
-
-      const llmMessages = next
-        .filter((m) => m.type === "user" || m.type === "assistant")
-        .map((m) => ({ role: m.type === "user" ? "user" : "assistant", content: m.content }))
-
-      const res = await fetch("/api/agent-lock-ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: llmMessages.slice(-30),
-          context,
-          stream: true,
-        }),
-      })
-
-      if (!res.ok) {
-        const ct = res.headers.get("content-type") || ""
-        let message = "Agent-Lock AI request failed"
-        if (ct.includes("application/json")) {
-          const data = await res.json().catch(() => ({}))
-          message = String(data?.error || message)
-        } else {
-          const raw = await res.text().catch(() => "")
-          if (raw.trim()) message = raw.trim()
-        }
-        throw new Error(message)
+      const socket = socketRef.current
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        throw new Error("Realtime bridge is disconnected")
       }
 
-      if (!res.body) {
-        throw new Error("No stream body returned from AI route")
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let assistantText = ""
-
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        assistantText += decoder.decode(value, { stream: true })
-
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            id: updated[updated.length - 1].id,
-            type: "assistant",
-            content: assistantText,
-            timestamp: updated[updated.length - 1].timestamp,
-          }
-          return updated
+      socket.send(
+        JSON.stringify({
+          method: "chat.inject",
+          params: {
+            channel: "agentlock_dashboard",
+            text,
+            source: "agent_lock_dashboard",
+            timestamp: new Date().toISOString(),
+          },
         })
-      }
-
-      const tail = decoder.decode()
-      if (tail) {
-        assistantText += tail
-      }
-
-      if (!assistantText.trim()) {
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            id: updated[updated.length - 1].id,
-            type: "assistant",
-            content: "No response was returned.",
-            timestamp: updated[updated.length - 1].timestamp,
-          }
-          return updated
-        })
-      }
+      )
     } catch (error) {
-      setMessages((prev) => {
-        const updated = [...prev]
-        updated[updated.length - 1] = {
-          id: updated[updated.length - 1].id,
-          type: "assistant",
-          content: error instanceof Error ? `Assistant error: ${error.message}` : "Unexpected assistant error",
-          timestamp: updated[updated.length - 1].timestamp,
-        }
-        return updated
+      showToast({
+        type: "error",
+        title: "Send failed",
+        message: error instanceof Error ? error.message : "Unexpected gateway send error",
       })
     } finally {
       setSending(false)
@@ -419,7 +480,10 @@ export default function PluginPage() {
         <Card padding="md" className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Plugin Status</h3>
-            {pluginStatus?.connected ? <Badge variant="success">Connected</Badge> : <Badge variant="warning">Disconnected</Badge>}
+            <div className="flex items-center gap-2">
+              <Badge variant={pluginStatus?.connected ? "success" : "warning"}>{pluginStatus?.connected ? "Plugin Online" : "Plugin Offline"}</Badge>
+              <Badge variant={socketConnected ? "success" : "warning"}>{socketConnected ? "WS Bridge Online" : "WS Bridge Offline"}</Badge>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-sm">
@@ -474,18 +538,29 @@ export default function PluginPage() {
           </div>
 
           <div className="rounded-lg border p-3 text-xs" style={{ borderColor: "var(--border-primary)", background: "var(--bg-tertiary)" }}>
+            <p className="mb-2" style={{ color: "var(--text-muted)" }}>
+              Cloud-first setup: no local backend commands needed for end users.
+            </p>
             <p style={{ color: "var(--text-muted)" }}>Connection token (paste into OpenClaw Agent-Lock config):</p>
             <p className="mt-1 break-all font-mono" style={{ color: "var(--text-primary)" }}>
               {latestToken || "Generate a token first"}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void copyText(latestToken || "", "Token copied")} disabled={!latestToken}>
+                Copy Token
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void copyText(buildConfigJson(), "Config copied")}>
+                Copy Config JSON
+              </Button>
+              <Button size="sm" variant="secondary" onClick={downloadConfig}>
+                Download Config
+              </Button>
+            </div>
             <p className="mt-2" style={{ color: "var(--text-muted)" }}>
               agent-lock.config.json snippet:
             </p>
             <pre className="mt-1 overflow-x-auto rounded bg-black/30 p-2 font-mono text-[11px]">
-{`{
-  "dashboard_bridge_token": "${latestToken || "<TOKEN>"}",
-  "preferred_channel": "${preferredChannel}"
-}`}
+{buildConfigJson()}
             </pre>
           </div>
 
@@ -553,12 +628,12 @@ export default function PluginPage() {
                 style={{ minHeight: "42px", maxHeight: "120px" }}
                 disabled={!connected}
               />
-              <Button variant="primary" onClick={() => void sendMessage()} disabled={!input.trim() || !connected || sending}>
+              <Button variant="primary" onClick={() => void sendMessage()} disabled={!input.trim() || !connected || !socketConnected || sending}>
                 Send
               </Button>
             </div>
             <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              Enter to send, Shift+Enter for new line
+              Enter to send, Shift+Enter for new line · Routed through OpenClaw Gateway WS
             </p>
           </div>
         </Card>
