@@ -1,7 +1,14 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { fetchSettings, fetchPolicies, updatePolicies, testTelegram, fetchTokenVaultStatus } from "@/lib/api"
+import {
+  fetchSettings,
+  fetchPolicies,
+  updatePolicies,
+  testTelegram,
+  fetchTokenVaultStatus,
+  updateRuntimeControls,
+} from "@/lib/api"
 import { Settings, PoliciesResponse } from "@/types"
 import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
 import Button from "@/app/components/ui/Button"
@@ -861,6 +868,171 @@ function PoliciesSection() {
   )
 }
 
+// ─── Runtime Controls Section ───────────────────────────────────────────────────
+function RuntimeControlsSection({
+  settings,
+  onSaved,
+}: {
+  settings: Settings | null
+  onSaved: () => Promise<void> | void
+}) {
+  const { showToast } = useToast()
+  const [saving, setSaving] = useState(false)
+  const [geminiEnabled, setGeminiEnabled] = useState(true)
+  const [autoApproveEnabled, setAutoApproveEnabled] = useState(true)
+  const [wsBridgeEnabled, setWsBridgeEnabled] = useState(true)
+  const [allowlistText, setAllowlistText] = useState("*")
+
+  useEffect(() => {
+    const rc = settings?.runtime_controls
+    if (!rc) {
+      setGeminiEnabled(true)
+      setAutoApproveEnabled(true)
+      setWsBridgeEnabled(true)
+      setAllowlistText("*")
+      return
+    }
+    setGeminiEnabled(Boolean(rc.gemini_analysis_enabled))
+    setAutoApproveEnabled(Boolean(rc.auto_approve_enabled))
+    setWsBridgeEnabled(Boolean(rc.ws_bridge_enabled))
+    const list = Array.isArray(rc.auto_approve_tool_allowlist) ? rc.auto_approve_tool_allowlist : ["*"]
+    setAllowlistText((list.length ? list : ["*"]).join("\n"))
+  }, [settings])
+
+  const rc = settings?.runtime_controls
+  const wsEnvEnabled = Boolean(rc?.ws_bridge_env_enabled)
+  const wsEffective = Boolean(rc?.ws_bridge_effective)
+
+  async function handleSaveControls() {
+    setSaving(true)
+    try {
+      const allowlist = allowlistText
+        .split(/\r?\n/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+
+      const res = await updateRuntimeControls({
+        gemini_analysis_enabled: geminiEnabled,
+        auto_approve_enabled: autoApproveEnabled,
+        auto_approve_tool_allowlist: allowlist.length ? allowlist : ["*"],
+        ws_bridge_enabled: wsBridgeEnabled,
+      })
+
+      if (!res?.ok) {
+        throw new Error(res?.error || "Could not save runtime controls")
+      }
+
+      showToast({
+        type: "success",
+        title: "Runtime controls updated",
+        message: "Feature switches were saved successfully",
+      })
+      await onSaved()
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Failed to save runtime controls",
+        message: error instanceof Error ? error.message : "Unknown error",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard title="🎛️ Runtime Controls">
+      <p className="text-sm text-slate-400">
+        Toggle core runtime behavior directly from dashboard. Defaults are enabled.
+      </p>
+
+      <div className="space-y-3">
+        <label className="flex items-center justify-between rounded-lg border border-brand-border px-4 py-3 bg-brand-bg/40">
+          <div>
+            <p className="text-sm text-slate-200 font-medium">Gemini analysis</p>
+            <p className="text-xs text-slate-500">
+              If disabled, intent analysis falls back to local rules (no Gemini API call).
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={geminiEnabled}
+            onChange={(e) => setGeminiEnabled(e.target.checked)}
+            className="h-4 w-4"
+          />
+        </label>
+
+        <label className="flex items-center justify-between rounded-lg border border-brand-border px-4 py-3 bg-brand-bg/40">
+          <div>
+            <p className="text-sm text-slate-200 font-medium">Auto-approve LOW risk tools</p>
+            <p className="text-xs text-slate-500">
+              Master switch for LOW-risk auto approval.
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            checked={autoApproveEnabled}
+            onChange={(e) => setAutoApproveEnabled(e.target.checked)}
+            className="h-4 w-4"
+          />
+        </label>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-sm text-slate-300 font-medium">Auto-approve tool allowlist (one pattern per line)</p>
+        <p className="text-xs text-slate-500">
+          Supports wildcards (example: <code>read_*</code>, <code>browser.*</code>, <code>*</code>).
+          Default is <code>*</code> (all tools allowed for LOW-risk auto approval).
+        </p>
+        <textarea
+          value={allowlistText}
+          onChange={(e) => setAllowlistText(e.target.value)}
+          rows={6}
+          className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-3 text-xs text-emerald-300 font-mono focus:outline-none focus:border-indigo-600 transition-colors resize-y leading-relaxed"
+          spellCheck={false}
+        />
+      </div>
+
+      <label className="flex items-center justify-between rounded-lg border border-brand-border px-4 py-3 bg-brand-bg/40">
+        <div>
+          <p className="text-sm text-slate-200 font-medium">OpenClaw WS bridge</p>
+          <p className="text-xs text-slate-500">
+            Connects backend WebSocket <code>/ws</code> traffic to OpenClaw gateway <code>ws://127.0.0.1:18789</code>.
+          </p>
+        </div>
+        <input
+          type="checkbox"
+          checked={wsBridgeEnabled}
+          onChange={(e) => setWsBridgeEnabled(e.target.checked)}
+          className="h-4 w-4"
+        />
+      </label>
+
+      <div className="rounded-lg border border-brand-border bg-brand-bg/30 px-4 py-3 text-xs text-slate-400 space-y-1">
+        <p>
+          <strong className="text-slate-200">Environment requirement:</strong>{" "}
+          You must set <code>WS_BRIDGE_ENABLED=true</code> in backend env for bridge to be effective.
+        </p>
+        <p>
+          Env flag:{" "}
+          <span className={wsEnvEnabled ? "text-emerald-300" : "text-amber-300"}>
+            {wsEnvEnabled ? "enabled" : "disabled"}
+          </span>{" "}
+          | Effective now:{" "}
+          <span className={wsEffective ? "text-emerald-300" : "text-amber-300"}>
+            {wsEffective ? "yes" : "no"}
+          </span>
+        </p>
+      </div>
+
+      <div className="flex justify-end">
+        <Button onClick={handleSaveControls} loading={saving}>
+          Save Runtime Controls
+        </Button>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ─── Server Info Section ───────────────────────────────────────────────────────
 function ServerSection({ settings }: { settings: Settings | null }) {
   const sv = settings?.server
@@ -970,6 +1142,7 @@ export default function SettingsPage() {
           <OpenClawSection />
           <TelegramSection settings={settings} />
           <GeminiSection settings={settings} />
+          <RuntimeControlsSection settings={settings} onSaved={loadSettings} />
           <Auth0Section settings={settings} />
           <PoliciesSection />
           <ServerSection settings={settings} />

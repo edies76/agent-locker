@@ -207,8 +207,90 @@ export async function testTelegram() {
   return res.json()
 }
 
+export async function fetchRuntimeControls(options?: { refresh?: boolean }) {
+  return cachedFromPath(`/settings/runtime-controls`, {
+    ttl: 4000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function updateRuntimeControls(body: {
+  gemini_analysis_enabled?: boolean
+  auto_approve_enabled?: boolean
+  auto_approve_tool_allowlist?: string[]
+  ws_bridge_enabled?: boolean
+}) {
+  const url = await buildUrl(`/settings/runtime-controls`)
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  apiCache.invalidatePattern("/settings/runtime-controls")
+  apiCache.invalidatePattern("/settings")
+  return res.json()
+}
+
 export async function fetchTokenVaultStatus() {
   const res = await fetch(await buildUrl(`/vault/status`), { cache: "no-store" })
+  return res.json()
+}
+
+export async function fetchCLICatalog(options?: { refresh?: boolean }) {
+  return cachedFromPath(`/dashboard/cli/catalog`, {
+    ttl: 10000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function fetchCLIConfig(options?: { refresh?: boolean }) {
+  return cachedFromPath(`/dashboard/cli/config`, {
+    ttl: 4000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function updateCLIConfig(body: {
+  plugin?: {
+    backend_url?: string
+    status_poll_ms?: number
+    status_poll_ms_max?: number
+    log_level?: "debug" | "info" | "warn" | "error"
+    subject_token?: string
+  }
+  mcp?: {
+    backend_url?: string
+    subject_token?: string
+    auto_approve_low_risk?: boolean
+    require_approval_for_high?: boolean
+    require_approval_for_critical?: boolean
+    approval_timeout_seconds?: number
+    local_cache_ttl?: number
+    audit_log_path?: string
+  }
+}) {
+  const url = await buildUrl(`/dashboard/cli/config`)
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  apiCache.invalidatePattern("dashboard/cli/config")
+  return res.json()
+}
+
+export async function runCLICommand(body: {
+  family: "plugin" | "mcp"
+  command: string
+  options?: Record<string, unknown>
+  timeout_seconds?: number
+}) {
+  const url = await buildUrl(`/dashboard/cli/run`)
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
   return res.json()
 }
 

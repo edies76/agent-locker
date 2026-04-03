@@ -48,6 +48,15 @@ const navItems = [
     )
   },
   { 
+    href: "/cli", 
+    label: "CLI Controls", 
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M3 5l4 4-4 4M9 13h6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  },
+  { 
     href: "/mcp", 
     label: "MCP", 
     icon: (

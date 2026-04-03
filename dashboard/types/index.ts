@@ -265,6 +265,15 @@ export interface Settings {
     backend_url: string
     port: number
     audit_log_path: string
+    ws_bridge_env_enabled?: boolean
+  }
+  runtime_controls?: {
+    gemini_analysis_enabled: boolean
+    auto_approve_enabled: boolean
+    auto_approve_tool_allowlist: string[]
+    ws_bridge_enabled: boolean
+    ws_bridge_env_enabled: boolean
+    ws_bridge_effective: boolean
   }
   security: {
     secret_key_is_default: boolean
@@ -299,4 +308,73 @@ export interface ApproveResponse {
   ok?: boolean
   status?: string
   [key: string]: unknown
+}
+
+export type CLIFamily = "plugin" | "mcp"
+
+export interface CLICommandCatalogItem {
+  id: string
+  family: CLIFamily
+  command: string
+  title: string
+  description: string
+  runnable: boolean
+  manual_reason?: string
+  inputs?: Array<{
+    name: string
+    type: string
+    label: string
+    required?: boolean
+  }>
+}
+
+export interface CLICatalogResponse {
+  commands: CLICommandCatalogItem[]
+  summary: {
+    total: number
+    runnable: number
+    manual_only: number
+  }
+}
+
+export interface CLIConfigResponse {
+  plugin_runtime: {
+    backend_url: string
+    status_poll_ms: number
+    status_poll_ms_max: number
+    log_level: "debug" | "info" | "warn" | "error"
+    subject_token?: string
+  }
+  mcp_config: {
+    backend_url: string
+    subject_token?: string
+    auto_approve_low_risk: boolean
+    require_approval_for_high: boolean
+    require_approval_for_critical: boolean
+    approval_timeout_seconds: number
+    local_cache_ttl: number
+    audit_log_path: string
+    target_servers: Array<{
+      name: string
+      command: string
+      args?: string[]
+      enabled?: boolean
+    }>
+  }
+  paths: {
+    plugin_runtime_path: string
+    mcp_config_path: string
+  }
+}
+
+export interface CLIRunResponse {
+  ok: boolean
+  family: CLIFamily
+  command: string
+  executed?: string
+  exit_code?: number | null
+  stdout?: string
+  stderr?: string
+  timed_out?: boolean
+  error?: string
 }
