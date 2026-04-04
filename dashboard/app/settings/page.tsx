@@ -689,6 +689,16 @@ const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
     "powershell.*",
   ],
   ws_bridge_enabled: true,
+  first_time_manual_approval_enabled: true,
+  notify_auto_approved_actions: true,
+  integration_modes: {
+    gmail: "auto",
+    calendar: "auto",
+    drive: "auto",
+    youtube: "auto",
+    github: "auto",
+    slack: "auto",
+  },
 }
 
 // ─── Runtime Controls Section ───────────────────────────────────────────────────
@@ -711,6 +721,8 @@ function RuntimeControlsSection() {
     "agent_lock_github_create_issue",
     "agent_lock_slack_send",
     "agent_lock_calendar_create",
+    "agent_lock_drive_create_file",
+    "agent_lock_youtube_list_channels",
     "mcp__filesystem__*",
     "mcp__github__*",
     "mcp__slack__*",
@@ -813,6 +825,9 @@ function RuntimeControlsSection() {
         auto_approve_enabled: controls.auto_approve_enabled,
         auto_approve_tool_allowlist: allowlistDeduped.length ? allowlistDeduped : ["*"],
         ws_bridge_enabled: controls.ws_bridge_enabled,
+        first_time_manual_approval_enabled: controls.first_time_manual_approval_enabled,
+        notify_auto_approved_actions: controls.notify_auto_approved_actions,
+        integration_modes: controls.integration_modes,
       }
       const res = await updateRuntimeControls(payload)
       setControls(res.runtime_controls)
@@ -945,6 +960,32 @@ function RuntimeControlsSection() {
             <div className="text-xs text-slate-400">
               <p>Env WS_BRIDGE_ENABLED: {envWsEnabled ? "enabled" : "disabled"}</p>
               <p>Effective bridge state: {effectiveWsEnabled ? "enabled" : "disabled"}</p>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-brand-border bg-brand-bg/30 p-3">
+              <p className="text-sm text-slate-200">Integrations mode (auto / manual / disabled)</p>
+              {(["gmail", "calendar", "drive", "youtube", "github", "slack"] as const).map((key) => (
+                <div key={key} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-300 capitalize">{key}</span>
+                  <select
+                    className="input !h-9 !py-1 !text-sm"
+                    value={controls.integration_modes?.[key] ?? "auto"}
+                    onChange={(e) =>
+                      updateControl("integration_modes", {
+                        ...(controls.integration_modes ?? DEFAULT_RUNTIME_CONTROLS.integration_modes!),
+                        [key]: (e.target.value as "auto" | "manual" | "disabled"),
+                      })
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="manual">Manual</option>
+                    <option value="disabled">Disabled</option>
+                  </select>
+                </div>
+              ))}
+              <p className="text-xs text-slate-500">
+                Auto: ejecuta directo. Manual: siempre pide aprobación. Disabled: bloquea la integración.
+              </p>
             </div>
           </div>
 

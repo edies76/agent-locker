@@ -226,6 +226,16 @@ export interface RuntimeControls {
   auto_approve_enabled: boolean
   auto_approve_tool_allowlist: string[]
   ws_bridge_enabled: boolean
+  first_time_manual_approval_enabled?: boolean
+  notify_auto_approved_actions?: boolean
+  integration_modes?: {
+    gmail: "auto" | "manual" | "disabled"
+    calendar: "auto" | "manual" | "disabled"
+    drive: "auto" | "manual" | "disabled"
+    youtube: "auto" | "manual" | "disabled"
+    github: "auto" | "manual" | "disabled"
+    slack: "auto" | "manual" | "disabled"
+  }
 }
 
 export interface RuntimeControlsResponse {

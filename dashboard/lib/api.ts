@@ -193,6 +193,9 @@ export async function updateRuntimeControls(body: {
   auto_approve_enabled?: boolean
   auto_approve_tool_allowlist?: string[]
   ws_bridge_enabled?: boolean
+  first_time_manual_approval_enabled?: boolean
+  notify_auto_approved_actions?: boolean
+  integration_modes?: Record<string, "auto" | "manual" | "disabled">
 }) {
   const base = await buildUrl("")
   const res = await fetch(`${base}/settings/runtime-controls`, {
