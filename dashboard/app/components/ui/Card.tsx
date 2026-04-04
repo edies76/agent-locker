@@ -49,7 +49,7 @@ interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 export const CardHeader = ({ title, subtitle, action, className = '', ...props }: CardHeaderProps) => (
-  <div className={`flex items-start justify-between mb-4 ${className}`} {...props}>
+  <div className={`mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between ${className}`} {...props}>
     <div>
       <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
       {subtitle && <p className="text-sm mt-0.5" style={{ color: 'var(--text-tertiary)' }}>{subtitle}</p>}

@@ -276,14 +276,14 @@ export default function ApprovalsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="page-title">Approvals</h1>
           <p className="page-subtitle">
             {pending.length} pending {pending.length === 1 ? 'request' : 'requests'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs px-2 py-1 rounded" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
             ↑↓ Navigate • Y Approve • N Reject
           </span>
@@ -295,7 +295,7 @@ export default function ApprovalsPage() {
 
       {/* Content */}
       {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[...Array(3)].map((_, i) => (
             <Card key={i} padding="lg">
               <div className="animate-pulse space-y-4">

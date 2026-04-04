@@ -42,7 +42,7 @@ export default function MCPTargetDetailPage() {
 
   return (
     <div className="space-y-6">
-      <section className="glass-panel rounded-2xl px-6 py-5 border">
+      <section className="glass-panel rounded-2xl border px-4 py-4 md:px-6 md:py-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">Target MCP</p>
@@ -51,7 +51,7 @@ export default function MCPTargetDetailPage() {
               Diagnostico dedicado del target, con verificacion de endpoint y arranque.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link href="/mcp" className="rounded-lg border border-slate-600/50 px-4 py-2 text-sm text-slate-100 hover:bg-slate-800/60">
               Volver a monitor
             </Link>

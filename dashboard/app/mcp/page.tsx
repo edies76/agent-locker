@@ -148,7 +148,7 @@ export default function MCPMonitorPage() {
 
   return (
     <div className="space-y-6">
-      <section className="glass-panel rounded-2xl px-6 py-5 border">
+      <section className="glass-panel rounded-2xl border px-4 py-4 md:px-6 md:py-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">MCP Clarity Board</p>
@@ -159,7 +159,7 @@ export default function MCPMonitorPage() {
               Mapa de servidores MCP, latencias y salud operativa en tiempo real.
             </p>
           </div>
-          <button onClick={load} className="btn-glow rounded-lg px-4 py-2 text-sm font-semibold">
+          <button onClick={load} className="btn-glow rounded-lg px-4 py-2 text-sm font-semibold w-full md:w-auto">
             Refrescar monitor
           </button>
         </div>

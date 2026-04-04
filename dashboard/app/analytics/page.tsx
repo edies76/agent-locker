@@ -147,7 +147,7 @@ export default function AnalyticsPage() {
             <p className="page-subtitle">Advanced usage and risk patterns</p>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => (
             <Card key={i} padding="md">
               <div className="animate-pulse space-y-3">
@@ -163,12 +163,12 @@ export default function AnalyticsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="page-title">Analytics</h1>
           <p className="page-subtitle">Advanced usage and risk patterns</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-md" style={{ background: "var(--bg-tertiary)" }}>
             <span className={`status-dot ${backendOk ? "status-dot-success status-pulse" : backendOk === false ? "status-dot-danger" : "status-dot-neutral"}`} />
             <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
@@ -195,7 +195,7 @@ export default function AnalyticsPage() {
         </Card>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           label="Total Actions"
           value={stats?.total ?? 0}

@@ -35,8 +35,8 @@ export default function RootLayout({
         <ErrorBoundary>
           <ToastProvider>
             <ClientProviders>
-              <main className="ml-56 min-h-screen transition-all duration-200">
-                <div className="p-6 max-w-screen-xl mx-auto animate-fade-in">
+              <main className="min-h-screen transition-all duration-200 md:ml-56">
+                <div className="px-4 pb-6 pt-16 md:p-6 max-w-screen-xl mx-auto animate-fade-in">
                   <ErrorBoundary>{children}</ErrorBoundary>
                 </div>
               </main>
