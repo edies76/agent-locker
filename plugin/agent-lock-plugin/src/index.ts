@@ -90,24 +90,34 @@ function shouldLog(level: "debug" | "info" | "warn" | "error"): boolean {
     return LEVEL_WEIGHT[level] >= current;
 }
 
+// ── Structured log buffer for the dashboard ────────────────────────────────
+// Console shows clean human-readable text only.
+// Full context (JSON details) is kept here for the dashboard to read.
+const LOG_BUFFER_SIZE = 500;
+type LogEntry = { ts: string; level: string; message: string; context?: Record<string, unknown> };
+const logBuffer: LogEntry[] = [];
+
 function log(
     level: "debug" | "info" | "warn" | "error",
     message: string,
     context?: Record<string, unknown>,
 ): void {
     if (!shouldLog(level)) return;
-    const suffix = context ? ` | ${JSON.stringify(context)}` : "";
-    const line = `[Agent-Lock][${level.toUpperCase()}] ${message}${suffix}`;
-    if (level === "warn") {
-        console.warn(line);
-        return;
-    }
-    if (level === "error") {
-        console.error(line);
-        return;
-    }
+
+    // Store full structured entry for the dashboard
+    logBuffer.push({ ts: new Date().toISOString(), level, message, context });
+    if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
+
+    // Console: clean text only — no JSON noise
+    const line = `[Agent-Lock][${level.toUpperCase()}] ${message}`;
+    if (level === "warn") { console.warn(line); return; }
+    if (level === "error") { console.error(line); return; }
     console.log(line);
 }
+
+/** Returns the in-memory structured log buffer (for dashboard polling). */
+export function getLogBuffer() { return [...logBuffer]; }
+
 
 function logBlue(message: string): void {
     const BLUE = "\x1b[94m";
