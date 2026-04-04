@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, InputHTMLAttributes } from 'react'
+import { forwardRef, InputHTMLAttributes, useId } from 'react'
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
@@ -20,7 +20,8 @@ const Input = forwardRef<HTMLInputElement, InputProps>(({
   id,
   ...props
 }, ref) => {
-  const inputId = id || `input-${Math.random().toString(36).slice(2)}`
+  const generatedId = useId()
+  const inputId = id || generatedId
   
   return (
     <div className="w-full">

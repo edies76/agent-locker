@@ -1,5 +1,7 @@
 'use client'
 
+import Image from 'next/image'
+
 interface AvatarProps {
   src?: string
   alt?: string
@@ -21,6 +23,12 @@ export default function Avatar({
     lg: 'w-10 h-10 text-base',
   }
 
+  const sizePixels = {
+    sm: 24,
+    md: 32,
+    lg: 40,
+  }
+
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -32,10 +40,13 @@ export default function Avatar({
 
   if (src) {
     return (
-      <img
+      <Image
         src={src}
         alt={alt || name || 'Avatar'}
         className={`${sizeClasses[size]} rounded-full object-cover ${className}`}
+        width={sizePixels[size]}
+        height={sizePixels[size]}
+        unoptimized
       />
     )
   }

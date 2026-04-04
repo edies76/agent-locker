@@ -16,7 +16,7 @@ export default function MCPTargetDetailPage() {
 
   const load = useCallback(async () => {
     if (!serverName) {
-      setError("Nombre de target invalido")
+      setError("Invalid target name")
       setLoading(false)
       return
     }
@@ -24,9 +24,9 @@ export default function MCPTargetDetailPage() {
     try {
       const result = (await fetchMCPTargetDetail(serverName)) as MCPTargetDetailResponse
       setData(result)
-      setError(result?.ok ? null : result?.error || "No se pudo cargar el detalle")
+      setError(result?.ok ? null : result?.error || "Could not load the target detail")
     } catch {
-      setError("No se pudo cargar el detalle del target MCP")
+      setError("Could not load the MCP target detail")
     } finally {
       setLoading(false)
     }
@@ -45,88 +45,88 @@ export default function MCPTargetDetailPage() {
       <section className="glass-panel rounded-2xl border px-4 py-4 md:px-6 md:py-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">Target MCP</p>
-            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">Detalle: {serverName || "N/A"}</h1>
+            <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">MCP target</p>
+            <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">Detail: {serverName || "N/A"}</h1>
             <p className="text-sm text-slate-300/85 mt-1">
-              Diagnostico dedicado del target, con verificacion de endpoint y arranque.
+              Dedicated target diagnostics with endpoint and startup verification.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link href="/mcp" className="rounded-lg border border-slate-600/50 px-4 py-2 text-sm text-slate-100 hover:bg-slate-800/60">
-              Volver a monitor
+              Back to monitor
             </Link>
             <button onClick={load} className="btn-glow rounded-lg px-4 py-2 text-sm font-semibold">
-              Refrescar
+              Refresh
             </button>
           </div>
         </div>
       </section>
 
-      {loading && <div className="glass-panel rounded-xl border px-4 py-4 text-sm text-slate-300">Cargando detalle...</div>}
+      {loading && <div className="glass-panel rounded-xl border px-4 py-4 text-sm text-slate-300">Loading details...</div>}
       {error && <div className="glass-panel rounded-xl border px-4 py-4 text-sm text-rose-300">{error}</div>}
 
       {!loading && !error && target && (
         <>
           <section className="glass-panel rounded-xl border p-4">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Motivo exacto</p>
+            <p className="text-xs uppercase tracking-wider text-slate-500">Exact cause</p>
             <p className="text-sm font-mono text-cyan-200 mt-2">{target.connection_reason_code || "UNKNOWN"}</p>
             <p className="text-sm text-slate-100 mt-1">
-              {target.connection_reason || "No se pudo determinar la causa exacta."}
+              {target.connection_reason || "Could not determine the exact cause."}
             </p>
           </section>
 
           <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="glass-panel rounded-xl border p-4">
-              <p className="text-xs uppercase tracking-wider text-slate-400">Estado conexion</p>
+              <p className="text-xs uppercase tracking-wider text-slate-400">Connection status</p>
               <p className={`text-2xl font-semibold mt-1 ${target.connected ? "text-emerald-300" : "text-rose-300"}`}>
-                {target.connected ? "Conectado" : "Desconectado"}
+                {target.connected ? "Connected" : "Disconnected"}
               </p>
             </div>
             <div className="glass-panel rounded-xl border p-4">
-              <p className="text-xs uppercase tracking-wider text-slate-400">Habilitado</p>
+              <p className="text-xs uppercase tracking-wider text-slate-400">Enabled</p>
               <p className={`text-2xl font-semibold mt-1 ${target.enabled ? "text-emerald-300" : "text-slate-400"}`}>
-                {target.enabled ? "Si" : "No"}
+                {target.enabled ? "Yes" : "No"}
               </p>
             </div>
             <div className="glass-panel rounded-xl border p-4">
-              <p className="text-xs uppercase tracking-wider text-slate-400">Comando resuelto</p>
+              <p className="text-xs uppercase tracking-wider text-slate-400">Resolved command</p>
               <p className={`text-2xl font-semibold mt-1 ${target.command_found ? "text-emerald-300" : "text-amber-300"}`}>
-                {target.command_found ? "Encontrado" : "No encontrado"}
+                {target.command_found ? "Found" : "Not found"}
               </p>
             </div>
           </section>
 
           <section className="glass-panel rounded-xl border p-4 space-y-3">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Proceso</p>
-            <p className="text-sm text-slate-100">Comando: <span className="font-mono text-cyan-200">{target.command || "N/A"}</span></p>
+            <p className="text-xs uppercase tracking-wider text-slate-500">Process</p>
+            <p className="text-sm text-slate-100">Command: <span className="font-mono text-cyan-200">{target.command || "N/A"}</span></p>
             <p className="text-sm text-slate-100">Args: <span className="font-mono text-cyan-200">{target.args?.length ? JSON.stringify(target.args) : "[]"}</span></p>
-            <p className="text-sm text-slate-100">Ruta real: <span className="font-mono text-cyan-200">{target.resolved_command || "No detectada en PATH"}</span></p>
-            <p className="text-sm text-slate-100">Pista de arranque: <span className="text-amber-200">{target.startup_hint || "N/A"}</span></p>
+            <p className="text-sm text-slate-100">Resolved path: <span className="font-mono text-cyan-200">{target.resolved_command || "Not found in PATH"}</span></p>
+            <p className="text-sm text-slate-100">Startup hint: <span className="text-amber-200">{target.startup_hint || "N/A"}</span></p>
           </section>
 
           <section className="glass-panel rounded-xl border p-4 space-y-3">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Endpoint remoto</p>
+            <p className="text-xs uppercase tracking-wider text-slate-500">Remote endpoint</p>
             {target.endpoint ? (
               <>
-                <p className="text-sm text-slate-100">Endpoint configurado: <span className="font-mono text-cyan-200">{target.endpoint}</span></p>
+                <p className="text-sm text-slate-100">Configured endpoint: <span className="font-mono text-cyan-200">{target.endpoint}</span></p>
                 <p className={`text-sm ${target.endpoint_reachable ? "text-emerald-300" : "text-rose-300"}`}>
                   {target.endpoint_reachable
-                    ? "Se detecto servicio escuchando en el endpoint."
-                    : `No se encontro servicio escuchando en ${target.endpoint}.`}
+                    ? "A service was detected on the endpoint."
+                    : `No service was detected at ${target.endpoint}.`}
                 </p>
                 {target.endpoint_status && (
                   <p className="text-xs text-slate-400">{target.endpoint_status}</p>
                 )}
               </>
             ) : (
-              <p className="text-sm text-slate-300">Este target no usa endpoint HTTP remoto (stdio/local).</p>
+              <p className="text-sm text-slate-300">This target does not use a remote HTTP endpoint (stdio/local).</p>
             )}
           </section>
 
           <section className="glass-panel rounded-xl border p-4 space-y-2">
-            <p className="text-xs uppercase tracking-wider text-slate-500">Notas operativas</p>
+            <p className="text-xs uppercase tracking-wider text-slate-500">Operational notes</p>
             {data?.restart_required_after_toggle && (
-              <p className="text-sm text-amber-200">Cambios enable/disable requieren reiniciar Agent-Lock MCP para aplicar.</p>
+              <p className="text-sm text-amber-200">Enable/disable changes require an Agent-Lock MCP restart to take effect.</p>
             )}
             {data?.warning && <p className="text-sm text-amber-200">{data.warning}</p>}
             {data?.config_path && <p className="text-xs text-slate-400">Config: {data.config_path}</p>}

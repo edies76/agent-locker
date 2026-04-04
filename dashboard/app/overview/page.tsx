@@ -97,12 +97,15 @@ export default function OverviewPage() {
   }, [])
 
   useEffect(() => {
-    loadAll(false)
-    checkHealth()
+    const sync = async () => {
+      await loadAll(false)
+      await checkHealth()
+    }
+
+    void sync()
 
     const interval = setInterval(() => {
-      loadAll(false)
-      checkHealth()
+      void sync()
     }, 5000)
 
     return () => clearInterval(interval)
@@ -119,8 +122,8 @@ export default function OverviewPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="page-title">Overview</h1>
-          <p className="page-subtitle">Real-time security monitoring</p>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="page-subtitle">Operational snapshot for approvals, risk, and gateway activity</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Status indicator */}

@@ -1,6 +1,6 @@
 'use client'
 
-import { forwardRef, SelectHTMLAttributes } from 'react'
+import { forwardRef, SelectHTMLAttributes, useId } from 'react'
 
 interface SelectOption {
   value: string
@@ -26,7 +26,8 @@ const Select = forwardRef<HTMLSelectElement, SelectProps>(({
   id,
   ...props
 }, ref) => {
-  const selectId = id || `select-${Math.random().toString(36).slice(2)}`
+  const generatedId = useId()
+  const selectId = id || generatedId
   
   return (
     <div className="w-full">

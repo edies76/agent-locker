@@ -21,8 +21,8 @@ function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-[var(--bg-tertiary)] rounded-lg ${className ?? ""}`} />
 }
 
-// ─── OpenClaw Section ──────────────────────────────────────────────────────────
-interface OpenClawConfig {
+// ─── Plugin Bridge Section ─────────────────────────────────────────────────────
+interface PluginBridgeConfig {
   telegramBotToken: string
   telegramPhone: string
   isConfigured: boolean
@@ -31,7 +31,7 @@ interface OpenClawConfig {
 }
 
 function OpenClawSection() {
-  const [config, setConfig] = useState<OpenClawConfig>({
+  const [config, setConfig] = useState<PluginBridgeConfig>({
     telegramBotToken: "",
     telegramPhone: "",
     isConfigured: false,
@@ -76,7 +76,7 @@ function OpenClawSection() {
       showToast({
         type: "success",
         title: "Configuration saved",
-        message: "OpenClaw settings have been saved",
+        message: "Plugin bridge settings have been saved",
       })
     } catch (error) {
       showToast({
@@ -119,7 +119,7 @@ function OpenClawSection() {
       showToast({
         type: "success",
         title: "Connection successful",
-        message: "OpenClaw is now connected - Chat page is now available",
+        message: "Plugin bridge is now connected - the Plugin page is available",
       })
     } catch (error) {
       showToast({
@@ -145,15 +145,15 @@ function OpenClawSection() {
     showToast({
       type: "info",
       title: "Disconnected",
-      message: "OpenClaw has been disconnected",
+      message: "Plugin bridge has been disconnected",
     })
   }
 
   return (
     <Card>
       <CardHeader
-        title="🤖 OpenClaw Agent"
-        subtitle="Configure and connect to your OpenClaw agent via Telegram"
+        title="🤖 Plugin Bridge"
+        subtitle="Configure and connect the plugin bridge via Telegram"
         action={
           config.isConnected ? (
             <Badge variant="success" dot>Connected</Badge>
@@ -231,7 +231,7 @@ function OpenClawSection() {
         {/* Instructions */}
         <details className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg overflow-hidden">
           <summary className="px-4 py-3 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-secondary)] font-medium">
-            📖 How to Configure OpenClaw
+            📖 How to Configure the Plugin Bridge
           </summary>
           <div className="px-4 py-4 border-t border-[var(--border-color)]">
             <ol className="list-decimal list-inside space-y-2 text-sm text-[var(--text-secondary)]">
@@ -240,9 +240,9 @@ function OpenClawSection() {
               <li>Follow the instructions and copy your bot token</li>
               <li>Paste the token in the field above</li>
               <li>Enter your Telegram phone number (with country code, e.g., +1234567890)</li>
-              <li>Click "Save Configuration" to store your settings</li>
-              <li>Click "Test Connection" to verify OpenClaw can connect</li>
-              <li>Once connected, the Chat page will appear in the sidebar</li>
+              <li>Click &quot;Save Configuration&quot; to store your settings</li>
+              <li>Click &quot;Test Connection&quot; to verify the bridge can connect</li>
+              <li>Once connected, the Plugin page will appear in the sidebar</li>
             </ol>
           </div>
         </details>
@@ -672,26 +672,27 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
   )
 }
 
+const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
+  gemini_analysis_enabled: true,
+  auto_approve_enabled: true,
+  auto_approve_tool_allowlist: [
+    "agent_lock_respond",
+    "agent_lock_auth_status",
+    "agent_lock_auth_logout",
+    "agent_lock_gmail_send",
+    "agent_lock_github_create_issue",
+    "agent_lock_slack_send",
+    "agent_lock_calendar_create",
+    "mcp__filesystem__*",
+    "mcp__github__*",
+    "mcp__slack__*",
+    "powershell.*",
+  ],
+  ws_bridge_enabled: true,
+}
+
 // ─── Runtime Controls Section ───────────────────────────────────────────────────
 function RuntimeControlsSection() {
-  const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
-    gemini_analysis_enabled: true,
-    auto_approve_enabled: true,
-    auto_approve_tool_allowlist: [
-      "agent_lock_respond",
-      "agent_lock_auth_status",
-      "agent_lock_auth_logout",
-      "agent_lock_gmail_send",
-      "agent_lock_github_create_issue",
-      "agent_lock_slack_send",
-      "agent_lock_calendar_create",
-      "mcp__filesystem__*",
-      "mcp__github__*",
-      "mcp__slack__*",
-      "powershell.*",
-    ],
-    ws_bridge_enabled: true,
-  }
   const { showToast } = useToast()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)

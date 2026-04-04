@@ -58,7 +58,7 @@ export default function ActivityPage() {
       setTargets(targetData as MCPTargetsResponse)
       setError(null)
     } catch {
-      setError("No se pudo cargar la actividad")
+      setError("Could not load activity")
     } finally {
       setLoading(false)
     }

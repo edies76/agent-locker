@@ -59,7 +59,7 @@ export default function AnalyticsPage() {
       setTrends(trendsData)
       setError(null)
     } catch {
-      setError("No se pudo cargar analytics")
+      setError("Could not load analytics")
     } finally {
       setLastUpdated(new Date())
       setLoading(false)
@@ -271,7 +271,7 @@ export default function AnalyticsPage() {
           </div>
           {topTools.length === 0 ? (
             <div className="px-4 py-5 text-sm" style={{ color: "var(--text-muted)" }}>
-              No hay herramientas para analizar.
+              No tools available to analyze.
             </div>
           ) : (
             <div className="divide-y" style={{ borderColor: "var(--border-primary)" }}>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardHeader, CardContent, Button, Input, Badge } from "@/app/components/ui"
 
 type TargetServer = {
@@ -27,12 +27,7 @@ export default function MCPSetupPage() {
     { number: 4, title: "Connect Claude Desktop", status: "pending" },
   ])
 
-  useEffect(() => {
-    loadConfig()
-    detectClaudeDesktop()
-  }, [])
-
-  async function loadConfig() {
+  const loadConfig = useCallback(async () => {
     try {
       const res = await fetch("/api/mcp/config")
       if (res.ok) {
@@ -42,9 +37,9 @@ export default function MCPSetupPage() {
     } catch (err) {
       console.error("Failed to load MCP config:", err)
     }
-  }
+  }, [])
 
-  async function detectClaudeDesktop() {
+  const detectClaudeDesktop = useCallback(async () => {
     try {
       const res = await fetch("/api/mcp/detect-claude")
       if (res.ok) {
@@ -54,7 +49,16 @@ export default function MCPSetupPage() {
     } catch (err) {
       console.error("Failed to detect Claude Desktop:", err)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    const syncSetupState = async () => {
+      await loadConfig()
+      await detectClaudeDesktop()
+    }
+
+    void syncSetupState()
+  }, [loadConfig, detectClaudeDesktop])
 
   async function saveConfig() {
     try {
@@ -123,19 +127,38 @@ export default function MCPSetupPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">MCP Setup</h1>
-          <p className="text-muted-foreground mt-1">
-            Configure Agent-Lock MCP Gateway for Claude Desktop
-          </p>
+    <div className="p-4 space-y-6 md:p-6">
+      <Card className="p-6 border-[var(--border-primary)] bg-[var(--bg-elevated)]">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">MCP setup guide</p>
+            <h1 className="text-2xl font-bold text-[var(--text-primary)]">Connect your MCP client and servers</h1>
+            <p className="text-sm text-[var(--text-secondary)] leading-6">
+              Add the target servers you want to protect, connect Claude Desktop, then verify the gateway is ready.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {[
+              { step: "1", title: "Add servers" },
+              { step: "2", title: "Connect client" },
+              { step: "3", title: "Verify setup" },
+            ].map((item) => (
+              <div key={item.step} className="rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-xs font-semibold text-white">
+                    {item.step}
+                  </span>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">{item.title}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* Setup Steps */}
       <Card className="p-6">
-        <h2 className="font-semibold mb-4">Setup Progress</h2>
+        <h2 className="font-semibold mb-4">Setup progress</h2>
         <div className="space-y-3">
           {setupSteps.map((step) => (
             <div key={step.number} className="flex items-center gap-3">
@@ -181,9 +204,9 @@ export default function MCPSetupPage() {
 
       {/* Target Servers Configuration */}
       <Card className="p-6">
-        <h2 className="font-semibold mb-4">Target MCP Servers</h2>
+        <h2 className="font-semibold mb-4">Target MCP servers</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Add MCP servers that Agent-Lock will proxy and protect.
+          Add the servers you want Agent-Lock to proxy and protect.
         </p>
 
         {/* Existing Servers */}
@@ -249,7 +272,7 @@ export default function MCPSetupPage() {
 
       {/* Claude Desktop Configuration */}
       <Card className="p-6">
-        <h2 className="font-semibold mb-4">Claude Desktop Integration</h2>
+        <h2 className="font-semibold mb-4">Client integration</h2>
 
         {claudeDesktopPath ? (
           <div className="space-y-4">
@@ -257,7 +280,7 @@ export default function MCPSetupPage() {
               <div className="text-green-600 dark:text-green-400 text-xl">✓</div>
               <div className="flex-1">
                 <div className="font-medium text-green-900 dark:text-green-100">
-                  Claude Desktop detected
+                  Client detected
                 </div>
                 <code className="text-xs text-green-700 dark:text-green-300">
                   {claudeDesktopPath}
@@ -266,7 +289,7 @@ export default function MCPSetupPage() {
             </div>
 
             <Button onClick={autoConfigureClaude} className="w-full">
-              Auto-Configure Claude Desktop
+              Auto-configure client
             </Button>
 
             <div className="text-sm text-muted-foreground">
@@ -278,7 +301,7 @@ export default function MCPSetupPage() {
           <div className="space-y-4">
             <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-900">
               <div className="font-medium text-amber-900 dark:text-amber-100 mb-2">
-                Manual Configuration Required
+                Manual configuration required
               </div>
               <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
                 Add this to your <code>claude_desktop_config.json</code>:
@@ -318,7 +341,7 @@ export default function MCPSetupPage() {
 
       {/* Quick Start Commands */}
       <Card className="p-6">
-        <h2 className="font-semibold mb-4">Quick Start Commands</h2>
+        <h2 className="font-semibold mb-4">Quick start commands</h2>
         <div className="space-y-2">
           <div>
             <div className="text-sm text-muted-foreground mb-1">
