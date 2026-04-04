@@ -21,7 +21,7 @@ function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-[var(--bg-tertiary)] rounded-lg ${className ?? ""}`} />
 }
 
-// ─── OpenClaw Plugin Section ───────────────────────────────────────────────────
+// ─── Plugin Bridge Section ─────────────────────────────────────────────────────
 interface PluginBridgeConfig {
   telegramBotToken: string
   telegramPhone: string
@@ -76,7 +76,7 @@ function OpenClawSection() {
       showToast({
         type: "success",
         title: "Configuration saved",
-        message: "OpenClaw plugin settings have been saved",
+        message: "Plugin bridge settings have been saved",
       })
     } catch (error) {
       showToast({
@@ -119,7 +119,7 @@ function OpenClawSection() {
       showToast({
         type: "success",
         title: "Connection successful",
-        message: "OpenClaw plugin is now connected - the Plugin page is available",
+        message: "Plugin bridge is now connected - the Plugin page is available",
       })
     } catch (error) {
       showToast({
@@ -145,15 +145,15 @@ function OpenClawSection() {
     showToast({
       type: "info",
       title: "Disconnected",
-      message: "OpenClaw plugin has been disconnected",
+      message: "Plugin bridge has been disconnected",
     })
   }
 
   return (
     <Card>
       <CardHeader
-        title="🤖 OpenClaw Plugin"
-        subtitle="Configure and connect the OpenClaw plugin via Telegram"
+        title="🤖 Plugin Bridge"
+        subtitle="Configure and connect the plugin bridge via Telegram"
         action={
           config.isConnected ? (
             <Badge variant="success" dot>Connected</Badge>
@@ -231,7 +231,7 @@ function OpenClawSection() {
         {/* Instructions */}
         <details className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg overflow-hidden">
           <summary className="px-4 py-3 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-secondary)] font-medium">
-            📖 How to Configure the OpenClaw Plugin
+            📖 How to Configure the Plugin Bridge
           </summary>
           <div className="px-4 py-4 border-t border-[var(--border-color)]">
             <ol className="list-decimal list-inside space-y-2 text-sm text-[var(--text-secondary)]">

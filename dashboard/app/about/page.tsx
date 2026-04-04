@@ -68,7 +68,7 @@ export default function AboutPage() {
         </h2>
         <p className="text-slate-400 text-sm leading-relaxed">
           Agent-Lock is intentionally split so external teams can adopt only what they need.
-          The MCP Gateway and the OpenClaw plugin are separate integration surfaces that both
+          The MCP Gateway and the plugin bridge are separate integration surfaces that both
           call the same backend governance API.
         </p>
 
@@ -84,7 +84,7 @@ export default function AboutPage() {
           </div>
 
           <div className="bg-brand-bg border border-brand-border rounded-xl p-4 space-y-2">
-            <p className="text-sm font-bold text-amber-300">OpenClaw Plugin (plugin/agent-lock-plugin)</p>
+            <p className="text-sm font-bold text-amber-300">Plugin Bridge (plugin/agent-lock-plugin)</p>
             <ul className="space-y-1.5 text-xs text-slate-400">
               <li>• Native interception inside the plugin runtime</li>
               <li>• Captures session intent and guards before_tool_call</li>
