@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { apiCache } from '@/lib/cache'
+import { resolveBackendEndpoint } from '@/lib/backendEndpoint'
 import { useToast } from './Toast'
 
 interface QuickAction {
@@ -65,18 +66,20 @@ export default function QuickActions() {
       action: async () => {
         setLoading('export-logs')
         try {
-          const response = await fetch('http://localhost:8000/dashboard/activity?limit=1000')
+          const { baseUrl } = await resolveBackendEndpoint()
+          const url = `${baseUrl}/dashboard/activity?limit=1000`
+          const response = await fetch(url)
           const data = await response.json()
           
           const blob = new Blob([JSON.stringify(data, null, 2)], {
             type: 'application/json',
           })
-          const url = URL.createObjectURL(blob)
+          const downloadUrl = URL.createObjectURL(blob)
           const a = document.createElement('a')
-          a.href = url
+          a.href = downloadUrl
           a.download = `agent-lock-logs-${new Date().toISOString()}.json`
           a.click()
-          URL.revokeObjectURL(url)
+          URL.revokeObjectURL(downloadUrl)
           
           showToast({ type: 'success', title: `Exported ${data.length} log entries`, duration: 3000 })
         } catch (error) {
@@ -96,7 +99,9 @@ export default function QuickActions() {
         setLoading('test-backend')
         try {
           const start = Date.now()
-          const response = await fetch('http://localhost:8000/health')
+          const { baseUrl } = await resolveBackendEndpoint()
+          const url = `${baseUrl}/health`
+          const response = await fetch(url)
           const elapsed = Date.now() - start
           
           if (response.ok) {

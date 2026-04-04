@@ -11,7 +11,7 @@ const navSections = [
     title: "Dashboard",
     items: [
       {
-        href: "/overview",
+        href: "/dashboard/overview",
         label: "Dashboard",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -23,7 +23,7 @@ const navSections = [
         ),
       },
       {
-        href: "/activity",
+        href: "/dashboard/activity",
         label: "Activity",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -32,7 +32,7 @@ const navSections = [
         ),
       },
       {
-        href: "/approvals",
+        href: "/dashboard/approvals",
         label: "Approvals",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -42,7 +42,7 @@ const navSections = [
         ),
       },
       {
-        href: "/logs",
+        href: "/dashboard/logs",
         label: "Logs",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -56,7 +56,7 @@ const navSections = [
     title: "Integrations",
     items: [
       {
-        href: "/plugin",
+        href: "/dashboard/plugin",
         label: "Plugin",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -65,7 +65,7 @@ const navSections = [
         ),
       },
       {
-        href: "/mcp",
+        href: "/dashboard/mcp",
         label: "MCP",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -77,7 +77,7 @@ const navSections = [
         ),
       },
       {
-        href: "/mcp/setup",
+        href: "/dashboard/mcp/setup",
         label: "Setup",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -87,7 +87,7 @@ const navSections = [
         ),
       },
       {
-        href: "/cli",
+        href: "/dashboard/cli",
         label: "CLI",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -101,7 +101,7 @@ const navSections = [
     title: "Admin",
     items: [
       {
-        href: "/analytics",
+        href: "/dashboard/analytics",
         label: "Analytics",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -110,7 +110,7 @@ const navSections = [
         ),
       },
       {
-        href: "/settings",
+        href: "/dashboard/settings",
         label: "Settings",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">

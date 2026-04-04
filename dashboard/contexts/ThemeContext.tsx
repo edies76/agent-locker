@@ -17,24 +17,20 @@ const ThemeContext = createContext<ThemeContextType>({
 })
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Get system preference.
-  const getSystemTheme = (): 'light' | 'dark' => {
-    if (typeof window !== 'undefined') {
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    }
-    return 'light'
-  }
-
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'system'
-    const stored = localStorage.getItem('theme') as Theme | null
-    return stored && ['light', 'dark', 'system'].includes(stored) ? stored : 'system'
-  })
-  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => getSystemTheme())
+  const [theme, setThemeState] = useState<Theme>('system')
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>('light')
 
   const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemTheme : theme
 
-  // Apply the resolved theme to the document.
+  // Read browser theme state on client mount to keep server/client markup consistent.
+  useEffect(() => {
+    const stored = localStorage.getItem('theme') as Theme | null
+    if (stored && ['light', 'dark', 'system'].includes(stored)) {
+      setThemeState(stored)
+    }
+    setSystemTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  }, [])
+
   useEffect(() => {
     if (resolvedTheme === 'dark') {
       document.documentElement.classList.add('dark')
@@ -48,7 +44,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const handleChange = () => {
       if (theme === 'system') {
-        setSystemTheme(getSystemTheme())
+        setSystemTheme(mediaQuery.matches ? 'dark' : 'light')
       }
     }
     

@@ -22,6 +22,12 @@ function ApprovalCard({
   const [showArgs, setShowArgs] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
 
+  // Check if message is older than 20 minutes
+  const isStale = () => {
+    const ageMinutes = (Date.now() - new Date(action.timestamp).getTime()) / (1000 * 60)
+    return ageMinutes >= 20
+  }
+
   useEffect(() => {
     if (isSelected && cardRef.current) {
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -62,6 +68,10 @@ function ApprovalCard({
   const intentScore = action.intent_score ?? 0
   const scoreColor = intentScore > 0.7 ? 'var(--success)' : intentScore > 0.4 ? 'var(--warning)' : 'var(--danger)'
 
+  const stale = isStale()
+  const cardOpacity = stale ? '0.6' : '1'
+  const cardBg = stale ? 'var(--bg-tertiary)' : 'var(--bg-primary)'
+
   return (
     <Card
       ref={cardRef}
@@ -71,16 +81,32 @@ function ApprovalCard({
       style={{
         borderLeftWidth: '3px',
         borderLeftColor: riskColors[action.risk_level] || 'var(--border-primary)',
+        opacity: cardOpacity,
+        background: cardBg,
         ...(isSelected ? { boxShadow: '0 0 0 2px var(--accent-primary)' } : {})
       }}
     >
       {/* Header */}
       <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
-              {action.tool_name}
-            </h3>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>
+                {action.tool_name}
+              </h3>
+              {stale && (
+                <span 
+                  className="text-xs px-2 py-0.5 rounded-full font-medium"
+                  style={{ 
+                    background: 'var(--warning-muted)', 
+                    color: 'var(--warning)',
+                    border: '1px solid var(--warning)'
+                  }}
+                >
+                  ⏰ Stale (20+ min)
+                </span>
+              )}
+            </div>
             {action.agent_id && (
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 from {action.agent_id}

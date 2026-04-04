@@ -16,21 +16,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Prevent flash of wrong theme */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                const stored = localStorage.getItem('theme');
-                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const theme = stored === 'dark' || (stored === 'system' && prefersDark) || (!stored && prefersDark) ? 'dark' : 'light';
-                if (theme === 'dark') document.documentElement.classList.add('dark');
-              })();
-            `,
-          }}
-        />
-      </head>
+      <head />
       <body className="min-h-screen">
         <ErrorBoundary>
           <ToastProvider>
