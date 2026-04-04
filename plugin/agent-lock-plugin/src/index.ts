@@ -137,6 +137,15 @@ const pending = new Map<string, (d: "approve" | "deny") => void>();
 const authRequiredLogGate = new Map<string, number>();
 const AUTH_REQUIRED_LOG_COOLDOWN_MS = 60_000;
 let activeChannel = PREFERRED_CHANNEL;
+let heartbeatConnectedAnnounced = false;
+let heartbeatAnnouncedChannel = "";
+
+const AUTH_GATED_TOOL_KEYWORDS = ["gmail", "email", "mail", "calendar", "slack", "github", "vault"];
+
+function isAuthGatedTool(toolName: string): boolean {
+    const normalized = (toolName || "").toLowerCase();
+    return AUTH_GATED_TOOL_KEYWORDS.some((kw) => normalized.includes(kw));
+}
 
 function jsonToolResult(payload: unknown) {
     return {
@@ -145,11 +154,29 @@ function jsonToolResult(payload: unknown) {
     };
 }
 
+async function authInfoMessage(toolName: string): Promise<ReturnType<typeof jsonToolResult> | null> {
+    try {
+        const me = await get("/auth/me", undefined, SUBJECT_TOKEN, true) as any;
+        if (Boolean(me?.authenticated)) return null;
+    } catch {
+        // Let tool call continue; backend response will provide detailed error context.
+    }
+    const loginUrl = `${activeBackendUrl}/auth/login?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}`;
+    return jsonToolResult({
+        success: true,
+        requires_login: true,
+        message: `🔵 Debes iniciar sesión antes de ejecutar ${toolName}.`,
+        next_step: "Abre login_url, completa login y vuelve a intentar.",
+        login_url: loginUrl,
+    });
+}
+
 async function post(
     url: string,
     body: unknown,
     customHeaders?: Record<string, string>,
     subjectTokenOverride?: string,
+    cloudOnly: boolean = false,
 ) {
     const start = Date.now();
     const extraAuth = subjectTokenOverride ?? SUBJECT_TOKEN;
@@ -174,8 +201,8 @@ async function post(
         return r;
     };
 
-    const primary = PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL;
-    const secondary = PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL;
+    const primary = cloudOnly ? CLOUD_BACKEND_URL : (PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL);
+    const secondary = cloudOnly ? CLOUD_BACKEND_URL : (PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL);
     try {
         const response = await attempt(primary);
         if (cloudFallbackAnnounced) {
@@ -210,6 +237,7 @@ async function get(
     url: string,
     customHeaders?: Record<string, string>,
     subjectTokenOverride?: string,
+    cloudOnly: boolean = false,
 ) {
     const start = Date.now();
     const extraAuth = subjectTokenOverride ?? SUBJECT_TOKEN;
@@ -225,8 +253,8 @@ async function get(
         return r;
     };
 
-    const primary = PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL;
-    const secondary = PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL;
+    const primary = cloudOnly ? CLOUD_BACKEND_URL : (PREFER_CLOUD ? CLOUD_BACKEND_URL : LOCAL_BACKEND_URL);
+    const secondary = cloudOnly ? CLOUD_BACKEND_URL : (PREFER_CLOUD ? LOCAL_BACKEND_URL : CLOUD_BACKEND_URL);
     try {
         const response = await attempt(primary);
         if (cloudFallbackAnnounced) {
@@ -355,7 +383,7 @@ export default function register(api: any) {
     const sendPluginHeartbeat = async () => {
         if (!DASHBOARD_BRIDGE_TOKEN) return;
         try {
-            await post(`/dashboard/plugin/heartbeat`, {
+            const hb = await post(`/dashboard/plugin/heartbeat`, {
                 token: DASHBOARD_BRIDGE_TOKEN,
                 client_id: CLIENT_LABEL,
                 plugin_version: PLUGIN_VERSION,
@@ -365,7 +393,17 @@ export default function register(api: any) {
                     backend_url: activeBackendUrl,
                 },
             });
+            if (hb?.ok && (!heartbeatConnectedAnnounced || heartbeatAnnouncedChannel !== activeChannel)) {
+                heartbeatConnectedAnnounced = true;
+                heartbeatAnnouncedChannel = activeChannel;
+                log("info", "Dashboard channel connected", {
+                    pairing_id: hb?.pairing_id ?? "unknown",
+                    active_channel: hb?.active_channel ?? activeChannel,
+                    preferred_channel: hb?.preferred_channel ?? PREFERRED_CHANNEL,
+                });
+            }
         } catch (error: any) {
+            heartbeatConnectedAnnounced = false;
             log("debug", "Plugin heartbeat failed", {
                 error: error?.message ?? "unknown",
             });
@@ -373,10 +411,16 @@ export default function register(api: any) {
     };
 
     if (DASHBOARD_BRIDGE_TOKEN) {
+        log("info", "Dashboard channel token detected", {
+            preferred_channel: PREFERRED_CHANNEL,
+            client_label: CLIENT_LABEL,
+        });
         void sendPluginHeartbeat();
         setInterval(() => {
             void sendPluginHeartbeat();
         }, 15000);
+    } else {
+        log("info", "Dashboard channel token missing. Plugin heartbeat pairing is disabled.");
     }
 
     // ── Capture user intent from inbound messages ───────────────────────────
@@ -558,6 +602,8 @@ export default function register(api: any) {
                 const subject = typeof params.subject === "string" ? params.subject : "";
                 const body_text = typeof params.body_text === "string" ? params.body_text : "";
                 log("info", "Gmail send via Token Vault", { to, subject });
+                const authMsg = await authInfoMessage("agent_lock_gmail_send");
+                if (authMsg) return authMsg;
 
                 if (!to || !subject || !body_text) {
                     return jsonToolResult({
@@ -572,7 +618,7 @@ export default function register(api: any) {
                         to,
                         subject,
                         body_text,
-                    });
+                    }, undefined, SUBJECT_TOKEN, true);
 
                     log("info", "Gmail sent successfully", {
                         to,
@@ -630,6 +676,8 @@ export default function register(api: any) {
                 const title = typeof params.title === "string" ? params.title : "";
                 const body = typeof params.body === "string" ? params.body : "";
                 log("info", "GitHub issue creation via Token Vault", { owner, repo });
+                const authMsg = await authInfoMessage("agent_lock_github_create_issue");
+                if (authMsg) return authMsg;
 
                 if (!owner || !repo || !title) {
                     return jsonToolResult({
@@ -645,7 +693,7 @@ export default function register(api: any) {
                         repo,
                         title,
                         body,
-                    });
+                    }, undefined, SUBJECT_TOKEN, true);
 
                     log("info", "GitHub issue created successfully", {
                         issue_url: (response as any).issue_url,
@@ -687,6 +735,8 @@ export default function register(api: any) {
                 const channel = typeof params.channel === "string" ? params.channel : "";
                 const text = typeof params.text === "string" ? params.text : "";
                 log("info", "Slack message via Token Vault", { channel });
+                const authMsg = await authInfoMessage("agent_lock_slack_send");
+                if (authMsg) return authMsg;
 
                 if (!channel || !text) {
                     return jsonToolResult({
@@ -700,7 +750,7 @@ export default function register(api: any) {
                     const response = await post("/vault/slack/messages/send", {
                         channel,
                         text,
-                    });
+                    }, undefined, SUBJECT_TOKEN, true);
 
                     log("info", "Slack message sent successfully", {
                         channel,
@@ -746,6 +796,8 @@ export default function register(api: any) {
                 const end_time = typeof params.end_time === "string" ? params.end_time : "";
                 const description = typeof params.description === "string" ? params.description : "";
                 log("info", "Calendar event creation via Token Vault", { summary });
+                const authMsg = await authInfoMessage("agent_lock_calendar_create");
+                if (authMsg) return authMsg;
 
                 if (!summary || !start_time || !end_time) {
                     return jsonToolResult({
@@ -761,7 +813,7 @@ export default function register(api: any) {
                         start_time,
                         end_time,
                         description,
-                    });
+                    }, undefined, SUBJECT_TOKEN, true);
 
                     log("info", "Calendar event created successfully", {
                         event_link: (response as any).event_link,
@@ -811,6 +863,50 @@ export default function register(api: any) {
             session_key: sessionKey,
             plugin_version: PLUGIN_VERSION,
         });
+
+        // Enforce login-first for user-owned provider tools.
+        // If logged out, trigger AUTH_REQUIRED (login notification flow) and skip approval flow.
+        if (isAuthGatedTool(toolName)) {
+            try {
+                const me = await get("/auth/me", undefined, SUBJECT_TOKEN) as any;
+                const isAuthed = Boolean(me?.authenticated);
+                if (!isAuthed) {
+                    const authRequired = await post(`/intercept`, {
+                        tool_name: toolName,
+                        args,
+                        user_intent: userIntent,
+                        agent_id: "openclaw",
+                        session_key: sessionKey,
+                        raw_command: rawCommand,
+                        subject_token: "",
+                    }, undefined, undefined, true);
+                    const loginUrl =
+                        typeof authRequired?.login_url === "string" && authRequired.login_url.trim().length > 0
+                            ? authRequired.login_url
+                            : `${activeBackendUrl}/auth/login?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}`;
+                    return jsonToolResult({
+                        success: true,
+                        requires_login: true,
+                        message: `🔵 Debes iniciar sesión antes de ejecutar ${toolName}.`,
+                        next_step: "Abre login_url, completa login y vuelve a intentar.",
+                        login_url: loginUrl,
+                    });
+                }
+            } catch (error: any) {
+                const loginUrl = `${activeBackendUrl}/auth/login?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}`;
+                log("warn", "Login precheck failed for auth-gated tool", {
+                    tool_name: toolName,
+                    error: error?.message ?? "unknown",
+                });
+                return jsonToolResult({
+                    success: true,
+                    requires_login: true,
+                    message: `🔵 No pude confirmar tu sesión para ${toolName}.`,
+                    next_step: "Abre login_url, completa login y vuelve a intentar.",
+                    login_url: loginUrl,
+                });
+            }
+        }
 
         let result: any;
         try {
@@ -1064,6 +1160,11 @@ export default function register(api: any) {
     // Version banner in blue + backend info
     logBlue(`version v${PLUGIN_VERSION}`);
     log("info", `🦞 Agent-Lock Plugin v${PLUGIN_VERSION} | Backend: ${activeBackendUrl}`);
+    if (DASHBOARD_BRIDGE_TOKEN) {
+        logBlue(`dashboard channel: ${PREFERRED_CHANNEL} (pairing enabled)`);
+    } else {
+        logBlue("dashboard channel: not linked (no pairing token)");
+    }
     
     // Detailed config in debug mode only
     log("debug", "Plugin configuration", {

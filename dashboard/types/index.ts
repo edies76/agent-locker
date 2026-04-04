@@ -221,6 +221,71 @@ export interface PluginActionsResponse {
   error?: string
 }
 
+export interface RuntimeControls {
+  gemini_analysis_enabled: boolean
+  auto_approve_enabled: boolean
+  auto_approve_tool_allowlist: string[]
+  ws_bridge_enabled: boolean
+}
+
+export interface RuntimeControlsResponse {
+  runtime_controls: RuntimeControls
+  env_ws_bridge_enabled: boolean
+  effective_ws_bridge_enabled: boolean
+}
+
+export interface RuntimeControlsUpdateResponse extends RuntimeControlsResponse {
+  ok: boolean
+  ws_bridge_running?: boolean
+  runtime_ws_bridge_enabled?: boolean
+}
+
+export interface CLICatalogCommandInput {
+  name: string
+  type: "string" | "number" | "boolean"
+  label: string
+  required?: boolean
+}
+
+export interface CLICatalogCommand {
+  id: string
+  family: "plugin" | "mcp"
+  command: string
+  title: string
+  description: string
+  runnable: boolean
+  manual_reason?: string
+  inputs?: CLICatalogCommandInput[]
+}
+
+export interface CLICatalogResponse {
+  commands: CLICatalogCommand[]
+  summary: {
+    total: number
+    runnable: number
+    manual_only: number
+  }
+}
+
+export interface CLIRunPayload {
+  family: "plugin" | "mcp"
+  command: string
+  options?: Record<string, unknown>
+  timeout_seconds?: number
+}
+
+export interface CLIRunResponse {
+  ok: boolean
+  family: "plugin" | "mcp"
+  command: string
+  executed?: string
+  exit_code?: number | null
+  stdout?: string
+  stderr?: string
+  timed_out?: boolean
+  error?: string
+}
+
 export interface AuditLogItem {
   action_id: string
   timestamp: string

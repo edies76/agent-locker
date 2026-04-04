@@ -1,8 +1,16 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { fetchSettings, fetchPolicies, updatePolicies, testTelegram, fetchTokenVaultStatus } from "@/lib/api"
-import { Settings, PoliciesResponse } from "@/types"
+import {
+  fetchSettings,
+  fetchPolicies,
+  updatePolicies,
+  testTelegram,
+  fetchTokenVaultStatus,
+  fetchRuntimeControls,
+  updateRuntimeControls,
+} from "@/lib/api"
+import { Settings, PoliciesResponse, RuntimeControls } from "@/types"
 import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
 import Button from "@/app/components/ui/Button"
 import Input from "@/app/components/ui/Input"
@@ -664,6 +672,290 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
   )
 }
 
+// ─── Runtime Controls Section ───────────────────────────────────────────────────
+function RuntimeControlsSection() {
+  const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
+    gemini_analysis_enabled: true,
+    auto_approve_enabled: true,
+    auto_approve_tool_allowlist: [
+      "agent_lock_respond",
+      "agent_lock_auth_status",
+      "agent_lock_auth_logout",
+      "agent_lock_gmail_send",
+      "agent_lock_github_create_issue",
+      "agent_lock_slack_send",
+      "agent_lock_calendar_create",
+      "mcp__filesystem__*",
+      "mcp__github__*",
+      "mcp__slack__*",
+      "powershell.*",
+    ],
+    ws_bridge_enabled: true,
+  }
+  const { showToast } = useToast()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [controls, setControls] = useState<RuntimeControls>(DEFAULT_RUNTIME_CONTROLS)
+  const [allowlistItems, setAllowlistItems] = useState<Array<{ pattern: string; enabled: boolean }>>([
+    { pattern: "*", enabled: true },
+  ])
+  const [newAllowPattern, setNewAllowPattern] = useState("")
+  const [envWsEnabled, setEnvWsEnabled] = useState(false)
+  const [effectiveWsEnabled, setEffectiveWsEnabled] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const QUICK_ALLOW_PATTERNS = [
+    "agent_lock_*",
+    "agent_lock_auth_*",
+    "agent_lock_gmail_send",
+    "agent_lock_github_create_issue",
+    "agent_lock_slack_send",
+    "agent_lock_calendar_create",
+    "mcp__filesystem__*",
+    "mcp__github__*",
+    "mcp__slack__*",
+    "powershell.*",
+  ]
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchRuntimeControls({ refresh: true })
+      const runtime = data?.runtime_controls
+      if (runtime && Array.isArray(runtime.auto_approve_tool_allowlist)) {
+        const items = (runtime.auto_approve_tool_allowlist ?? ["*"])
+          .map((p) => String(p).trim())
+          .filter(Boolean)
+          .map((pattern) => ({ pattern, enabled: true }))
+        setControls(runtime)
+        setAllowlistItems(items.length ? items : [{ pattern: "*", enabled: true }])
+        setLoadError(null)
+      } else {
+        setControls(DEFAULT_RUNTIME_CONTROLS)
+        setAllowlistItems([{ pattern: "*", enabled: true }])
+        setLoadError("Runtime controls endpoint is unavailable on the connected backend.")
+      }
+      setEnvWsEnabled(Boolean(data?.env_ws_bridge_enabled))
+      setEffectiveWsEnabled(Boolean(data?.effective_ws_bridge_enabled))
+    } catch {
+      setControls(DEFAULT_RUNTIME_CONTROLS)
+      setAllowlistItems([{ pattern: "*", enabled: true }])
+      setLoadError("Could not fetch runtime controls from backend.")
+      showToast({
+        type: "error",
+        title: "Could not load runtime controls",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [showToast])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const updateControl = <K extends keyof RuntimeControls>(key: K, value: RuntimeControls[K]) => {
+    setControls((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const setAllowItemEnabled = (index: number, enabled: boolean) => {
+    setAllowlistItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, enabled } : item))
+    )
+  }
+
+  const setAllowItemPattern = (index: number, pattern: string) => {
+    setAllowlistItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, pattern } : item))
+    )
+  }
+
+  const removeAllowItem = (index: number) => {
+    setAllowlistItems((prev) => {
+      const next = prev.filter((_, i) => i !== index)
+      return next.length ? next : [{ pattern: "*", enabled: true }]
+    })
+  }
+
+  const addAllowItem = () => {
+    const pattern = newAllowPattern.trim()
+    if (!pattern) return
+    setAllowlistItems((prev) => {
+      const idx = prev.findIndex((i) => i.pattern.toLowerCase() === pattern.toLowerCase())
+      if (idx >= 0) {
+        return prev.map((item, i) => (i === idx ? { ...item, enabled: true } : item))
+      }
+      return [...prev, { pattern, enabled: true }]
+    })
+    setNewAllowPattern("")
+  }
+
+  const addQuickPattern = (pattern: string) => {
+    setAllowlistItems((prev) => {
+      const idx = prev.findIndex((i) => i.pattern.toLowerCase() === pattern.toLowerCase())
+      if (idx >= 0) {
+        return prev.map((item, i) => (i === idx ? { ...item, enabled: true } : item))
+      }
+      return [...prev, { pattern, enabled: true }]
+    })
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const allowlist = allowlistItems
+        .filter((item) => item.enabled)
+        .map((item) => item.pattern.trim())
+        .filter(Boolean)
+      const allowlistDeduped = Array.from(new Set(allowlist))
+      const payload = {
+        gemini_analysis_enabled: controls.gemini_analysis_enabled,
+        auto_approve_enabled: controls.auto_approve_enabled,
+        auto_approve_tool_allowlist: allowlistDeduped.length ? allowlistDeduped : ["*"],
+        ws_bridge_enabled: controls.ws_bridge_enabled,
+      }
+      const res = await updateRuntimeControls(payload)
+      setControls(res.runtime_controls)
+      const synced = (res.runtime_controls.auto_approve_tool_allowlist ?? ["*"])
+        .map((pattern) => ({ pattern: String(pattern), enabled: true }))
+      setAllowlistItems(synced.length ? synced : [{ pattern: "*", enabled: true }])
+      setEnvWsEnabled(Boolean(res.env_ws_bridge_enabled))
+      setEffectiveWsEnabled(Boolean(res.effective_ws_bridge_enabled))
+      showToast({ type: "success", title: "Runtime controls updated" })
+    } catch {
+      showToast({
+        type: "error",
+        title: "Failed to update runtime controls",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard title="⚙️ Runtime Controls">
+      {loading ? (
+        <Skeleton className="h-24" />
+      ) : (
+        <div className="space-y-4">
+          {loadError && (
+            <div className="rounded-lg border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
+              {loadError}
+            </div>
+          )}
+          <div className="space-y-3 rounded-lg border border-brand-border bg-brand-bg/40 p-4">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable Gemini analysis</span>
+              <button
+                type="button"
+                className={`switch ${controls.gemini_analysis_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("gemini_analysis_enabled", !controls.gemini_analysis_enabled)}
+                aria-label="Toggle Gemini analysis"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              If disabled, Agent-Lock skips Gemini calls and uses rules-only fallback.
+            </p>
+
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable auto-approve for LOW risk</span>
+              <button
+                type="button"
+                className={`switch ${controls.auto_approve_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("auto_approve_enabled", !controls.auto_approve_enabled)}
+                aria-label="Toggle auto approve"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              If disabled, LOW risk actions are routed to manual approval.
+            </p>
+
+            <div className="space-y-2">
+              <p className="text-sm text-slate-300">Auto-approve allowlist (one by one)</p>
+              {allowlistItems.map((item, index) => (
+                <div key={`${index}-${item.pattern}`} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={`switch ${item.enabled ? "switch-on" : "switch-off"}`}
+                    onClick={() => setAllowItemEnabled(index, !item.enabled)}
+                    aria-label={`Toggle allowlist item ${index + 1}`}
+                  >
+                    <span className="switch-knob" />
+                  </button>
+                  <input
+                    className="input flex-1"
+                    value={item.pattern}
+                    onChange={(e) => setAllowItemPattern(index, e.target.value)}
+                    placeholder="mcp__filesystem__*"
+                  />
+                  <Button size="sm" variant="danger" onClick={() => removeAllowItem(index)}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <input
+                  className="input flex-1"
+                  value={newAllowPattern}
+                  onChange={(e) => setNewAllowPattern(e.target.value)}
+                  placeholder="Add new pattern, e.g. agent_lock_*"
+                />
+                <Button size="sm" variant="secondary" onClick={addAllowItem}>
+                  Add
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_ALLOW_PATTERNS.map((pattern) => (
+                  <button
+                    key={pattern}
+                    type="button"
+                    className="rounded-full border border-brand-border bg-brand-bg/60 px-2.5 py-1 text-xs text-slate-300 hover:bg-brand-bg"
+                    onClick={() => addQuickPattern(pattern)}
+                  >
+                    + {pattern}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                Enabled rows are applied. Disabled rows are ignored until you enable them.
+              </p>
+              <p className="text-xs text-amber-300">
+                Agent-Lock core tools are enforced by backend and will always be present.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable backend WS bridge at runtime</span>
+              <button
+                type="button"
+                className={`switch ${controls.ws_bridge_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("ws_bridge_enabled", !controls.ws_bridge_enabled)}
+                aria-label="Toggle WS bridge"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Requires backend env var <code>WS_BRIDGE_ENABLED=true</code> to be effective.
+            </p>
+            <div className="text-xs text-slate-400">
+              <p>Env WS_BRIDGE_ENABLED: {envWsEnabled ? "enabled" : "disabled"}</p>
+              <p>Effective bridge state: {effectiveWsEnabled ? "enabled" : "disabled"}</p>
+            </div>
+          </div>
+
+          <Button onClick={handleSave} loading={saving}>
+            Save Runtime Controls
+          </Button>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
 // ─── Policies Section ──────────────────────────────────────────────────────────
 function PoliciesSection() {
   const [policies, setPolicies] = useState<PoliciesResponse | null>(null)
@@ -971,6 +1263,7 @@ export default function SettingsPage() {
           <TelegramSection settings={settings} />
           <GeminiSection settings={settings} />
           <Auth0Section settings={settings} />
+          <RuntimeControlsSection />
           <PoliciesSection />
           <ServerSection settings={settings} />
         </div>

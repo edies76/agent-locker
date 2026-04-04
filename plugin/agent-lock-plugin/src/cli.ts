@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import readline from "node:readline";
 import { spawnSync, spawn } from "node:child_process";
 
 type OpenClawConfig = {
@@ -19,6 +20,11 @@ type AgentLockRuntimeConfig = {
   status_poll_ms_max: number;
   log_level: "debug" | "info" | "warn" | "error";
   subject_token?: string;
+  dashboard_bridge_token?: string;
+  preferred_channel?: "agentlock_dashboard" | "whatsapp" | "telegram";
+  available_channels?: string[];
+  client_label?: string;
+  ws_bridge_token?: string; // deprecated alias (kept for backward compatibility)
 };
 const OFFICIAL_BACKEND_URL = "https://agent-lock-backend-api-7.azurewebsites.net";
 const LOCAL_BACKEND_URL = "http://localhost:8000";
@@ -98,6 +104,14 @@ function hasExtensionFiles(): boolean {
   return fs.existsSync(path.join(extDir, "index.js")) && fs.existsSync(path.join(extDir, "openclaw.plugin.json"));
 }
 
+function hasOpenClawCli(): boolean {
+  const result = spawnSync("openclaw", ["--version"], {
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
+  return (result.status ?? 1) === 0;
+}
+
 function registerInOpenClaw(openclawJson: string): void {
   const config = readJson<OpenClawConfig>(openclawJson, {});
 
@@ -168,6 +182,26 @@ function ensureRuntimeConfig(extDir: string): AgentLockRuntimeConfig {
     status_poll_ms_max: typeof current.status_poll_ms_max === "number" ? current.status_poll_ms_max : 2000,
     log_level: (current.log_level as AgentLockRuntimeConfig["log_level"]) ?? "warn",
     subject_token: subjectToken,
+    dashboard_bridge_token:
+      typeof current.dashboard_bridge_token === "string" && current.dashboard_bridge_token.trim()
+        ? current.dashboard_bridge_token.trim()
+        : (typeof current.ws_bridge_token === "string" && current.ws_bridge_token.trim()
+          ? current.ws_bridge_token.trim()
+          : undefined),
+    preferred_channel:
+      (typeof current.preferred_channel === "string" &&
+        ["agentlock_dashboard", "whatsapp", "telegram"].includes(current.preferred_channel))
+        ? (current.preferred_channel as AgentLockRuntimeConfig["preferred_channel"])
+        : "agentlock_dashboard",
+    available_channels:
+      Array.isArray(current.available_channels) && current.available_channels.length > 0
+        ? current.available_channels.map((x) => String(x))
+        : ["agentlock_dashboard", "whatsapp", "telegram"],
+    client_label:
+      typeof current.client_label === "string" && current.client_label.trim()
+        ? current.client_label.trim()
+        : "openclaw",
+    ws_bridge_token: current.ws_bridge_token,
   };
 
   writeRuntimeConfig(extDir, merged);
@@ -511,12 +545,14 @@ function install(): void {
 
   registerInOpenClaw(openclawJson);
   const detected = discoverBackendUrl();
+  const existing = ensureRuntimeConfig(extDir);
   writeRuntimeConfig(extDir, {
+    ...existing,
     backend_url: detected,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
     log_level: "warn",
-    subject_token: `agent-lock-${Date.now()}`,
+    subject_token: existing.subject_token ?? `agent-lock-${Date.now()}`,
   });
 
   log("✅ Agent-Lock installed for OpenClaw");
@@ -546,12 +582,14 @@ function connect(backendUrl?: string): void {
   validateUrl(finalUrl);
 
   registerInOpenClaw(openclawJson);
+  const existing = ensureRuntimeConfig(extDir);
   writeRuntimeConfig(extDir, {
+    ...existing,
     backend_url: finalUrl,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
     log_level: "warn",
-    subject_token: `agent-lock-${Date.now()}`,
+    subject_token: existing.subject_token ?? `agent-lock-${Date.now()}`,
   });
 
   log("✅ Agent-Lock connected");
@@ -573,8 +611,8 @@ async function status(): Promise<void> {
   const cfg = readJson<OpenClawConfig>(openclawJson, {});
   const enabled = cfg.plugins?.entries?.["agent-lock"]?.enabled === true;
   const allowed = (cfg.plugins?.allow ?? []).includes("agent-lock");
-  const runtimePath = path.join(extDir, "agent-lock.config.json");
-  const runtime = readJson<Partial<AgentLockRuntimeConfig>>(runtimePath, {});
+  const runtime = ensureRuntimeConfig(extDir);
+  const dashboardToken = runtime.dashboard_bridge_token ?? runtime.ws_bridge_token;
   const connected = installed && allowed && enabled && Boolean(runtime.backend_url);
 
   log(`installed: ${installed}`);
@@ -584,6 +622,8 @@ async function status(): Promise<void> {
   log(`config:    ${openclawJson}`);
   log(`backend:   ${runtime.backend_url ?? "(not configured)"}`);
   log(`strategy:  local (${LOCAL_BACKEND_URL}) -> cloud fallback`);
+  log(`channel:   ${runtime.preferred_channel ?? "agentlock_dashboard"}`);
+  log(`dashboard_pairing_token: ${dashboardToken ? "(set)" : "(not set)"}`);
   log(`connected: ${connected}`);
 
   // Check authentication status if backend is configured
@@ -593,11 +633,7 @@ async function status(): Promise<void> {
       if (process.env.DEBUG) {
         console.error(`Checking auth: ${runtime.backend_url}/auth/me with token ${runtime.subject_token.substring(0, 20)}...`);
       }
-      const data = await backendRequest(
-        runtime as AgentLockRuntimeConfig,
-        "/auth/me",
-        "GET"
-      );
+      const data = await backendRequest(runtime, "/auth/me", "GET");
       if (process.env.DEBUG) {
         console.error("Auth response:", JSON.stringify(data));
       }
@@ -615,6 +651,17 @@ async function status(): Promise<void> {
   }
 
   log(`authenticated: ${authenticated}`);
+
+  let dashboardChannelConnected = false;
+  if (runtime.backend_url && dashboardToken) {
+    try {
+      const pluginStatus = await backendGet(runtime, "/dashboard/plugin/status");
+      dashboardChannelConnected = Boolean(pluginStatus?.connected);
+    } catch {
+      dashboardChannelConnected = false;
+    }
+  }
+  log(`dashboard_channel_connected: ${dashboardChannelConnected}`);
 
   if (connected && authenticated) {
     log("");
@@ -670,8 +717,30 @@ async function login(): Promise<void> {
 async function authStatus(): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
+  
+  // Force use of configured backend (no fallback to local)
+  const base = normalizeBaseUrl(runtime.backend_url);
+  const url = `${base}/auth/me`;
+  const headers: Record<string, string> = {};
+  if (runtime.subject_token) {
+    headers.Authorization = `Bearer ${runtime.subject_token}`;
+  }
+  
   try {
-    const me = await backendGet(runtime, "/auth/me");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const res = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+    
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+    
+    const me = JSON.parse(text);
     const authenticated = Boolean(me?.authenticated);
     const sub = typeof me?.sub === "string" ? me.sub : "(none)";
     const email = typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)";
@@ -695,13 +764,18 @@ async function logoutCmd(): Promise<void> {
   }
   const results: string[] = [];
   let success = false;
+  let auth0LogoutUrl: string | null = null;
 
   for (const target of targets) {
     const targetRuntime: AgentLockRuntimeConfig = { ...runtime, backend_url: target };
     try {
-      await backendPost(targetRuntime, "/auth/logout", {});
+      const resp = await backendPost(targetRuntime, "/auth/logout", {});
       results.push(`ok:${target}`);
       success = true;
+      // Get Auth0 logout URL from first successful response
+      if (!auth0LogoutUrl && resp && typeof resp === 'object' && 'auth0_logout_url' in resp) {
+        auth0LogoutUrl = (resp as any).auth0_logout_url;
+      }
       continue;
     } catch (error) {
       try {
@@ -718,6 +792,16 @@ async function logoutCmd(): Promise<void> {
   if (success) {
     log("✅ Agent-Lock logged out");
     log(`targets: ${results.join(" | ")}`);
+    
+    // Open Auth0 logout to clear browser session too
+    if (auth0LogoutUrl) {
+      log("Cerrando sesión en Auth0...");
+      const opened = openUrlInBrowser(auth0LogoutUrl);
+      if (!opened) {
+        log(`Abre este link para completar logout: ${auth0LogoutUrl}`);
+      }
+    }
+    
     log("Next protected action should require login again.");
     return;
   }
@@ -727,6 +811,156 @@ async function logoutCmd(): Promise<void> {
 
 async function cloudLogoutCmd(): Promise<void> {
   await logoutCmd();
+}
+
+async function connectWsCmd(token?: string): Promise<void> {
+  log("⚠️ connect-ws is deprecated. Use: agent-lock connect-channel");
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+
+  if (token) {
+    runtime.dashboard_bridge_token = token.trim();
+    runtime.ws_bridge_token = token.trim();
+    runtime.preferred_channel = "agentlock_dashboard";
+    runtime.available_channels = ["agentlock_dashboard", "whatsapp", "telegram"];
+    runtime.client_label = "openclaw";
+    writeRuntimeConfig(extDir, runtime);
+    log(`✅ Dashboard channel token saved.`);
+    return;
+  }
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise<void>((resolve) => {
+    rl.question("🔑 Paste dashboard pairing token: ", (answer: string) => {
+      rl.close();
+      if (!answer.trim()) {
+        fail("❌ Token inválido o vacío.");
+      }
+      runtime.dashboard_bridge_token = answer.trim();
+      runtime.ws_bridge_token = answer.trim();
+      runtime.preferred_channel = "agentlock_dashboard";
+      runtime.available_channels = ["agentlock_dashboard", "whatsapp", "telegram"];
+      runtime.client_label = "openclaw";
+      writeRuntimeConfig(extDir, runtime);
+      log(`✅ Dashboard channel token saved.`);
+      resolve();
+    });
+  });
+}
+
+function parseConnectChannelToken(argv: string[]): string | undefined {
+  const args = argv.slice(3);
+  if (args.length === 0) return undefined;
+  if (args[0] === "--token") {
+    const value = args[1]?.trim();
+    if (!value) {
+      fail("Missing value for --token. Usage: agent-lock connect-channel --token <TOKEN>");
+    }
+    return value;
+  }
+  return args[0].trim() || undefined;
+}
+
+function askForInput(question: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve((answer ?? "").trim());
+    });
+  });
+}
+
+async function connectChannel(tokenArg?: string): Promise<void> {
+  const { extDir } = getInstallPaths();
+
+  log("🔗 Agent-Lock connect-channel");
+
+  if (!hasOpenClawCli()) {
+    fail("OpenClaw CLI not found. Install OpenClaw first, then retry.");
+  }
+  log("✅ OpenClaw CLI detected");
+
+  if (!hasExtensionFiles() || !isRegisteredInOpenClaw()) {
+    fail("Agent-Lock plugin is not fully installed/configured in OpenClaw. Run: agent-lock install");
+  }
+  log("✅ Agent-Lock plugin installation detected");
+
+  const runtime = ensureRuntimeConfig(extDir);
+
+  let token = tokenArg?.trim();
+  if (!token) {
+    token = await askForInput("🔑 Paste dashboard pairing token: ");
+  }
+  if (!token) {
+    fail("Invalid token: empty value.");
+  }
+
+  runtime.dashboard_bridge_token = token;
+  runtime.ws_bridge_token = token; // compatibility alias
+  runtime.preferred_channel = "agentlock_dashboard";
+  runtime.available_channels = ["agentlock_dashboard", "whatsapp", "telegram"];
+  runtime.client_label = "openclaw";
+  writeRuntimeConfig(extDir, runtime);
+  log("✅ Token and dashboard channel config saved");
+
+  try {
+    const hb = await backendPost(runtime, "/dashboard/plugin/heartbeat", {
+      token,
+      client_id: runtime.client_label ?? "openclaw",
+      plugin_version: getExtensionInstalledVersion() ?? "unknown",
+      available_channels: runtime.available_channels ?? ["agentlock_dashboard", "whatsapp", "telegram"],
+      active_channel: runtime.preferred_channel ?? "agentlock_dashboard",
+      metadata: {
+        source: "agent-lock connect-channel",
+        backend_url: runtime.backend_url,
+      },
+    });
+
+    if (!hb?.ok) {
+      fail(`Token not accepted by backend: ${hb?.error ?? "unknown error"}`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    fail(`Could not validate pairing token with backend: ${msg}`);
+  }
+
+  let dashboardConnected = false;
+  try {
+    const status = await backendGet(runtime, "/dashboard/plugin/status");
+    dashboardConnected = Boolean(status?.connected);
+  } catch {
+    dashboardConnected = false;
+  }
+
+  log("");
+  log("🎉 Dashboard channel linked.");
+  log("   channel: agentlock_dashboard");
+  log(`   dashboard_connected: ${dashboardConnected}`);
+  log("Next step:");
+  log("  openclaw gateway restart");
+}
+
+function parseConnectWsToken(argv: string[]): string | undefined {
+  const args = argv.slice(3);
+  if (args.length === 0) return undefined;
+
+  if (args[0] === "--token") {
+    const value = args[1]?.trim();
+    if (!value) {
+      fail("Missing value for --token. Usage: agent-lock connect-ws --token <TOKEN>");
+    }
+    return value;
+  }
+
+  return args[0].trim() || undefined;
 }
 
 function uninstall(): void {
@@ -751,6 +985,8 @@ function usage(): void {
   log("Commands:");
   log("  install   Install plugin and auto-connect to official backend");
   log("  connect   Re-connect to official backend");
+  log("  connect-channel  Pair OpenClaw with Dashboard channel using pairing token");
+  log("  connect-ws Set token for dashboard channel (deprecated alias)");
   log("  status    Show installation status");
   log("  restart   Restart OpenClaw gateway");
   log("  uninstall Remove plugin from OpenClaw");
@@ -763,6 +999,7 @@ function usage(): void {
   log("Examples:");
   log("  agent-lock install");
   log("  agent-lock connect");
+  log("  agent-lock connect-channel --token <PAIRING_TOKEN>");
   log("  agent-lock restart");
   log("  agent-lock uninstall");
   log("  agent-lock update");
@@ -790,6 +1027,16 @@ async function main(): Promise<void> {
   if (cmd === "connect") {
     const backendUrl = process.argv[3];
     connect(backendUrl);
+    return;
+  }
+  if (cmd === "connect-channel") {
+    const token = parseConnectChannelToken(process.argv);
+    await connectChannel(token);
+    return;
+  }
+  if (cmd === "connect-ws") {
+    const token = parseConnectWsToken(process.argv);
+    await connectWsCmd(token);
     return;
   }
   if (cmd === "restart") {

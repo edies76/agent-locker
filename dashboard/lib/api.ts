@@ -1,5 +1,12 @@
 import { cachedFetch, apiCache } from "./cache"
 import { resolveBackendEndpoint, getLastBackendResolution } from "./backendEndpoint"
+import type {
+  CLICatalogResponse,
+  CLIRunPayload,
+  CLIRunResponse,
+  RuntimeControlsResponse,
+  RuntimeControlsUpdateResponse,
+} from "@/types"
 
 async function buildUrl(path: string): Promise<string> {
   const { baseUrl } = await resolveBackendEndpoint()
@@ -172,6 +179,47 @@ export async function fetchSettings() {
   return cachedFromPath(`/settings`, {
     ttl: 30000, // 30s cache - settings rarely change
   })
+}
+
+export async function fetchRuntimeControls(options?: { refresh?: boolean }) {
+  return cachedFromPath<RuntimeControlsResponse>(`/settings/runtime-controls`, {
+    ttl: 5000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function updateRuntimeControls(body: {
+  gemini_analysis_enabled?: boolean
+  auto_approve_enabled?: boolean
+  auto_approve_tool_allowlist?: string[]
+  ws_bridge_enabled?: boolean
+}) {
+  const base = await buildUrl("")
+  const res = await fetch(`${base}/settings/runtime-controls`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  apiCache.invalidatePattern("/settings")
+  apiCache.invalidatePattern("/settings/runtime-controls")
+  return (await res.json()) as RuntimeControlsUpdateResponse
+}
+
+export async function fetchCLICatalog(options?: { refresh?: boolean }) {
+  return cachedFromPath<CLICatalogResponse>(`/dashboard/cli/catalog`, {
+    ttl: 10000,
+    refresh: options?.refresh,
+  })
+}
+
+export async function runCLICommand(body: CLIRunPayload) {
+  const base = await buildUrl("")
+  const res = await fetch(`${base}/dashboard/cli/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  return (await res.json()) as CLIRunResponse
 }
 
 export async function fetchPolicies() {
