@@ -213,8 +213,14 @@ export default function ApprovalsPage() {
   }, [recentDecisions])
 
   useEffect(() => {
-    loadPending()
-    const interval = setInterval(loadPending, 3000)
+    const syncPending = async () => {
+      await loadPending()
+    }
+
+    void syncPending()
+    const interval = setInterval(() => {
+      void syncPending()
+    }, 3000)
     return () => clearInterval(interval)
   }, [loadPending])
 

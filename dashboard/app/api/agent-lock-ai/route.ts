@@ -18,7 +18,7 @@ type KeyResolution = {
 const AGENT_LOCK_PRIMER = [
   "Agent-Lock has separate integration surfaces:",
   "- MCP Gateway: local mcp_server that proxies MCP tool calls and enforces governance.",
-  "- Plugin integrations: separate adapters (for example OpenClaw plugin).",
+  "- Plugin integrations: separate adapters (for example the plugin bridge).",
   "Do not claim plugin status when only MCP gateway telemetry is available.",
   "If plugin telemetry is missing, explicitly say 'plugin status unavailable' instead of guessing.",
   "Ground all diagnostics in provided context fields (health, mcp_status, mcp_targets, mcp_diagnostics, stats, pending).",
@@ -96,7 +96,7 @@ function extractGeminiText(payload: any): string {
     if (text) return text
   }
 
-  return "No se pudo obtener respuesta del modelo Gemini en un formato esperado."
+  return "Could not read a Gemini response in the expected format."
 }
 
 function createGeminiTextStream(source: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
@@ -119,7 +119,7 @@ function createGeminiTextStream(source: ReadableStream<Uint8Array>): ReadableStr
         try {
           const parsed = JSON.parse(payload)
           const fullText = extractGeminiText(parsed)
-          if (!fullText || /No se pudo obtener respuesta del modelo Gemini/i.test(fullText)) {
+          if (!fullText || /Could not read a Gemini response in the expected format/i.test(fullText)) {
             return
           }
 

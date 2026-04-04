@@ -27,8 +27,8 @@ function BackendConnectionNotice() {
       if (res.source === "cloud") {
         showToast({
           type: "warning",
-          title: "Backend local no disponible",
-          message: "Conectado a la nube (Azure) como fallback.",
+          title: "Local backend unavailable",
+          message: "Connected to the cloud backend (Azure) as a fallback.",
           duration: 7000,
         })
       }
@@ -36,8 +36,8 @@ function BackendConnectionNotice() {
       if (res.source === "local") {
         showToast({
           type: "success",
-          title: "Backend local activo",
-          message: "Se restauro la conexion local con prioridad.",
+          title: "Local backend restored",
+          message: "Local connectivity has been restored as the preferred path.",
           duration: 4000,
         })
       }
@@ -64,7 +64,7 @@ function BackendConnectionNotice() {
 
   return (
     <div className="fixed top-4 right-4 z-40 rounded-md border border-amber-700/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-100 shadow-lg backdrop-blur-sm">
-      Modo fallback: conectado al backend en la nube.
+      Fallback mode: connected to the cloud backend.
     </div>
   )
 }

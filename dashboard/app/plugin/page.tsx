@@ -191,8 +191,8 @@ export default function PluginPage() {
         id: "welcome",
         type: "system",
         content: connected
-          ? "OpenClaw paired. You can review plugin actions and chat from this panel."
-          : "Generate a pairing token, put it in OpenClaw Agent-Lock config, and heartbeat will connect here.",
+          ? "Plugin bridge connected. You can review plugin actions and chat from this panel."
+          : "Generate a pairing token, add it to the plugin bridge config, and heartbeat will connect here.",
         timestamp: new Date(),
       },
     ])
@@ -314,7 +314,7 @@ export default function PluginPage() {
     setCreatingToken(true)
     try {
       const res = await createPluginPairing({
-        label: "OpenClaw",
+        label: "Plugin Bridge",
         preferred_channel: preferredChannel,
       })
       if (!res?.ok || !res?.pairing?.token) {
@@ -412,8 +412,8 @@ export default function PluginPage() {
     if (!connected) {
       showToast({
         type: "info",
-        title: "OpenClaw not connected",
-        message: "Connect OpenClaw first to use direct dashboard chat.",
+        title: "Plugin bridge not connected",
+        message: "Connect the plugin bridge first to use direct dashboard chat.",
       })
       return
     }
@@ -466,11 +466,36 @@ export default function PluginPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title">OpenClaw Plugin Console</h1>
-          <p className="page-subtitle">Plugin state, recent plugin actions, approvals, and direct chat</p>
+      <Card padding="md" className="border-[var(--border-primary)] bg-[var(--bg-elevated)]">
+        <div className="grid gap-4 lg:grid-cols-[1.3fr_0.9fr] lg:items-center">
+          <div className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--text-muted)]">Plugin workflow</p>
+            <h1 className="page-title">Plugin Console</h1>
+            <p className="page-subtitle">
+              Create a pairing token, connect the bridge, and review approvals or chat in one place.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {[
+              { step: "1", title: "Pair", copy: "Generate a token and connect the bridge." },
+              { step: "2", title: "Review", copy: "Approve or reject sensitive actions." },
+              { step: "3", title: "Chat", copy: "Talk to the assistant from the same surface." },
+            ].map((item) => (
+              <div key={item.step} className="rounded-xl border border-[var(--border-primary)] bg-[var(--bg-secondary)] p-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--accent-primary)] text-xs font-semibold text-white">
+                    {item.step}
+                  </span>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">{item.title}</p>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">{item.copy}</p>
+              </div>
+            ))}
+          </div>
         </div>
+      </Card>
+
+      <div className="flex items-center justify-between">
         <Link href="/settings" className="inline-flex">
           <Button variant="secondary" size="sm">Advanced Settings</Button>
         </Link>
@@ -512,7 +537,7 @@ export default function PluginPage() {
 
         <Card padding="md" className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Pair OpenClaw + Choose Channel</h3>
+            <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Create pairing + choose channel</h3>
             {connected ? <Badge variant="success">Paired</Badge> : <Badge variant="neutral">Not Paired</Badge>}
           </div>
 
@@ -525,7 +550,7 @@ export default function PluginPage() {
               onChange={(e) => setPreferredChannel(e.target.value as PreferredChannel)}
               className="input w-full"
             >
-              <option value="agentlock_dashboard">AgentLock Dashboard</option>
+              <option value="agentlock_dashboard">Dashboard control channel</option>
               <option value="whatsapp">WhatsApp</option>
               <option value="telegram">Telegram</option>
             </select>
@@ -541,7 +566,7 @@ export default function PluginPage() {
             <p className="mb-2" style={{ color: "var(--text-muted)" }}>
               Cloud-first setup: no local backend commands needed for end users.
             </p>
-            <p style={{ color: "var(--text-muted)" }}>Connection token (paste into OpenClaw Agent-Lock config):</p>
+            <p style={{ color: "var(--text-muted)" }}>Connection token for the plugin bridge:</p>
             <p className="mt-1 break-all font-mono" style={{ color: "var(--text-primary)" }}>
               {latestToken || "Generate a token first"}
             </p>
@@ -622,7 +647,7 @@ export default function PluginPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={connected ? "Type your message..." : "Connect OpenClaw first to chat from this panel"}
+                placeholder={connected ? "Type your message..." : "Connect the plugin bridge first to chat from this panel"}
                 rows={1}
                 className="input flex-1 resize-none"
                 style={{ minHeight: "42px", maxHeight: "120px" }}
@@ -633,7 +658,7 @@ export default function PluginPage() {
               </Button>
             </div>
             <p className="mt-2 text-xs" style={{ color: "var(--text-muted)" }}>
-              Enter to send, Shift+Enter for new line · Routed through OpenClaw Gateway WS
+              Enter to send, Shift+Enter for new line · Routed through plugin gateway WS
             </p>
           </div>
         </Card>

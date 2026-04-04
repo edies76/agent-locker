@@ -23,7 +23,7 @@ export default function TrendChart({
   unit = '',
 }: TrendChartProps) {
   const width = 600
-  const padding = { top: 20, right: 20, bottom: 30, left: 50 }
+  const padding = useMemo(() => ({ top: 20, right: 20, bottom: 30, left: 50 }), [])
 
   const { linePath, areaPath, minValue, maxValue, labels } = useMemo(() => {
     if (data.length === 0) {
@@ -42,17 +42,17 @@ export default function TrendChart({
     const timestamps = data.map(d => d.timestamp)
     const minTime = Math.min(...timestamps)
     const maxTime = Math.max(...timestamps)
-    const hoursAgo = (Date.now() - minTime) / (1000 * 60 * 60)
+    const timeSpanHours = (maxTime - minTime) / (1000 * 60 * 60)
 
     const labels = [
-      { x: padding.left, label: formatTimeLabel(minTime, hoursAgo) },
+      { x: padding.left, label: formatTimeLabel(minTime, timeSpanHours) },
       {
         x: padding.left + (width - padding.left - padding.right) / 2,
-        label: formatTimeLabel((minTime + maxTime) / 2, hoursAgo),
+        label: formatTimeLabel((minTime + maxTime) / 2, timeSpanHours),
       },
       {
         x: width - padding.right,
-        label: formatTimeLabel(maxTime, hoursAgo),
+        label: formatTimeLabel(maxTime, timeSpanHours),
       },
     ]
 

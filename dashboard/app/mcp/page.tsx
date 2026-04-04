@@ -53,7 +53,7 @@ export default function MCPMonitorPage() {
       setDiagnostics(diagnosticsData as MCPDiagnostics)
       setError(null)
     } catch {
-      setError("No se pudo cargar el monitor MCP")
+      setError("Could not load the MCP monitor")
     } finally {
       setLoading(false)
     }
@@ -151,16 +151,16 @@ export default function MCPMonitorPage() {
       <section className="glass-panel rounded-2xl border px-4 py-4 md:px-6 md:py-5">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">MCP Clarity Board</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-cyan-300">MCP Gateway Monitor</p>
             <h1 className="text-2xl md:text-3xl font-semibold text-white mt-1">
-              Estado, Topologia y Diagnostico
+              Status, topology, and diagnostics
             </h1>
             <p className="text-sm text-slate-300/85 mt-1">
-              Mapa de servidores MCP, latencias y salud operativa en tiempo real.
+              Real-time view of connected servers, timing data, and gateway health.
             </p>
           </div>
           <button onClick={load} className="btn-glow rounded-lg px-4 py-2 text-sm font-semibold w-full md:w-auto">
-            Refrescar monitor
+            Refresh monitor
           </button>
         </div>
       </section>
@@ -178,7 +178,7 @@ export default function MCPMonitorPage() {
           <p className="text-xs text-slate-400 mt-1">Last seen {timeAgo(status?.seconds_ago ?? null)}</p>
         </div>
         <div className="glass-panel rounded-xl border p-4">
-          <p className="text-xs uppercase tracking-wider text-slate-400">MCP conectados</p>
+          <p className="text-xs uppercase tracking-wider text-slate-400">Connected MCP servers</p>
           <p className="text-2xl font-semibold text-white mt-1">{connectedServers.length}</p>
         </div>
         <div className="glass-panel rounded-xl border p-4">
@@ -198,15 +198,15 @@ export default function MCPMonitorPage() {
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="glass-panel rounded-xl border overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">Topologia MCP</h2>
+            <h2 className="text-sm font-semibold text-slate-100">MCP topology</h2>
             <span className="text-xs text-slate-400">
               {targets?.configured_count ?? 0} configurados / {targets?.connected_count ?? 0} online
             </span>
           </div>
           {loading ? (
-            <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
+            <div className="px-4 py-5 text-sm text-slate-400">Loading...</div>
           ) : topology.length === 0 ? (
-            <div className="px-4 py-5 text-sm text-slate-400">No hay servidores configurados.</div>
+            <div className="px-4 py-5 text-sm text-slate-400">No servers configured yet.</div>
           ) : (
             <div className="p-4 space-y-3">
               {topology.map((s) => (
@@ -247,7 +247,7 @@ export default function MCPMonitorPage() {
 
         <div className="glass-panel rounded-xl border overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">Diagnostico de conexion</h2>
+            <h2 className="text-sm font-semibold text-slate-100">Connection diagnostics</h2>
             <span
               className={`text-xs font-semibold ${
                 diagnostics?.healthy ? "text-emerald-300" : "text-amber-300"
@@ -258,7 +258,7 @@ export default function MCPMonitorPage() {
           </div>
           <div className="p-4 space-y-4">
             <div>
-              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Causa exacta</p>
+              <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Exact cause</p>
               <div className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-3 py-3">
                 <p className="text-xs text-cyan-200 font-mono">
                   {(diagnostics?.root_cause_code || "UNKNOWN").toUpperCase()}
@@ -267,14 +267,14 @@ export default function MCPMonitorPage() {
                   {diagnostics?.root_cause_message || "No diagnostic summary available."}
                 </p>
                 <p className="text-xs text-slate-300 mt-2">
-                  Siguiente paso: {diagnostics?.next_step || "Review MCP warnings and backend logs."}
+                  Next step: {diagnostics?.next_step || "Review MCP warnings and backend logs."}
                 </p>
               </div>
             </div>
 
             {!!diagnostics?.disconnected_details?.length && (
               <div>
-                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Targets desconectados</p>
+                <p className="text-xs uppercase tracking-wider text-slate-500 mb-2">Disconnected targets</p>
                 <ul className="space-y-2">
                   {diagnostics.disconnected_details.map((item) => (
                     <li
@@ -353,11 +353,11 @@ export default function MCPMonitorPage() {
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div className="glass-panel rounded-xl border overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">Latencia por servidor</h2>
-            <span className="text-xs text-slate-400">ultimas muestras</span>
+            <h2 className="text-sm font-semibold text-slate-100">Latency by server</h2>
+            <span className="text-xs text-slate-400">latest samples</span>
           </div>
           {loading ? (
-            <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
+            <div className="px-4 py-5 text-sm text-slate-400">Loading...</div>
           ) : (
             <div className="divide-y divide-slate-700/30">
               {byServer.map((row) => (
@@ -375,13 +375,13 @@ export default function MCPMonitorPage() {
 
         <div className="glass-panel rounded-xl border overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">Top tools por duracion</h2>
-            <span className="text-xs text-slate-400">ultimas muestras</span>
+            <h2 className="text-sm font-semibold text-slate-100">Top tools by duration</h2>
+            <span className="text-xs text-slate-400">latest samples</span>
           </div>
           {loading ? (
-            <div className="px-4 py-5 text-sm text-slate-400">Cargando...</div>
+            <div className="px-4 py-5 text-sm text-slate-400">Loading...</div>
           ) : byTool.length === 0 ? (
-            <div className="px-4 py-5 text-sm text-slate-400">Sin muestras suficientes con timing.</div>
+            <div className="px-4 py-5 text-sm text-slate-400">Not enough timing samples yet.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
