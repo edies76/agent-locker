@@ -14,3 +14,8 @@ coverage/
 dashboard/.next/
 backend/
 dashboard/.env.local
+
+# Deployment artifacts
+dashboard/standalone/
+deploy-temp/
+dashboard-deploy.zip
