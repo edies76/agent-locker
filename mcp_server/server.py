@@ -81,26 +81,59 @@ logger = logging.getLogger("agent-lock.mcp.server")
 #
 #  Both strategies write to _last_user_intent. The validator reads it per call.
 _last_user_intent: str = ""
+_last_user_intent_updated_monotonic: float = 0.0
+_INTENT_MAX_AGE_SECONDS = 180.0
 
 
 def _update_intent(text: str) -> None:
     """Store a new user intent, trimmed and truncated to 500 chars."""
-    global _last_user_intent
+    global _last_user_intent, _last_user_intent_updated_monotonic
     text = text.strip()[:500]
-    if text and text != _last_user_intent:
-        _last_user_intent = text
-        logger.info(f"📝 User intent updated: '{text[:80]}'")
+    if not text:
+        return
+
+    _last_user_intent = text
+    _last_user_intent_updated_monotonic = time.monotonic()
+    logger.info(f"📝 User intent updated: '{text[:80]}'")
 
 
-def _extract_intent_from_args(args: dict[str, Any]) -> dict[str, Any]:
+def _extract_intent_from_args(args: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """
     Strip the hidden '__user_intent' key from args if Claude injected it,
-    update the global intent store, and return the cleaned args dict.
+    and return (cleaned_args, extracted_intent).
     """
     intent = args.pop("__user_intent", None)
     if intent and isinstance(intent, str):
+        intent = intent.strip()[:500]
+        if intent:
+            return args, intent
+    return args, ""
+
+
+def _get_recent_intent(max_age_seconds: float = _INTENT_MAX_AGE_SECONDS) -> str:
+    """Return cached intent only if it is recent enough for this tool call."""
+    if not _last_user_intent:
+        return ""
+    age = time.monotonic() - _last_user_intent_updated_monotonic
+    if age <= max_age_seconds:
+        return _last_user_intent
+    return ""
+
+
+def _resolve_effective_intent(explicit_intent: str) -> str:
+    """
+    Resolve intent for one validation call.
+
+    Priority:
+    1) explicit per-call intent (hidden arg or HTTP parameter)
+    2) recent cached intent (sampling or previous explicit call)
+    3) empty string (validator will synthesize from tool args)
+    """
+    intent = (explicit_intent or "").strip()[:500]
+    if intent:
         _update_intent(intent)
-    return args
+        return intent
+    return _get_recent_intent()
 
 
 # Separator between server name and tool name in the MCP tool namespace
@@ -533,7 +566,7 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
         logger.info(f"call_tool: {name}  args_keys={list(args.keys())}")
 
         # ── Strategy 2: extract hidden __user_intent from args ────────────────
-        args = _extract_intent_from_args(args)
+        args, intent_from_args = _extract_intent_from_args(args)
 
         # ── Management tools ──────────────────────────────────────────────────
         if name.startswith(MGMT_PREFIX):
@@ -658,10 +691,12 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
         if server_name.lower() == "vscode":
             args = _normalize_vscode_args(args)
 
+        effective_user_intent = _resolve_effective_intent(intent_from_args)
+
         # ── 1. Validate via backend (risk + optional Telegram approval) ───────
         logger.info(
             f"Validating {server_name}.{tool_name} ... "
-            f"| intent='{_last_user_intent[:60]}'"
+            f"| intent='{effective_user_intent[:60] or '(derived by validator)'}'"
         )
         validate_start = time.perf_counter()
         validation = await validate_and_wait(
@@ -669,7 +704,7 @@ def _build_server(config: AgentLockMCPConfig, proxy: ToolProxy) -> Server:
             tool_name=tool_name,
             arguments=args,
             config=config,
-            user_intent=_last_user_intent,  # ← pass captured intent to backend
+            user_intent=effective_user_intent,
         )
         validation_ms = round((time.perf_counter() - validate_start) * 1000.0, 2)
 
@@ -1038,12 +1073,12 @@ def _run_http(config: AgentLockMCPConfig, port: int) -> None:
         """Execute a tool on a target MCP server after Agent-Lock validation."""
         from .validator import validate_and_wait as _vaw
 
-        if user_intent:
-            _update_intent(user_intent)
+        clean_args, intent_from_args = _extract_intent_from_args(arguments or {})
+        effective_user_intent = _resolve_effective_intent(user_intent or intent_from_args)
 
         validation = await _vaw(
-            server_name, tool_name, arguments, config,
-            user_intent=_last_user_intent,
+            server_name, tool_name, clean_args, config,
+            user_intent=effective_user_intent,
         )
         if validation["decision"] != "approved":
             return {
@@ -1052,7 +1087,7 @@ def _run_http(config: AgentLockMCPConfig, port: int) -> None:
                 "risk_level": validation.get("risk_level"),
                 "reason": validation.get("reason"),
             }
-        result = await proxy.execute_tool(server_name, tool_name, arguments)
+        result = await proxy.execute_tool(server_name, tool_name, clean_args)
         return result
 
     @fmcp.tool()

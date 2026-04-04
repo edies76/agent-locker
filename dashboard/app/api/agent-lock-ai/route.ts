@@ -18,7 +18,7 @@ type KeyResolution = {
 const AGENT_LOCK_PRIMER = [
   "Agent-Lock has separate integration surfaces:",
   "- MCP Gateway: local mcp_server that proxies MCP tool calls and enforces governance.",
-  "- Plugin integrations: separate adapters (for example the plugin bridge).",
+  "- Plugin integrations: separate adapters (for example the OpenClaw plugin).",
   "Do not claim plugin status when only MCP gateway telemetry is available.",
   "If plugin telemetry is missing, explicitly say 'plugin status unavailable' instead of guessing.",
   "Ground all diagnostics in provided context fields (health, mcp_status, mcp_targets, mcp_diagnostics, stats, pending).",

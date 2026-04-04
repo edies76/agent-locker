@@ -191,8 +191,8 @@ export default function PluginPage() {
         id: "welcome",
         type: "system",
         content: connected
-          ? "Plugin bridge connected. You can review plugin actions and chat from this panel."
-          : "Generate a pairing token, add it to the plugin bridge config, and heartbeat will connect here.",
+          ? "OpenClaw plugin connected. You can review plugin actions and chat from this panel."
+          : "Generate a pairing token, add it to the OpenClaw plugin config, and heartbeat will connect here.",
         timestamp: new Date(),
       },
     ])
@@ -314,7 +314,7 @@ export default function PluginPage() {
     setCreatingToken(true)
     try {
       const res = await createPluginPairing({
-        label: "Plugin Bridge",
+        label: "OpenClaw Plugin",
         preferred_channel: preferredChannel,
       })
       if (!res?.ok || !res?.pairing?.token) {
@@ -412,8 +412,8 @@ export default function PluginPage() {
     if (!connected) {
       showToast({
         type: "info",
-        title: "Plugin bridge not connected",
-        message: "Connect the plugin bridge first to use direct dashboard chat.",
+        title: "OpenClaw plugin not connected",
+        message: "Connect the OpenClaw plugin first to use direct dashboard chat.",
       })
       return
     }
@@ -566,7 +566,7 @@ export default function PluginPage() {
             <p className="mb-2" style={{ color: "var(--text-muted)" }}>
               Cloud-first setup: no local backend commands needed for end users.
             </p>
-            <p style={{ color: "var(--text-muted)" }}>Connection token for the plugin bridge:</p>
+            <p style={{ color: "var(--text-muted)" }}>Connection token for the OpenClaw plugin:</p>
             <p className="mt-1 break-all font-mono" style={{ color: "var(--text-primary)" }}>
               {latestToken || "Generate a token first"}
             </p>
@@ -647,7 +647,7 @@ export default function PluginPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={connected ? "Type your message..." : "Connect the plugin bridge first to chat from this panel"}
+                placeholder={connected ? "Type your message..." : "Connect the OpenClaw plugin first to chat from this panel"}
                 rows={1}
                 className="input flex-1 resize-none"
                 style={{ minHeight: "42px", maxHeight: "120px" }}

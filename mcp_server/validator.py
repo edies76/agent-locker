@@ -41,6 +41,58 @@ _DEFAULT_TIMEOUT: float = 300.0  # 5 minutes
 _local_policy_cache: dict[str, tuple[str, str, datetime]] = {}
 
 
+def _sanitize_user_intent(text: str) -> str:
+    """Trim, normalize, and bound user intent for backend transmission."""
+    return (text or "").strip().replace("\n", " ")[:500]
+
+
+def _derive_intent_from_args(tool_name: str, arguments: dict[str, Any]) -> str:
+    """
+    Build a concise fallback intent when explicit user intent was not captured.
+
+    This keeps Gemini in comparison mode with a deterministic, human-readable
+    description derived from the requested tool and key arguments.
+    """
+    if not isinstance(arguments, dict) or not arguments:
+        return ""
+
+    priority_keys = (
+        "path",
+        "filePath",
+        "targetPath",
+        "command",
+        "query",
+        "url",
+        "name",
+        "title",
+        "action",
+    )
+
+    parts: list[str] = []
+    for key in priority_keys:
+        if key not in arguments:
+            continue
+        value = arguments.get(key)
+        if value is None:
+            continue
+        text = str(value).strip().replace("\n", " ")
+        if text:
+            parts.append(f"{key}={text[:100]}")
+        if len(parts) >= 3:
+            break
+
+    if not parts:
+        visible_keys = [k for k in arguments.keys() if not str(k).startswith("__")]
+        if visible_keys:
+            parts.append(f"keys={','.join(visible_keys[:5])}")
+
+    if not parts:
+        return ""
+
+    fallback = f"Tool request: {tool_name} ({'; '.join(parts)})"
+    return fallback[:500]
+
+
 # ── Public interface ──────────────────────────────────────────────────────────
 
 
@@ -83,6 +135,10 @@ async def validate_and_wait(
     """
     # The backend identifies the tool as  "{server_name}__{tool_name}"
     full_tool_name = f"{server_name}__{tool_name}"
+    effective_user_intent = _sanitize_user_intent(user_intent)
+    # Very short strings are usually not useful for Gemini comparison mode.
+    if len(effective_user_intent) < 8:
+        effective_user_intent = _derive_intent_from_args(tool_name, arguments)
 
     # ── Step 0: Check Local Cache (Fast Path) ────────────────────────────────
     if config.local_cache_ttl > 0:
@@ -100,7 +156,7 @@ async def validate_and_wait(
                 # Actually, the user wants REDUCED latency. A local cache that skips the backend
                 # for the critical path is the best.
                 # To keep the dashboard working, we can fire-and-forget the intercept call.
-                asyncio.create_task(_call_intercept(full_tool_name, arguments, config, user_intent))
+                asyncio.create_task(_call_intercept(full_tool_name, arguments, config, effective_user_intent))
                 
                 return _approved(
                     risk_level=risk,
@@ -109,14 +165,14 @@ async def validate_and_wait(
                     auth_token=None, # Tokens usually require backend interaction
                 )
 
-    intent_preview = user_intent[:60] if user_intent else "(not captured — Gemini Intrinsic mode)"
+    intent_preview = effective_user_intent[:60] if effective_user_intent else "(not captured — Gemini Intrinsic mode)"
     logger.info(
         f"validate_and_wait: tool={full_tool_name} | intent='{intent_preview}'"
     )
 
     # ── Step 1: POST /intercept ───────────────────────────────────────────────
     intercept_result = await _call_intercept(
-        full_tool_name, arguments, config, user_intent
+        full_tool_name, arguments, config, effective_user_intent
     )
     if intercept_result.get("_error"):
         return _blocked(
