@@ -794,13 +794,40 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_auth_logout tool registered");
 
+        api.registerTool({
+            name: "agent_lock_account_delete",
+            label: "Agent-Lock Account Delete",
+            description: "Deletes the primary Agent-Lock account, disconnects linked providers, and logs out.",
+            parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            execute: async () => {
+                try {
+                    const response = await post("/auth/account/delete", {}, undefined, SUBJECT_TOKEN, true) as any;
+                    return jsonToolResult({
+                        success: true,
+                        deleted: Boolean(response?.deleted),
+                        message: "✅ Primary account deleted and session closed.",
+                        details: response,
+                    });
+                } catch (error: any) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "ACCOUNT_DELETE_FAILED",
+                        message: error?.message ?? "Failed to delete account",
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_account_delete tool registered");
+
         // ── Scopes Discovery Tool ─────────────────────────────────────────────────
         api.registerTool({
             name: "agent_lock_scopes",
             label: "Agent-Lock Scopes",
-            description: "Lists all OAuth scopes configured in Auth0 for a provider (google, github, slack). " +
-                         "Dynamic — reflects Auth0 Dashboard configuration in real time. " +
-                         "Use this to discover what operations are available before choosing a tool.",
+            description: "Lists OAuth scopes for a provider (google, github, slack) and reports whether they came from Auth0 live config or backend fallback.",
             parameters: {
                 type: "object",
                 properties: {
@@ -1250,7 +1277,7 @@ export default function register(api: any) {
         // Debug-only hook trace
         log("debug", "before_tool_call fired", { tool_name: toolName });
 
-        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy" || toolName === "agent_lock_scopes") return undefined;
+        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_account_delete" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy" || toolName === "agent_lock_scopes") return undefined;
 
 
         const sessionKey = sessionOf(event);

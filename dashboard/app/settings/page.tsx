@@ -737,6 +737,7 @@ const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
     "agent_lock_respond",
     "agent_lock_auth_status",
     "agent_lock_auth_logout",
+    "agent_lock_account_delete",
     "agent_lock_services",
     "agent_lock_provider_status",
     "agent_lock_provider_login",
@@ -783,6 +784,7 @@ function RuntimeControlsSection() {
   const QUICK_ALLOW_PATTERNS = [
     "agent_lock_*",
     "agent_lock_auth_*",
+    "agent_lock_account_delete",
     "agent_lock_services",
     "agent_lock_provider_*",
     "agent_lock_scopes",

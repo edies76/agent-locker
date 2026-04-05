@@ -917,7 +917,7 @@ async function scopesCmd(provider?: string): Promise<void> {
 
   log(`🔑 Agent-Lock Scopes${provider ? ` (${provider})` : " (all providers)"}`);
   log(`backend: ${runtime.backend_url}`);
-  log(`source: Auth0 connection configuration (live)`);
+  log(`source: Auth0 connection options (live when available)`);
   log("");
 
   // Get policy overrides to annotate each scope
@@ -942,9 +942,11 @@ async function scopesCmd(provider?: string): Promise<void> {
     const connected: boolean = Boolean(scopeData?.connected);
     const scopes: any[] = Array.isArray(scopeData?.scopes) ? scopeData.scopes : [];
     const icon = connected ? "✅" : "❌";
+    const scopesSource = typeof scopeData?.scopes_source === "string" ? scopeData.scopes_source : "unknown";
 
     log(`${icon} Provider: ${p.toUpperCase()} — ${connected ? "connected" : "not connected"}`);
     log(`   connection: ${scopeData?.connection ?? "-"}`);
+    log(`   scopes_source: ${scopesSource}`);
 
     if (scopes.length === 0) {
       log(`   (no scopes configured in Auth0 for this connection)`);
@@ -1022,6 +1024,49 @@ async function providerLogout(provider: string): Promise<void> {
   if (typeof data?.login_url === "string" && data.login_url.trim()) {
     log(`login_url: ${data.login_url}`);
   }
+}
+
+async function deleteAccountCmd(): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const targets = [normalizeBaseUrl(runtime.backend_url)];
+  if (normalizeBaseUrl(runtime.backend_url) !== OFFICIAL_BACKEND_URL) {
+    targets.push(OFFICIAL_BACKEND_URL);
+  }
+
+  let success = false;
+  let auth0LogoutUrl: string | null = null;
+  const results: string[] = [];
+
+  for (const target of targets) {
+    const targetRuntime: AgentLockRuntimeConfig = { ...runtime, backend_url: target };
+    try {
+      const resp = await backendPost(targetRuntime, "/auth/account/delete", {});
+      results.push(`ok:${target}`);
+      success = true;
+      if (!auth0LogoutUrl && resp && typeof resp === "object" && "auth0_logout_url" in resp) {
+        auth0LogoutUrl = (resp as any).auth0_logout_url;
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      results.push(`fail:${target}:${msg}`);
+    }
+  }
+
+  if (!success) {
+    fail(`account-delete failed: ${results.join(" | ")}`);
+  }
+
+  log("🗑️ Agent-Lock primary account deleted");
+  log(`targets: ${results.join(" | ")}`);
+  if (auth0LogoutUrl) {
+    log("Cerrando sesión en Auth0...");
+    const opened = openUrlInBrowser(auth0LogoutUrl);
+    if (!opened) {
+      log(`Abre este link para completar logout: ${auth0LogoutUrl}`);
+    }
+  }
+  log("Cuenta y providers desvinculados para esta identidad.");
 }
 
 async function logoutCmd(): Promise<void> {
@@ -1274,6 +1319,7 @@ function usage(): void {
   log("  provider-status <provider>  Show one provider status");
   log("  provider-logout <provider>  Disconnect one provider");
   log("  logout  Logout primary Agent-Lock account");
+  log("  account-delete  Delete primary account and disconnect providers");
   log("  cloud-logout  Alias of logout (deprecated)");
   log("  scopes [provider]  List all scopes and their current policy (google|github|slack|system)");
   log("");
@@ -1293,6 +1339,7 @@ function usage(): void {
   log("  agent-lock provider-status github");
   log("  agent-lock provider-logout github");
   log("  agent-lock logout");
+  log("  agent-lock account-delete");
   log("  agent-lock cloud-logout");
 }
 
@@ -1391,6 +1438,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "account-logout") {
     await logoutCmd();
+    return;
+  }
+  if (cmd === "account-delete") {
+    await deleteAccountCmd();
     return;
   }
   if (cmd === "cloud-logout") {
