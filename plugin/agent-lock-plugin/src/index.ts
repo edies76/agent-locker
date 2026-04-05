@@ -90,6 +90,57 @@ function shouldLog(level: "debug" | "info" | "warn" | "error"): boolean {
     return LEVEL_WEIGHT[level] >= current;
 }
 
+// ── Scope resolution ────────────────────────────────────────────────────────
+// Mirrors backend/engine/scope_resolver.py — single source of truth for
+// what a tool+action actually means, shown in Telegram and audit logs.
+const TOOL_ACTION_SCOPES: Record<string, string> = {
+    "agent_lock_gmail:send":             "gmail.message.send",
+    "agent_lock_gmail:read":             "gmail.message.read",
+    "agent_lock_gmail:list":             "gmail.message.list",
+    "agent_lock_gmail:delete":           "gmail.message.delete",
+    "agent_lock_gmail:search":           "gmail.message.search",
+    "agent_lock_calendar:create_event":  "calendar.event.create",
+    "agent_lock_calendar:list_events":   "calendar.event.list",
+    "agent_lock_calendar:delete_event":  "calendar.event.delete",
+    "agent_lock_calendar:update_event":  "calendar.event.update",
+    "agent_lock_github:create_issue":    "github.issue.create",
+    "agent_lock_github:list_issues":     "github.issue.list",
+    "agent_lock_github:create_pr":       "github.pr.create",
+    "agent_lock_github:push":            "github.repo.push",
+    "agent_lock_github:read_file":       "github.repo.read",
+    "agent_lock_slack:send_message":     "slack.message.send",
+    "agent_lock_slack:read_channel":     "slack.channel.read",
+    "agent_lock_slack:list_channels":    "slack.channel.list",
+};
+const TOOL_SCOPES: Record<string, string> = {
+    "read_file":    "fs.file.read",
+    "write_file":   "fs.file.write",
+    "delete_file":  "fs.file.delete",
+    "list_files":   "fs.directory.list",
+    "create_dir":   "fs.directory.create",
+    "exec":         "system.shell.execute",
+    "bash":         "system.shell.execute",
+    "terminal":     "system.shell.execute",
+    "run_command":  "system.shell.execute",
+    "execute_code": "system.code.execute",
+    "web_search":   "web.search.read",
+    "http_request": "web.http.request",
+};
+
+function resolveScope(toolName: string, action: string): string {
+    const key = action ? `${toolName}:${action}` : "";
+    if (key && TOOL_ACTION_SCOPES[key]) return TOOL_ACTION_SCOPES[key];
+    if (TOOL_SCOPES[toolName]) return TOOL_SCOPES[toolName];
+    const t = toolName.toLowerCase();
+    if (t.includes("gmail"))    return `gmail.${action || "unknown"}`;
+    if (t.includes("calendar")) return `calendar.${action || "unknown"}`;
+    if (t.includes("github"))   return `github.${action || "unknown"}`;
+    if (t.includes("slack"))    return `slack.${action || "unknown"}`;
+    if (t.includes("exec") || t.includes("bash") || t.includes("terminal")) return "system.shell.execute";
+    if (t.includes("file") || t.includes("write") || t.includes("read"))    return "fs.file.unknown";
+    return `tool.${toolName}.${action || "call"}`;
+}
+
 // ── Structured log buffer for the dashboard ────────────────────────────────
 // Console shows clean human-readable text only.
 // Full context (JSON details) is kept here for the dashboard to read.
@@ -743,6 +794,58 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_auth_logout tool registered");
 
+        // ── Scopes Discovery Tool ─────────────────────────────────────────────────
+        api.registerTool({
+            name: "agent_lock_scopes",
+            label: "Agent-Lock Scopes",
+            description: "Lists all OAuth scopes configured in Auth0 for a provider (google, github, slack). " +
+                         "Dynamic — reflects Auth0 Dashboard configuration in real time. " +
+                         "Use this to discover what operations are available before choosing a tool.",
+            parameters: {
+                type: "object",
+                properties: {
+                    provider: {
+                        type: "string",
+                        enum: ["google", "github", "slack"],
+                        description: "The provider to list scopes for.",
+                    },
+                },
+                required: ["provider"],
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const provider = String(params.provider || "").toLowerCase();
+                if (!["google", "github", "slack"].includes(provider)) {
+                    return jsonToolResult({ success: false, error: "INVALID_PROVIDER", message: "Use: google | github | slack" });
+                }
+
+                log("info", `Scopes discovery requested`, { provider });
+                try {
+                    const data = await get(`/auth/providers/${provider}/scopes`, undefined, SUBJECT_TOKEN) as any;
+                    const scopes: any[] = Array.isArray(data?.scopes) ? data.scopes : [];
+                    const scopeNames = scopes.map((s: any) => s.scope);
+
+                    return jsonToolResult({
+                        success: true,
+                        provider,
+                        connection: data?.connection,
+                        connected: data?.connected,
+                        scope_count: scopes.length,
+                        scopes: scopeNames,
+                        raw: scopes,
+                        note: data?.note,
+                        message: scopes.length === 0
+                            ? `No scopes configured in Auth0 for ${provider}.`
+                            : `${provider} has ${scopes.length} OAuth scope(s) available: ${scopeNames.join(", ")}`,
+                    });
+                } catch (error: any) {
+                    log("error", "Scopes discovery failed", { provider, error: error?.message });
+                    return jsonToolResult({ success: false, error: "BACKEND_ERROR", message: error?.message ?? "Failed to fetch scopes" });
+                }
+            },
+        });
+        log("info", "agent_lock_scopes tool registered");
+
+
         // ── Policy Control Tool ──────────────────────────────────────────────────
         api.registerTool({
             name: "agent_lock_policy",
@@ -1008,7 +1111,7 @@ export default function register(api: any) {
         // Debug-only hook trace
         log("debug", "before_tool_call fired", { tool_name: toolName });
 
-        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy") return undefined;
+        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy" || toolName === "agent_lock_scopes") return undefined;
 
 
         const sessionKey = sessionOf(event);
@@ -1073,6 +1176,11 @@ export default function register(api: any) {
         let result: any;
         try {
             const interceptStart = Date.now();
+
+            // Resolve granular scope client-side (backed up by server-side resolution)
+            const action = typeof (args as any)?.action === "string" ? (args as any).action : "";
+            const scope = resolveScope(toolName, action);
+
             result = await post(`/intercept`, {
                 tool_name: toolName,
                 args,
@@ -1081,9 +1189,11 @@ export default function register(api: any) {
                 session_key: sessionKey,
                 raw_command: rawCommand,
                 subject_token: SUBJECT_TOKEN,
+                scope,
             });
-            log("debug", "Intercept response received", {
+            log("info", "Intercept decision", {
                 tool_name: toolName,
+                scope,
                 status: result?.status,
                 action_id: result?.action_id,
                 latency_ms: Date.now() - interceptStart,
