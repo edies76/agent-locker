@@ -82,7 +82,7 @@ export default function LogsPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="page-title">Logs</h1>
-          <p className="page-subtitle">Audit stream with filters for fast incident review</p>
+          <p className="page-subtitle max-w-2xl">Audit stream with filters for fast incident review</p>
         </div>
         <div className="flex items-center gap-2">
           {refreshing && <span className="text-xs" style={{ color: "var(--text-muted)" }}>Refreshing...</span>}
@@ -94,7 +94,7 @@ export default function LogsPage() {
 
       <Card>
         <CardHeader title="Filters" subtitle="Narrow logs by risk, decision, signer and actor" />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <select className="input" value={risk} onChange={(e) => setRisk(e.target.value)}>
             <option value="">All risk</option>
             <option value="LOW">Low</option>

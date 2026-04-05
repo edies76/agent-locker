@@ -103,6 +103,8 @@ html {
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -111,6 +113,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   transition: background-color 200ms ease, color 200ms ease;
+  overflow-x: hidden;
 }
 
 /* ============================================
@@ -343,6 +346,19 @@ body {
 .table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}
+
+.table-wrap > .table {
+  min-width: 640px;
 }
 
 .table th {
@@ -630,6 +646,14 @@ body {
     -webkit-overflow-scrolling: touch;
   }
 
+    .table-wrap {
+      border-radius: 10px;
+    }
+
+    .table-wrap > .table {
+      min-width: 680px;
+    }
+
   input,
   select,
   textarea,
@@ -637,3 +661,13 @@ body {
     font-size: 16px;
   }
 }
+
+  @supports (padding: max(0px)) {
+    .safe-top {
+      padding-top: max(0.75rem, env(safe-area-inset-top));
+    }
+
+    .safe-bottom {
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    }
+  }

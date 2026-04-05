@@ -31,6 +31,7 @@ const entryPoints = [
 const quickLinks = [
   { href: "/dashboard/activity", label: "Activity" },
   { href: "/dashboard/approvals", label: "Approvals" },
+  { href: "/dashboard/chat", label: "Channel Chat" },
   { href: "/dashboard/logs", label: "Logs" },
   { href: "/dashboard/settings", label: "Settings" },
 ]
@@ -118,6 +119,7 @@ export default function Home() {
             </Link>
           ))}
         </section>
+
       </div>
     </main>
   )

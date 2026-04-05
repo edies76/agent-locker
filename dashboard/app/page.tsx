@@ -137,6 +137,71 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Dashboard Surfaces */}
+      <section className="max-w-7xl mx-auto px-6 py-20">
+        <h2 className="text-3xl font-bold text-white text-center mb-12">Dashboard Surfaces</h2>
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            {
+              title: "Overview",
+              desc: "Health, approvals, and risk snapshot for daily operations.",
+              href: "/dashboard/overview",
+            },
+            {
+              title: "Channel Chat",
+              desc: "Message OpenClaw directly from dashboard through plugin bridge.",
+              href: "/dashboard/chat",
+            },
+            {
+              title: "Plugin",
+              desc: "Pair clients, review decisions, and inspect plugin activity.",
+              href: "/dashboard/plugin",
+            },
+            {
+              title: "Runtime Controls",
+              desc: "Switch Gemini, manual approval, and integration behavior in real time.",
+              href: "/dashboard/settings",
+            },
+          ].map((item) => (
+            <Link
+              key={item.title}
+              href={item.href}
+              className="group rounded-xl border border-slate-800 bg-slate-900/40 p-5 transition-all hover:border-cyan-700/60 hover:bg-slate-900/70"
+            >
+              <p className="text-white font-semibold">{item.title}</p>
+              <p className="text-slate-400 text-sm mt-2 leading-relaxed">{item.desc}</p>
+              <p className="text-cyan-400 text-xs mt-4 group-hover:text-cyan-300">Open -&gt;</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* Connected Account + Provider Flow */}
+      <section className="max-w-4xl mx-auto px-6 py-20">
+        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-10 space-y-4">
+          <h2 className="text-3xl font-bold text-white">Connected Accounts Flow</h2>
+          <p className="text-slate-400 leading-relaxed">
+            Agent-Lock now supports two login layers in dashboard: primary account login and provider login.
+            Primary login creates your dashboard/user session. Provider login (Google, GitHub, Slack) grants
+            scoped provider access through Auth0 Token Vault for agent tools.
+          </p>
+          <div className="grid md:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+              <p className="text-cyan-400 font-semibold">1. Account Login</p>
+              <p className="text-slate-400 mt-1">Authenticate your user session for connected accounts.</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+              <p className="text-cyan-400 font-semibold">2. Provider Login</p>
+              <p className="text-slate-400 mt-1">Connect Google/GitHub to unlock brokered provider tools.</p>
+            </div>
+            <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+              <p className="text-cyan-400 font-semibold">3. Tool Use</p>
+              <p className="text-slate-400 mt-1">Agent receives short-lived scoped tokens, never long-lived secrets.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Footer */}
       <footer className="border-t border-slate-800/50 mt-20">
         <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">

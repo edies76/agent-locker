@@ -10,6 +10,7 @@ import {
   fetchRuntimeControls,
   updateRuntimeControls,
 } from "@/lib/api"
+import { resolveBackendEndpoint } from "@/lib/backendEndpoint"
 import { Settings, PoliciesResponse, RuntimeControls } from "@/types"
 import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
 import Button from "@/app/components/ui/Button"
@@ -531,13 +532,21 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
     authenticated?: boolean
     login_url?: string
   } | null>(null)
+  const [providerLoginUrls, setProviderLoginUrls] = useState<{ google?: string; github?: string }>({})
 
   useEffect(() => {
     let mounted = true
     ;(async () => {
       try {
-        const data = await fetchTokenVaultStatus()
-        if (mounted) setVault(data)
+        const [{ baseUrl }, data] = await Promise.all([resolveBackendEndpoint(true), fetchTokenVaultStatus()])
+        if (!mounted) return
+        setVault(data)
+        const googleConnection = String(au?.google_connection_name || "").trim() || "google-oauth2"
+        const githubConnection = String(au?.github_connection_name || "").trim() || "github"
+        setProviderLoginUrls({
+          google: `${baseUrl}/auth/login?connection=${encodeURIComponent(googleConnection)}`,
+          github: `${baseUrl}/auth/login?connection=${encodeURIComponent(githubConnection)}`,
+        })
       } catch {
         if (mounted) setVault(null)
       }
@@ -545,7 +554,7 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [au?.github_connection_name, au?.google_connection_name])
 
   return (
     <SectionCard title="🔐 Auth0 Token Vault">
@@ -598,6 +607,24 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
               Connect account (Auth0 login)
             </a>
           )}
+          <div className="pt-2 flex flex-wrap gap-2">
+            <a
+              href={providerLoginUrls.google || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-brand-border bg-brand-bg px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500"
+            >
+              Connect Google
+            </a>
+            <a
+              href={providerLoginUrls.github || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md border border-brand-border bg-brand-bg px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500"
+            >
+              Connect GitHub
+            </a>
+          </div>
         </div>
       )}
 
@@ -889,6 +916,46 @@ function RuntimeControlsSection() {
               If disabled, LOW risk actions are routed to manual approval.
             </p>
 
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Require first-time manual approval per tool</span>
+              <button
+                type="button"
+                className={`switch ${controls.first_time_manual_approval_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() =>
+                  updateControl(
+                    "first_time_manual_approval_enabled",
+                    !controls.first_time_manual_approval_enabled
+                  )
+                }
+                aria-label="Toggle first-time manual approval"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              When enabled, each new tool pattern must be approved once before auto-approve can apply.
+            </p>
+
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Notify auto-approved actions</span>
+              <button
+                type="button"
+                className={`switch ${controls.notify_auto_approved_actions ? "switch-on" : "switch-off"}`}
+                onClick={() =>
+                  updateControl(
+                    "notify_auto_approved_actions",
+                    !controls.notify_auto_approved_actions
+                  )
+                }
+                aria-label="Toggle auto-approve notifications"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Keep this on to audit every automatic decision in real time.
+            </p>
+
             <div className="space-y-2">
               <p className="text-sm text-slate-300">Auto-approve allowlist (one by one)</p>
               {allowlistItems.map((item, index) => (
@@ -984,7 +1051,7 @@ function RuntimeControlsSection() {
                 </div>
               ))}
               <p className="text-xs text-slate-500">
-                Auto: ejecuta directo. Manual: siempre pide aprobación. Disabled: bloquea la integración.
+                Auto: execute directly. Manual: always require approval. Disabled: block this integration.
               </p>
             </div>
           </div>

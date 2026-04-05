@@ -17,12 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head />
-      <body className="min-h-screen">
+      <body className="min-h-screen overflow-x-hidden">
         <ErrorBoundary>
           <ToastProvider>
             <ClientProviders>
-              <main className="min-h-screen transition-all duration-200 md:ml-56">
-                <div className="px-4 pb-6 pt-16 md:p-6 max-w-screen-xl mx-auto animate-fade-in">
+              <main className="min-h-screen min-w-0 transition-all duration-200 md:ml-56">
+                <div className="safe-top safe-bottom mx-auto w-full max-w-screen-xl min-w-0 px-4 pb-6 pt-16 md:p-6 animate-fade-in">
                   <ErrorBoundary>{children}</ErrorBoundary>
                 </div>
               </main>
