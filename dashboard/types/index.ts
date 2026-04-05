@@ -236,10 +236,19 @@ export interface RuntimeControls {
     github: "auto" | "manual" | "disabled"
     slack: "auto" | "manual" | "disabled"
   }
+  integration_scopes_enabled?: Record<string, Record<string, boolean>>
+}
+
+export interface ScopeCatalogItem {
+  id: string
+  label: string
+  description: string
+  section: string
 }
 
 export interface RuntimeControlsResponse {
   runtime_controls: RuntimeControls
+  available_scope_catalog?: Record<string, ScopeCatalogItem[]>
   env_ws_bridge_enabled: boolean
   effective_ws_bridge_enabled: boolean
 }

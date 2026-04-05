@@ -544,6 +544,15 @@ body {
   transform: translateX(18px);
 }
 
+body.landing-no-sidebar main {
+  margin-left: 0 !important;
+}
+
+body.landing-no-sidebar .app-shell-container {
+  max-width: 100% !important;
+  padding: 0 !important;
+}
+
 /* ============================================
    Compatibility Utility Classes
    ============================================ */

@@ -557,6 +557,157 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_auth_status tool registered");
 
+        // Services Status Tool
+        api.registerTool({
+            name: "agent_lock_services",
+            label: "Agent-Lock Services",
+            description: "Shows provider connection status (Google/GitHub/Slack) for current user session.",
+            parameters: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            execute: async () => {
+                try {
+                    const services = await get("/auth/services", undefined, SUBJECT_TOKEN) as any;
+                    return jsonToolResult({
+                        success: true,
+                        authenticated: Boolean(services?.authenticated),
+                        reason: typeof services?.reason === "string" ? services.reason : null,
+                        sub: typeof services?.sub === "string" ? services.sub : null,
+                        email: typeof services?.email === "string" ? services.email : null,
+                        source: typeof services?.source === "string" ? services.source : null,
+                        providers: Array.isArray(services?.providers) ? services.providers : [],
+                    });
+                } catch (error: any) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "SERVICES_STATUS_FAILED",
+                        message: error?.message ?? "Failed to read services status",
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_services tool registered");
+
+        // Provider Status Tool
+        api.registerTool({
+            name: "agent_lock_provider_status",
+            label: "Agent-Lock Provider Status",
+            description: "Shows status for one provider connection (google, github, slack).",
+            parameters: {
+                type: "object",
+                properties: {
+                    provider: { type: "string", enum: ["google", "github", "slack"] },
+                },
+                required: ["provider"],
+                additionalProperties: false,
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const provider = typeof params.provider === "string" ? params.provider.toLowerCase() : "";
+                if (!["google", "github", "slack"].includes(provider)) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_PROVIDER",
+                        message: "provider must be one of: google, github, slack",
+                    });
+                }
+                try {
+                    const status = await get(`/auth/providers/${provider}/status`, undefined, SUBJECT_TOKEN) as any;
+                    return jsonToolResult({
+                        success: true,
+                        provider,
+                        details: status,
+                    });
+                } catch (error: any) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "PROVIDER_STATUS_FAILED",
+                        message: error?.message ?? "Failed to read provider status",
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_provider_status tool registered");
+
+        // Provider Login Helper Tool
+        api.registerTool({
+            name: "agent_lock_provider_login",
+            label: "Agent-Lock Provider Login",
+            description: "Returns provider login URL to connect google/github/slack.",
+            parameters: {
+                type: "object",
+                properties: {
+                    provider: { type: "string", enum: ["google", "github", "slack"] },
+                },
+                required: ["provider"],
+                additionalProperties: false,
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const provider = typeof params.provider === "string" ? params.provider.toLowerCase() : "";
+                if (!["google", "github", "slack"].includes(provider)) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_PROVIDER",
+                        message: "provider must be one of: google, github, slack",
+                    });
+                }
+                const connection = provider === "google" ? "google-oauth2" : provider;
+                const query = new URLSearchParams({ connection, force_success: "true" });
+                if (SUBJECT_TOKEN && String(SUBJECT_TOKEN).trim()) {
+                    query.set("subject_token", String(SUBJECT_TOKEN).trim());
+                }
+                const loginUrl = `${activeBackendUrl}/auth/login?${query.toString()}`;
+                return jsonToolResult({
+                    success: true,
+                    provider,
+                    login_url: loginUrl,
+                    message: `Open this URL to connect ${provider} to Agent-Lock.`,
+                });
+            },
+        });
+        log("info", "agent_lock_provider_login tool registered");
+
+        // Provider Logout Tool
+        api.registerTool({
+            name: "agent_lock_provider_logout",
+            label: "Agent-Lock Provider Logout",
+            description: "Disconnects one provider (google, github, slack) from current session.",
+            parameters: {
+                type: "object",
+                properties: {
+                    provider: { type: "string", enum: ["google", "github", "slack"] },
+                },
+                required: ["provider"],
+                additionalProperties: false,
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const provider = typeof params.provider === "string" ? params.provider.toLowerCase() : "";
+                if (!["google", "github", "slack"].includes(provider)) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_PROVIDER",
+                        message: "provider must be one of: google, github, slack",
+                    });
+                }
+                try {
+                    const response = await post(`/auth/providers/${provider}/logout`, {}, undefined, SUBJECT_TOKEN, true) as any;
+                    return jsonToolResult({
+                        success: true,
+                        provider,
+                        details: response,
+                    });
+                } catch (error: any) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "PROVIDER_LOGOUT_FAILED",
+                        message: error?.message ?? "Failed to logout provider",
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_provider_logout tool registered");
+
         // Auth Logout Tool
         api.registerTool({
             name: "agent_lock_auth_logout",
@@ -592,261 +743,261 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_auth_logout tool registered");
 
-        // ── Token Vault Tools ─────────────────────────────────────────────────────
-        // Gmail Send Tool (calls backend broker endpoint)
+        // ── Policy Control Tool ──────────────────────────────────────────────────
         api.registerTool({
-            name: "agent_lock_gmail_send",
-            label: "Agent-Lock Gmail Send",
-            description: "Send email via Gmail using Agent-Lock Token Vault (zero-config, audited, secure)",
+            name: "agent_lock_policy",
+            label: "Agent-Lock Policy",
+            description: "Change the approval mode for a specific tool at runtime. Use 'auto' to skip confirmation, 'ask' to always require it, or 'default' to restore normal behaviour.",
             parameters: {
                 type: "object",
                 properties: {
+                    tool_name: {
+                        type: "string",
+                        description: "The exact name of the tool to configure (e.g. 'agent_lock_calendar', 'exec')",
+                    },
+                    mode: {
+                        type: "string",
+                        enum: ["auto", "ask", "default"],
+                        description: "'auto' = never ask, run automatically. 'ask' = always ask me first. 'default' = back to normal Gemini+rules logic.",
+                    },
+                },
+                required: ["tool_name", "mode"],
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const tool_name = String(params.tool_name || "");
+                const mode = String(params.mode || "");
+
+                if (!tool_name || !["auto", "ask", "default"].includes(mode)) {
+                    return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "tool_name and mode (auto|ask|default) are required." });
+                }
+
+                log("info", `Policy override requested`, { tool_name, mode });
+
+                try {
+                    const response = await post("/policy/override", {
+                        tool_name,
+                        mode,
+                        set_by: "agent",
+                    }) as any;
+
+                    const modeLabel: Record<string, string> = {
+                        auto: "🟢 Auto-approve (no confirmation needed)",
+                        ask: "🔴 Always ask before executing",
+                        default: "⚙️ Back to default rules",
+                    };
+
+                    return jsonToolResult({
+                        success: true,
+                        message: `✅ Policy updated for ${tool_name}: ${modeLabel[mode] ?? mode}`,
+                        details: response,
+                    });
+                } catch (error: any) {
+                    log("error", "Policy override failed", { error: error?.message });
+                    return jsonToolResult({ success: false, error: "BACKEND_ERROR", message: `❌ Failed to update policy: ${error?.message}` });
+                }
+            },
+        });
+        log("info", "agent_lock_policy tool registered");
+
+        // ── Token Vault Tools ─────────────────────────────────────────────────────
+
+        // ── Gmail Central Tool ───────────────────────────────────────────────────
+        api.registerTool({
+            name: "agent_lock_gmail",
+            label: "Agent-Lock Gmail",
+            description: "Interact with Gmail via Agent-Lock Token Vault (zero-config, secure)",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: { type: "string", enum: ["send"], description: "The Gmail action to perform" },
                     to: { type: "string", description: "Recipient email" },
                     subject: { type: "string", description: "Email subject" },
                     body_text: { type: "string", description: "Email body" },
                 },
-                required: ["to", "subject", "body_text"],
+                required: ["action", "to", "subject", "body_text"],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const to = typeof params.to === "string" ? params.to : "";
-                const subject = typeof params.subject === "string" ? params.subject : "";
-                const body_text = typeof params.body_text === "string" ? params.body_text : "";
-                log("info", "Gmail send via Token Vault", { to, subject });
-                const authMsg = await authInfoMessage("agent_lock_gmail_send");
+                const action = String(params.action || "");
+                const to = String(params.to || "");
+                const subject = String(params.subject || "");
+                const body_text = String(params.body_text || "");
+
+                log("info", `Gmail ${action} via Token Vault`, { to, subject });
+                const authMsg = await authInfoMessage("agent_lock_gmail");
                 if (authMsg) return authMsg;
 
-                if (!to || !subject || !body_text) {
-                    return jsonToolResult({
-                        success: false,
-                        error: "INVALID_INPUT",
-                        message: "to, subject and body_text are required.",
-                    });
-                }
-
-                try {
-                    const response = await post("/vault/google/gmail/send", {
-                        to,
-                        subject,
-                        body_text,
-                    }, undefined, SUBJECT_TOKEN, true);
-
-                    log("info", "Gmail sent successfully", {
-                        to,
-                        message_id: (response as any).message_id,
-                    });
-
-                    return jsonToolResult({
-                        success: true,
-                        message: `✅ Email sent to ${to}`,
-                        details: response,
-                    });
-                } catch (error: any) {
-                    const errorMessage = error?.message ?? "Unknown error";
-                    log("error", "Gmail send failed", {
-                        to,
-                        error: errorMessage,
-                    });
-
-                    if (errorMessage.includes("401")) {
-                        return jsonToolResult({
-                            success: false,
-                            error: "AUTH_REQUIRED",
-                            message: "🔐 Authentication required. Complete Agent-Lock login and retry.",
-                        });
+                if (action === "send") {
+                    if (!to || !subject || !body_text) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "to, subject and body_text are required." });
                     }
-
-                    return jsonToolResult({
-                        success: false,
-                        error: "BROKER_FAILED",
-                        message: `❌ Failed to send email: ${errorMessage}`,
-                    });
+                    try {
+                        const response = await post("/vault/google/gmail/send", { to, subject, body_text }, undefined, SUBJECT_TOKEN, true);
+                        log("info", "Gmail sent successfully", { to, message_id: (response as any).message_id });
+                        return jsonToolResult({ success: true, message: `✅ Email sent to ${to}`, details: response });
+                    } catch (error: any) {
+                        const errorMessage = error?.message ?? "Unknown error";
+                        log("error", "Gmail send failed", { to, error: errorMessage });
+                        if (errorMessage.includes("401")) {
+                            return jsonToolResult({ success: false, error: "AUTH_REQUIRED", message: "🔐 Authentication required. Complete Agent-Lock login and retry." });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to send email: ${errorMessage}` });
+                    }
                 }
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_gmail_send tool registered (Token Vault)");
+        log("info", "agent_lock_gmail tool registered (Central)");
 
-        // GitHub Create Issue Tool
+
+        // ── GitHub Central Tool ──────────────────────────────────────────────────
         api.registerTool({
-            name: "agent_lock_github_create_issue",
-            label: "Agent-Lock GitHub Create Issue",
-            description: "Create GitHub issue using Agent-Lock Token Vault (zero-config)",
+            name: "agent_lock_github",
+            label: "Agent-Lock GitHub",
+            description: "Interact with GitHub using Agent-Lock Token Vault (secure, audited, brokered)",
             parameters: {
                 type: "object",
                 properties: {
+                    action: { 
+                        type: "string", 
+                        enum: ["create_issue"], 
+                        description: "The GitHub action to perform" 
+                    },
                     owner: { type: "string", description: "Repository owner" },
                     repo: { type: "string", description: "Repository name" },
-                    title: { type: "string", description: "Issue title" },
-                    body: { type: "string", description: "Issue body" },
+                    title: { type: "string", description: "Issue title (for create_issue)" },
+                    body: { type: "string", description: "Issue body (for create_issue)" },
                 },
-                required: ["owner", "repo", "title"],
+                required: ["action", "owner", "repo"],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const owner = typeof params.owner === "string" ? params.owner : "";
-                const repo = typeof params.repo === "string" ? params.repo : "";
-                const title = typeof params.title === "string" ? params.title : "";
-                const body = typeof params.body === "string" ? params.body : "";
-                log("info", "GitHub issue creation via Token Vault", { owner, repo });
-                const authMsg = await authInfoMessage("agent_lock_github_create_issue");
+                const action = String(params.action || "");
+                const owner = String(params.owner || "");
+                const repo = String(params.repo || "");
+                
+                log("info", `GitHub ${action} via Token Vault`, { owner, repo });
+                const authMsg = await authInfoMessage("agent_lock_github");
                 if (authMsg) return authMsg;
 
-                if (!owner || !repo || !title) {
-                    return jsonToolResult({
-                        success: false,
-                        error: "INVALID_INPUT",
-                        message: "owner, repo and title are required.",
-                    });
+                if (action === "create_issue") {
+                    const title = String(params.title || "");
+                    const body = String(params.body || "");
+                    if (!title) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "title is required for create_issue." });
+                    }
+                    try {
+                        const response = await post("/vault/github/issues/create", {
+                            owner,
+                            repo,
+                            title,
+                            body,
+                        }, undefined, SUBJECT_TOKEN, true);
+
+                        log("info", "GitHub issue created successfully", { issue_url: (response as any).issue_url });
+                        return jsonToolResult({
+                            success: true,
+                            message: `✅ Issue created: ${(response as any).issue_url ?? "created"}`,
+                            details: response,
+                        });
+                    } catch (error: any) {
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed: ${error?.message ?? "unknown"}` });
+                    }
                 }
 
-                try {
-                    const response = await post("/vault/github/issues/create", {
-                        owner,
-                        repo,
-                        title,
-                        body,
-                    }, undefined, SUBJECT_TOKEN, true);
-
-                    log("info", "GitHub issue created successfully", {
-                        issue_url: (response as any).issue_url,
-                    });
-
-                    return jsonToolResult({
-                        success: true,
-                        message: `✅ Issue created: ${(response as any).issue_url ?? "created"}`,
-                        details: response,
-                    });
-                } catch (error: any) {
-                    const errorMessage = error?.message ?? "Unknown error";
-                    log("error", "GitHub issue creation failed", { error: errorMessage });
-
-                    return jsonToolResult({
-                        success: false,
-                        error: "BROKER_FAILED",
-                        message: `❌ Failed to create issue: ${errorMessage}`,
-                    });
-                }
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' is not yet supported.` });
             },
         });
-        log("info", "agent_lock_github_create_issue tool registered (Token Vault)");
+        log("info", "agent_lock_github tool registered (Central)");
 
-        // Slack Send Tool
+
+        // ── Slack Central Tool ───────────────────────────────────────────────────
         api.registerTool({
-            name: "agent_lock_slack_send",
-            label: "Agent-Lock Slack Send",
-            description: "Send Slack message using Agent-Lock Token Vault (zero-config)",
+            name: "agent_lock_slack",
+            label: "Agent-Lock Slack",
+            description: "Interact with Slack using Agent-Lock Token Vault (zero-config)",
             parameters: {
                 type: "object",
                 properties: {
+                    action: { type: "string", enum: ["send_message"], description: "The Slack action to perform" },
                     channel: { type: "string", description: "Channel ID or name" },
                     text: { type: "string", description: "Message text" },
                 },
-                required: ["channel", "text"],
+                required: ["action", "channel", "text"],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const channel = typeof params.channel === "string" ? params.channel : "";
-                const text = typeof params.text === "string" ? params.text : "";
-                log("info", "Slack message via Token Vault", { channel });
-                const authMsg = await authInfoMessage("agent_lock_slack_send");
+                const action = String(params.action || "");
+                const channel = String(params.channel || "");
+                const text = String(params.text || "");
+
+                log("info", `Slack ${action} via Token Vault`, { channel });
+                const authMsg = await authInfoMessage("agent_lock_slack");
                 if (authMsg) return authMsg;
 
-                if (!channel || !text) {
-                    return jsonToolResult({
-                        success: false,
-                        error: "INVALID_INPUT",
-                        message: "channel and text are required.",
-                    });
+                if (action === "send_message") {
+                    if (!channel || !text) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "channel and text are required." });
+                    }
+                    try {
+                        const response = await post("/vault/slack/messages/send", { channel, text }, undefined, SUBJECT_TOKEN, true);
+                        log("info", "Slack message sent successfully", { channel });
+                        return jsonToolResult({ success: true, message: `✅ Message sent to ${channel}`, details: response });
+                    } catch (error: any) {
+                        const errorMessage = error?.message ?? "Unknown error";
+                        log("error", "Slack send failed", { error: errorMessage });
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to send message: ${errorMessage}` });
+                    }
                 }
-
-                try {
-                    const response = await post("/vault/slack/messages/send", {
-                        channel,
-                        text,
-                    }, undefined, SUBJECT_TOKEN, true);
-
-                    log("info", "Slack message sent successfully", {
-                        channel,
-                    });
-
-                    return jsonToolResult({
-                        success: true,
-                        message: `✅ Message sent to ${channel}`,
-                        details: response,
-                    });
-                } catch (error: any) {
-                    const errorMessage = error?.message ?? "Unknown error";
-                    log("error", "Slack send failed", { error: errorMessage });
-
-                    return jsonToolResult({
-                        success: false,
-                        error: "BROKER_FAILED",
-                        message: `❌ Failed to send message: ${errorMessage}`,
-                    });
-                }
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_slack_send tool registered (Token Vault)");
+        log("info", "agent_lock_slack tool registered (Central)");
 
-        // Calendar Create Tool
+
+        // ── Calendar Central Tool ────────────────────────────────────────────────
         api.registerTool({
-            name: "agent_lock_calendar_create",
-            label: "Agent-Lock Calendar Create",
-            description: "Create Google Calendar event using Agent-Lock Token Vault (zero-config)",
+            name: "agent_lock_calendar",
+            label: "Agent-Lock Calendar",
+            description: "Interact with Google Calendar using Agent-Lock Token Vault (zero-config)",
             parameters: {
                 type: "object",
                 properties: {
+                    action: { type: "string", enum: ["create_event"], description: "The Calendar action to perform" },
                     summary: { type: "string", description: "Event title" },
                     start_time: { type: "string", description: "Start time (ISO 8601)" },
                     end_time: { type: "string", description: "End time (ISO 8601)" },
                     description: { type: "string", description: "Event description" },
                 },
-                required: ["summary", "start_time", "end_time"],
+                required: ["action", "summary", "start_time", "end_time"],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const summary = typeof params.summary === "string" ? params.summary : "";
-                const start_time = typeof params.start_time === "string" ? params.start_time : "";
-                const end_time = typeof params.end_time === "string" ? params.end_time : "";
-                const description = typeof params.description === "string" ? params.description : "";
-                log("info", "Calendar event creation via Token Vault", { summary });
-                const authMsg = await authInfoMessage("agent_lock_calendar_create");
+                const action = String(params.action || "");
+                const summary = String(params.summary || "");
+                const start_time = String(params.start_time || "");
+                const end_time = String(params.end_time || "");
+                const description = String(params.description || "");
+
+                log("info", `Calendar ${action} via Token Vault`, { summary });
+                const authMsg = await authInfoMessage("agent_lock_calendar");
                 if (authMsg) return authMsg;
 
-                if (!summary || !start_time || !end_time) {
-                    return jsonToolResult({
-                        success: false,
-                        error: "INVALID_INPUT",
-                        message: "summary, start_time and end_time are required.",
-                    });
+                if (action === "create_event") {
+                    if (!summary || !start_time || !end_time) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "summary, start_time and end_time are required." });
+                    }
+                    try {
+                        const response = await post("/vault/google/calendar/events", { summary, start_time, end_time, description }, undefined, SUBJECT_TOKEN, true);
+                        log("info", "Calendar event created successfully", { event_link: (response as any).event_link });
+                        return jsonToolResult({ success: true, message: `✅ Event created: ${summary}`, details: response });
+                    } catch (error: any) {
+                        const errorMessage = error?.message ?? "Unknown error";
+                        log("error", "Calendar creation failed", { error: errorMessage });
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to create event: ${errorMessage}` });
+                    }
                 }
-
-                try {
-                    const response = await post("/vault/google/calendar/events", {
-                        summary,
-                        start_time,
-                        end_time,
-                        description,
-                    }, undefined, SUBJECT_TOKEN, true);
-
-                    log("info", "Calendar event created successfully", {
-                        event_link: (response as any).event_link,
-                    });
-
-                    return jsonToolResult({
-                        success: true,
-                        message: `✅ Event created: ${summary}`,
-                        details: response,
-                    });
-                } catch (error: any) {
-                    const errorMessage = error?.message ?? "Unknown error";
-                    log("error", "Calendar creation failed", { error: errorMessage });
-
-                    return jsonToolResult({
-                        success: false,
-                        error: "BROKER_FAILED",
-                        message: `❌ Failed to create event: ${errorMessage}`,
-                    });
-                }
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_calendar_create tool registered (Token Vault)");
+        log("info", "agent_lock_calendar tool registered (Central)");
+
     }
     // ── Intercept tool calls ──────────────────────────────────────────────────
     api.on("before_tool_call", async (event: any) => {
@@ -857,7 +1008,8 @@ export default function register(api: any) {
         // Debug-only hook trace
         log("debug", "before_tool_call fired", { tool_name: toolName });
 
-        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout") return undefined;
+        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy") return undefined;
+
 
         const sessionKey = sessionOf(event);
 

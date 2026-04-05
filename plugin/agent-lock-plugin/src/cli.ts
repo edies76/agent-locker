@@ -687,12 +687,23 @@ async function status(): Promise<void> {
   }
 }
 
-async function login(): Promise<void> {
+async function login(provider?: string): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
   const encodedSubject = encodeURIComponent(runtime.subject_token ?? "default");
-  const loginUrl = `${normalizeBaseUrl(runtime.backend_url)}/auth/login?subject_token=${encodedSubject}`;
-  log("🔐 Agent-Lock login");
+  const normalizedProvider = provider?.trim().toLowerCase();
+  const connection =
+    normalizedProvider === "google" ? "google-oauth2" :
+    normalizedProvider === "github" ? "github" :
+    normalizedProvider === "slack" ? "slack" :
+    undefined;
+  if (normalizedProvider && !connection) {
+    fail("Provider inválido para login. Usa: google | github | slack");
+  }
+  const loginUrl = connection
+    ? `${normalizeBaseUrl(runtime.backend_url)}/auth/login?connection=${encodeURIComponent(connection)}&subject_token=${encodedSubject}&force_success=true`
+    : `${normalizeBaseUrl(runtime.backend_url)}/auth/login?subject_token=${encodedSubject}&force_success=true`;
+  log(connection ? `🔐 Agent-Lock login (${normalizedProvider})` : "🔐 Agent-Lock login");
   log("Preparando para logearse...");
   log("Presiona Enter o Espacio para abrir navegador (auto en 3s).");
 
@@ -708,9 +719,26 @@ async function login(): Promise<void> {
     log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
   }
 
-  const ok = await waitForLoginCompletion(runtime);
+  const ok = connection
+    ? await (async () => {
+      const started = Date.now();
+      while (Date.now() - started < 300000) {
+        try {
+          const status = await backendGet(runtime, `/auth/providers/${normalizedProvider}/status`);
+          if (Boolean(status?.connected)) {
+            process.stdout.write(`\r✅ ${normalizedProvider} conectado.                      \n`);
+            return true;
+          }
+        } catch {}
+        await sleep(1500);
+      }
+      return false;
+    })()
+    : await waitForLoginCompletion(runtime);
   if (!ok) {
-    fail("Login no confirmado todavía. Intenta de nuevo: agent-lock login");
+    fail(connection
+      ? `Login de ${normalizedProvider} no confirmado todavía. Intenta de nuevo: agent-lock login ${normalizedProvider}`
+      : "Login no confirmado todavía. Intenta de nuevo: agent-lock login");
   }
 }
 
@@ -752,6 +780,118 @@ async function authStatus(): Promise<void> {
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     fail(`auth-status failed: ${msg}`);
+  }
+}
+
+async function servicesStatus(): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const base = normalizeBaseUrl(runtime.backend_url);
+  const url = `${base}/auth/services`;
+  const headers: Record<string, string> = {};
+  if (runtime.subject_token) {
+    headers.Authorization = `Bearer ${runtime.subject_token}`;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const res = await fetch(url, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    const data = JSON.parse(text);
+    const authenticated = Boolean(data?.authenticated);
+    log("🔎 Agent-Lock services");
+    log(`backend: ${runtime.backend_url}`);
+    log(`authenticated: ${authenticated}`);
+    if (typeof data?.source === "string" && data.source.trim()) {
+      log(`source: ${data.source}`);
+    }
+    if (typeof data?.email === "string" && data.email.trim()) {
+      log(`email: ${data.email}`);
+    }
+
+    const providers = Array.isArray(data?.providers) ? data.providers : [];
+    if (providers.length === 0) {
+      log("providers: (none)");
+      return;
+    }
+
+    log("providers:");
+    for (const p of providers) {
+      const provider = typeof p?.provider === "string" ? p.provider : "unknown";
+      const connected = Boolean(p?.connected);
+      const icon = connected ? "✅" : "❌";
+      const connection = typeof p?.connection === "string" ? p.connection : "-";
+      const status = typeof p?.status === "string" ? p.status : "unknown";
+      log(`  ${icon} ${provider} (${connection}) - ${status}`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    fail(`services failed: ${msg}`);
+  }
+}
+
+function parseProvider(argv: string[]): string {
+  const provider = (argv[3] ?? "").trim().toLowerCase();
+  if (!provider || !["google", "github", "slack"].includes(provider)) {
+    fail("Provider inválido. Usa: google | github | slack");
+  }
+  return provider;
+}
+
+async function providerLogin(provider: string): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const base = normalizeBaseUrl(runtime.backend_url);
+  const connection = provider === "google" ? "google-oauth2" : provider;
+  const hasSubject = typeof runtime.subject_token === "string" && runtime.subject_token.trim().length > 0;
+  const query = new URLSearchParams({ connection });
+  if (hasSubject) {
+    query.set("subject_token", runtime.subject_token!.trim());
+  }
+  query.set("force_success", "true");
+  const loginUrl = `${base}/auth/login?${query.toString()}`;
+  log(`🔐 Agent-Lock provider login (${provider})`);
+  const opened = openUrlInBrowser(loginUrl);
+  if (!opened) {
+    log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
+  } else {
+    log(`Abriendo navegador para conectar ${provider}...`);
+  }
+}
+
+async function providerStatus(provider: string): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const data = await backendGet(runtime, `/auth/providers/${provider}/status`);
+  log(`🔎 Agent-Lock provider status (${provider})`);
+  log(`authenticated: ${Boolean(data?.authenticated)}`);
+  log(`connected: ${Boolean(data?.connected)}`);
+  log(`status: ${String(data?.status ?? "unknown")}`);
+  if (typeof data?.login_url === "string" && data.login_url.trim()) {
+    log(`login_url: ${data.login_url}`);
+  }
+}
+
+async function providerLogout(provider: string): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
+  const disconnected = Boolean(data?.disconnected);
+  log(`🚪 Agent-Lock provider logout (${provider})`);
+  log(`disconnected: ${disconnected}`);
+  log(`reason: ${String(data?.reason ?? "unknown")}`);
+  if (typeof data?.login_url === "string" && data.login_url.trim()) {
+    log(`login_url: ${data.login_url}`);
   }
 }
 
@@ -809,7 +949,11 @@ async function logoutCmd(): Promise<void> {
   fail(`logout failed: ${results.join(" | ")}`);
 }
 
-async function cloudLogoutCmd(): Promise<void> {
+async function cloudLogoutCmd(provider?: string): Promise<void> {
+  if (provider && provider.trim()) {
+    await providerLogout(provider.trim().toLowerCase());
+    return;
+  }
   await logoutCmd();
 }
 
@@ -991,9 +1135,13 @@ function usage(): void {
   log("  restart   Restart OpenClaw gateway");
   log("  uninstall Remove plugin from OpenClaw");
   log("  update    Update package and reinstall plugin");
-  log("  login     Open browser login and wait for confirmation");
+  log("  login [provider]  Open browser login (optional provider: google|github|slack)");
   log("  auth-status  Show current authenticated account");
-  log("  logout    Force logout (configured backend + cloud fallback)");
+  log("  services  Show provider connection status (google/github/slack)");
+  log("  provider-login <provider>   Connect one provider (google|github|slack)");
+  log("  provider-status <provider>  Show one provider status");
+  log("  provider-logout <provider>  Disconnect one provider");
+  log("  logout [provider]  Logout Agent-Lock session or disconnect one provider");
   log("  cloud-logout  Alias of logout (deprecated)");
   log("");
   log("Examples:");
@@ -1004,8 +1152,14 @@ function usage(): void {
   log("  agent-lock uninstall");
   log("  agent-lock update");
   log("  agent-lock login");
+  log("  agent-lock login github");
   log("  agent-lock auth-status");
+  log("  agent-lock services");
+  log("  agent-lock provider-login github");
+  log("  agent-lock provider-status github");
+  log("  agent-lock provider-logout github");
   log("  agent-lock logout");
+  log("  agent-lock logout github");
   log("  agent-lock cloud-logout");
 }
 
@@ -1052,19 +1206,45 @@ async function main(): Promise<void> {
     return;
   }
   if (cmd === "login") {
-    await login();
+    const provider = process.argv[3];
+    await login(provider);
     return;
   }
   if (cmd === "auth-status") {
     await authStatus();
     return;
   }
+  if (cmd === "services") {
+    await servicesStatus();
+    return;
+  }
+  if (cmd === "provider-login") {
+    const provider = parseProvider(process.argv);
+    await providerLogin(provider);
+    return;
+  }
+  if (cmd === "provider-status") {
+    const provider = parseProvider(process.argv);
+    await providerStatus(provider);
+    return;
+  }
+  if (cmd === "provider-logout") {
+    const provider = parseProvider(process.argv);
+    await providerLogout(provider);
+    return;
+  }
   if (cmd === "logout") {
+    const provider = process.argv[3];
+    if (provider && provider.trim()) {
+      await providerLogout(provider.trim().toLowerCase());
+      return;
+    }
     await logoutCmd();
     return;
   }
   if (cmd === "cloud-logout") {
-    await cloudLogoutCmd();
+    const provider = process.argv[3];
+    await cloudLogoutCmd(provider);
     return;
   }
 

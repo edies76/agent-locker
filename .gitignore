@@ -19,3 +19,11 @@ dashboard/.env.local
 dashboard/standalone/
 deploy-temp/
 dashboard-deploy.zip
+
+# Azure logs and deployment files (temporary debugging artifacts)
+app-logs*/
+app-logs*.zip
+dashboard/deploy-*/
+dashboard/deploypkg-*/
+dashboard/deployzip-*.zip
+*.kudu.log

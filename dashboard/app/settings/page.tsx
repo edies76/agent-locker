@@ -9,6 +9,7 @@ import {
   fetchTokenVaultStatus,
   fetchRuntimeControls,
   updateRuntimeControls,
+  getAuthFlowLinks,
 } from "@/lib/api"
 import { Settings, PoliciesResponse, RuntimeControls } from "@/types"
 import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
@@ -531,6 +532,12 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
     authenticated?: boolean
     login_url?: string
   } | null>(null)
+  const [authLinks, setAuthLinks] = useState<{
+    backend_url: string
+    account_login_url: string
+    account_logout_url: string
+    provider_login_urls: { google: string; github: string; slack: string }
+  } | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -540,6 +547,12 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
         if (mounted) setVault(data)
       } catch {
         if (mounted) setVault(null)
+      }
+      try {
+        const links = await getAuthFlowLinks()
+        if (mounted) setAuthLinks(links)
+      } catch {
+        if (mounted) setAuthLinks(null)
       }
     })()
     return () => {
@@ -598,6 +611,51 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
               Connect account (Auth0 login)
             </a>
           )}
+        </div>
+      )}
+
+      {authLinks && (
+        <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-xs text-slate-300 space-y-3">
+          <p className="text-sm font-semibold text-indigo-300">🔑 Account vs Provider login flow</p>
+          <div className="space-y-1">
+            <p>
+              <span className="text-slate-400">Backend:</span>{" "}
+              <code className="text-blue-300">{authLinks.backend_url}</code>
+            </p>
+            <p>
+              <span className="text-slate-400">1) Agent-Lock account login:</span>{" "}
+              <a href={authLinks.account_login_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">2) Connect Google provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.google} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">3) Connect GitHub provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.github} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">4) Connect Slack provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.slack} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">Account logout:</span>{" "}
+              <a href={authLinks.account_logout_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+          </div>
+          <p className="text-slate-400">
+            Professional flow: login account once, then connect providers independently using provider links.
+          </p>
         </div>
       )}
 

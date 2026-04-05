@@ -1,199 +1,347 @@
+"use client"
+
 import Link from "next/link"
+import { useMemo, useState } from "react"
+
+type Locale = "en" | "es"
+
+type CopyShape = {
+  badge: string
+  subtitle: string
+  heroTitle: string
+  heroTitleAccent: string
+  heroDescription: string
+  openDashboard: string
+  viewGithub: string
+  sections: {
+    whatIs: string
+    usage: string
+    integrations: string
+    howToUse: string
+  }
+  cards: {
+    whatIs: Array<{ title: string; desc: string }>
+    usage: Array<{ title: string; desc: string }>
+    integrations: Array<{ title: string; desc: string }>
+    howToUse: Array<{ title: string; desc: string; code?: string }>
+  }
+  footer: string
+}
+
+const COPY: Record<Locale, CopyShape> = {
+  en: {
+    badge: "Production AI security middleware",
+    subtitle: "Agent-Lock",
+    heroTitle: "Govern AI actions",
+    heroTitleAccent: "with real controls",
+    heroDescription:
+      "Agent-Lock intercepts AI tool calls, validates intent, enforces policy and approvals, and gives operators one control plane for MCP, plugin, and runtime governance.",
+    openDashboard: "Open Dashboard",
+    viewGithub: "View on GitHub",
+    sections: {
+      whatIs: "What is Agent-Lock?",
+      usage: "How Agent-Lock is used",
+      integrations: "Integration surfaces",
+      howToUse: "How to use it",
+    },
+    cards: {
+      whatIs: [
+        {
+          title: "Policy enforcement layer",
+          desc: "Sits between AI agents and tools to allow, gate, or block actions based on policy and runtime controls.",
+        },
+        {
+          title: "Intent-aware approvals",
+          desc: "Combines intent validation and risk levels (LOW/HIGH/CRITICAL) so sensitive actions require explicit approval.",
+        },
+        {
+          title: "Operational visibility",
+          desc: "Centralized logs, activity, approvals, and diagnostics for production troubleshooting and governance.",
+        },
+      ],
+      usage: [
+        {
+          title: "For AI operations teams",
+          desc: "Define guardrails, monitor behavior, and reduce accidental or unauthorized tool execution.",
+        },
+        {
+          title: "For security-focused workflows",
+          desc: "Use manual approvals, policy rules, and audit history when actions can affect production data or systems.",
+        },
+        {
+          title: "For multi-tool agent stacks",
+          desc: "Apply the same control model across MCP tools, plugin actions, and cloud/local backend execution.",
+        },
+      ],
+      integrations: [
+        {
+          title: "Dashboard",
+          desc: "Operator console for activity, approvals, settings, analytics, and runtime controls.",
+        },
+        {
+          title: "Plugin bridge",
+          desc: "User-facing integration surface for approvals and chat workflows with governed execution.",
+        },
+        {
+          title: "MCP gateway",
+          desc: "MCP-oriented path for model clients, with policy and approval enforcement before tools execute.",
+        },
+      ],
+      howToUse: [
+        {
+          title: "1) Open landing and dashboard",
+          desc: "Use the landing page for product context, then open the dashboard for operations.",
+          code: "https://agent-lock-dashboard.azurewebsites.net\nhttps://agent-lock-dashboard.azurewebsites.net/dashboard/overview",
+        },
+        {
+          title: "2) Configure controls",
+          desc: "Set runtime controls, integration modes, and per-provider scopes from dashboard settings.",
+        },
+        {
+          title: "3) Connect integrations",
+          desc: "Configure Auth0-connected providers (Google/GitHub/Slack), then validate approvals and logs in production.",
+        },
+      ],
+    },
+    footer: "Agent-Lock | Governance and approvals for AI tool execution",
+  },
+  es: {
+    badge: "Middleware de seguridad para IA en producción",
+    subtitle: "Agent-Lock",
+    heroTitle: "Gobierna acciones de IA",
+    heroTitleAccent: "con controles reales",
+    heroDescription:
+      "Agent-Lock intercepta llamadas de herramientas, valida intención, aplica políticas y aprobaciones, y entrega un plano de control para MCP, plugin y gobierno operativo.",
+    openDashboard: "Abrir Dashboard",
+    viewGithub: "Ver en GitHub",
+    sections: {
+      whatIs: "¿Qué es Agent-Lock?",
+      usage: "Cómo se usa Agent-Lock",
+      integrations: "Superficies de integración",
+      howToUse: "Cómo usarlo",
+    },
+    cards: {
+      whatIs: [
+        {
+          title: "Capa de enforcement de políticas",
+          desc: "Se ubica entre agentes IA y herramientas para permitir, pausar o bloquear acciones según política y controles runtime.",
+        },
+        {
+          title: "Aprobaciones con intención",
+          desc: "Combina validación de intención y niveles de riesgo (LOW/HIGH/CRITICAL) para pedir aprobación cuando corresponde.",
+        },
+        {
+          title: "Visibilidad operativa",
+          desc: "Logs, actividad, aprobaciones y diagnósticos centralizados para operación y gobierno.",
+        },
+      ],
+      usage: [
+        {
+          title: "Para equipos de AI operations",
+          desc: "Define guardrails, monitorea comportamiento y reduce ejecución accidental o no autorizada.",
+        },
+        {
+          title: "Para flujos orientados a seguridad",
+          desc: "Usa aprobaciones manuales, reglas de política e historial de auditoría cuando hay impacto productivo.",
+        },
+        {
+          title: "Para stacks multi-herramienta",
+          desc: "Aplica el mismo modelo de control en herramientas MCP, plugin y backend cloud/local.",
+        },
+      ],
+      integrations: [
+        {
+          title: "Dashboard",
+          desc: "Consola operativa para actividad, aprobaciones, settings, analítica y controles runtime.",
+        },
+        {
+          title: "Plugin bridge",
+          desc: "Superficie para aprobaciones y chat, con ejecución gobernada.",
+        },
+        {
+          title: "MCP gateway",
+          desc: "Ruta orientada a clientes MCP, con enforcement antes de ejecutar herramientas.",
+        },
+      ],
+      howToUse: [
+        {
+          title: "1) Abre landing y dashboard",
+          desc: "Usa la landing para contexto y luego entra al dashboard para operar.",
+          code: "https://agent-lock-dashboard.azurewebsites.net\nhttps://agent-lock-dashboard.azurewebsites.net/dashboard/overview",
+        },
+        {
+          title: "2) Configura controles",
+          desc: "Ajusta runtime controls, integration modes y scopes por proveedor desde settings.",
+        },
+        {
+          title: "3) Conecta integraciones",
+          desc: "Configura proveedores en Auth0 (Google/GitHub/Slack) y valida aprobaciones y logs.",
+        },
+      ],
+    },
+    footer: "Agent-Lock | Gobierno y aprobaciones para ejecución de herramientas IA",
+  },
+}
+
+function SectionStream({
+  items,
+}: {
+  items: Array<{ title: string; desc: string; code?: string }>
+}) {
+  return (
+    <div className="relative mt-6 space-y-4">
+      <div className="pointer-events-none absolute bottom-0 left-4 top-0 w-px bg-gradient-to-b from-red-400/60 via-zinc-500/70 to-transparent" />
+      {items.map((item, idx) => (
+        <article
+          key={item.title}
+          className="relative overflow-hidden rounded-2xl border border-zinc-700/70 bg-zinc-900/45 p-5 pl-10 backdrop-blur-sm transition duration-300 hover:-translate-y-0.5 hover:border-red-400/60 hover:bg-zinc-800/55"
+        >
+          <span className="absolute left-3.5 top-6 h-2.5 w-2.5 rounded-full bg-red-400 shadow-[0_0_0_5px_rgba(239,68,68,0.18)]" />
+          <span className="absolute right-0 top-0 h-full w-24 bg-gradient-to-l from-red-500/8 to-transparent" />
+          <p className="mb-1 text-[11px] uppercase tracking-[0.22em] text-zinc-400">Phase {idx + 1}</p>
+          <h3 className="text-base font-semibold text-zinc-100">{item.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-zinc-300">{item.desc}</p>
+          {item.code ? (
+            <pre className="mt-3 overflow-x-auto rounded-lg border border-zinc-700/70 bg-zinc-950/80 px-3 py-2">
+              <code className="whitespace-pre-wrap text-xs text-zinc-200">{item.code}</code>
+            </pre>
+          ) : null}
+        </article>
+      ))}
+    </div>
+  )
+}
 
 export default function LandingPage() {
+  const [locale, setLocale] = useState<Locale>("en")
+  const t = useMemo(() => COPY[locale], [locale])
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-      {/* Header */}
-      <header className="border-b border-slate-800/50 backdrop-blur-sm sticky top-0 z-50 bg-slate-950/80">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-bold text-white text-xl shadow-lg shadow-cyan-500/20">
-              A
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-white">Agent-Lock</h1>
-              <p className="text-xs text-slate-400">Security middleware for AI agents</p>
-            </div>
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-b from-zinc-800 via-zinc-900 to-zinc-950 text-white">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,_rgba(239,68,68,0.2),_transparent_33%),radial-gradient(circle_at_84%_10%,_rgba(148,163,184,0.24),_transparent_46%)]" />
+      <div className="pointer-events-none absolute -left-20 top-8 h-72 w-72 animate-[pulse_8s_ease-in-out_infinite] rounded-full bg-red-500/15 blur-3xl" />
+      <div className="pointer-events-none absolute right-0 top-0 h-[26rem] w-[26rem] animate-[pulse_10s_ease-in-out_infinite] rounded-full bg-zinc-300/15 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-10 right-10 h-64 w-64 animate-[pulse_9s_ease-in-out_infinite] rounded-full bg-red-400/10 blur-3xl" />
+
+      <header className="sticky top-0 z-40 border-b border-zinc-700/70 bg-zinc-900/70 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-zinc-300">{t.badge}</p>
+            <h1 className="text-xl font-bold text-zinc-100">{t.subtitle}</h1>
           </div>
-          <Link 
-            href="/dashboard/overview" 
-            className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-medium transition-all shadow-lg shadow-cyan-600/20 hover:shadow-cyan-500/30"
-          >
-            Open Dashboard →
-          </Link>
+          <div className="flex items-center gap-3">
+            <div className="inline-flex overflow-hidden rounded-lg border border-zinc-600/70 bg-zinc-800/70">
+              <button
+                type="button"
+                onClick={() => setLocale("en")}
+                className={`px-3 py-1.5 text-sm transition ${locale === "en" ? "bg-zinc-100 text-zinc-900" : "bg-transparent text-zinc-300 hover:bg-zinc-700/80"}`}
+              >
+                EN
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocale("es")}
+                className={`px-3 py-1.5 text-sm transition ${locale === "es" ? "bg-zinc-100 text-zinc-900" : "bg-transparent text-zinc-300 hover:bg-zinc-700/80"}`}
+              >
+                ES
+              </button>
+            </div>
+            <Link
+              href="/dashboard/overview"
+              className="rounded-lg border border-zinc-300/30 bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-200"
+            >
+              {t.openDashboard}
+            </Link>
+          </div>
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-7xl mx-auto px-6 pt-20 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-sm font-medium mb-8">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-          </span>
-          Production-ready AI security middleware
-        </div>
-        
-        <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
-          Secure your AI agents
-          <br />
-          <span className="bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600 bg-clip-text text-transparent">
-            without breaking workflow
-          </span>
-        </h1>
-        
-        <p className="text-xl text-slate-400 max-w-3xl mx-auto mb-12 leading-relaxed">
-          Agent-Lock intercepts AI tool calls, validates intent with Gemini AI, and enforces approval workflows—all while maintaining zero-friction UX for authorized actions.
-        </p>
+      <main className="relative mx-auto max-w-7xl px-6 pb-16 pt-16">
+        <section className="relative overflow-hidden rounded-3xl border border-zinc-600/70 bg-zinc-900/55 p-8 shadow-[0_24px_64px_rgba(0,0,0,0.35)] backdrop-blur-xl md:p-12">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-red-400/70 to-transparent" />
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:items-center">
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-red-400">{t.badge}</p>
+              <h2 className="mt-3 max-w-5xl text-4xl font-bold leading-tight md:text-6xl">
+                {t.heroTitle}{" "}
+                <span className="bg-gradient-to-r from-red-400 via-zinc-200 to-zinc-100 bg-clip-text text-transparent">
+                  {t.heroTitleAccent}
+                </span>
+              </h2>
+              <p className="mt-5 max-w-3xl text-lg leading-8 text-zinc-300">{t.heroDescription}</p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link
+                  href="/dashboard/overview"
+                  className="rounded-xl border border-red-400/35 bg-red-500 px-6 py-3 font-semibold text-white shadow-[0_14px_34px_rgba(239,68,68,0.28)] transition hover:-translate-y-0.5 hover:bg-red-400"
+                >
+                  {t.openDashboard}
+                </Link>
+                <a
+                  href="https://github.com/edies76/agent-locker"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-xl border border-zinc-500/80 bg-zinc-800 px-6 py-3 font-semibold text-zinc-100 transition hover:-translate-y-0.5 hover:border-red-400/50 hover:bg-zinc-700"
+                >
+                  {t.viewGithub}
+                </a>
+              </div>
+            </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link 
-            href="/dashboard/overview"
-            className="px-8 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl font-semibold transition-all shadow-2xl shadow-cyan-600/30 hover:shadow-cyan-500/40 hover:scale-105"
-          >
-            Launch Dashboard
-          </Link>
-          <a 
-            href="https://github.com/edies76/agent-locker"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-8 py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-xl font-semibold transition-all border border-slate-700 hover:border-slate-600"
-          >
-            View on GitHub
-          </a>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <h2 className="text-3xl font-bold text-white text-center mb-12">Why Agent-Lock?</h2>
-        <div className="grid md:grid-cols-3 gap-8">
-          <FeatureCard
-            icon="🛡️"
-            title="AI-Powered Validation"
-            description="Gemini validates every tool call against user intent before execution, catching misaligned actions."
-          />
-          <FeatureCard
-            icon="⚡"
-            title="Zero-Friction Auto-Approve"
-            description="Low-risk actions auto-approve instantly. High-risk requires manual review. CRITICAL blocks by default."
-          />
-          <FeatureCard
-            icon="🔐"
-            title="Connected Accounts"
-            description="Securely broker Gmail, Calendar, GitHub, Slack via Auth0 Token Vault—agents never see your tokens."
-          />
-          <FeatureCard
-            icon="📊"
-            title="Real-Time Dashboard"
-            description="Monitor activity, approvals, analytics, and MCP topology from anywhere."
-          />
-          <FeatureCard
-            icon="🔌"
-            title="MCP Server Integration"
-            description="Drop-in MCP server for Claude Desktop with built-in policy enforcement."
-          />
-          <FeatureCard
-            icon="📱"
-            title="Telegram Approvals"
-            description="Get instant approval requests on your phone with YES/NO buttons."
-          />
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section className="max-w-7xl mx-auto px-6 py-20">
-        <h2 className="text-3xl font-bold text-white text-center mb-12">How It Works</h2>
-        <div className="grid md:grid-cols-4 gap-6">
-          <StepCard number="1" title="Agent calls tool" description="Claude Desktop makes a tool call via MCP" />
-          <StepCard number="2" title="Intent validation" description="Gemini AI validates against user intent" />
-          <StepCard number="3" title="Risk assessment" description="Policy engine assigns LOW/HIGH/CRITICAL risk" />
-          <StepCard number="4" title="Execute or block" description="Auto-approve, manual review, or block" />
-        </div>
-      </section>
-
-      {/* Quick Start */}
-      <section className="max-w-4xl mx-auto px-6 py-20">
-        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-10">
-          <h2 className="text-3xl font-bold text-white mb-6">Quick Start</h2>
-          <div className="space-y-4">
-            <CodeBlock title="1. Install the MCP server">
-              npx @agent-lock/mcp-server
-            </CodeBlock>
-            <CodeBlock title="2. Add to Claude Desktop config">
-              {`{
-  "mcpServers": {
-    "agent-lock": {
-      "command": "npx",
-      "args": ["-y", "@agent-lock/mcp-server"]
-    }
-  }
-}`}
-            </CodeBlock>
-            <CodeBlock title="3. Open the dashboard">
-              https://agent-lock-dashboard.azurewebsites.net
-            </CodeBlock>
+            <div className="relative mx-auto w-full max-w-md">
+              <div className="absolute -inset-1 animate-[pulse_7s_ease-in-out_infinite] rounded-3xl bg-gradient-to-br from-red-500/35 via-transparent to-zinc-300/20 blur-xl" />
+              <div className="relative rounded-3xl border border-zinc-600/80 bg-zinc-900/85 p-6">
+                <div className="space-y-5">
+                  <div className="flex items-center justify-between border-b border-zinc-700/70 pb-3">
+                    <span className="text-xs uppercase tracking-wider text-zinc-400">Approval model</span>
+                    <span className="rounded-full border border-red-400/40 bg-red-500/15 px-2.5 py-1 text-xs text-red-300">
+                      ACTIVE
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-zinc-700/70 bg-zinc-800/60 px-3 py-2 text-sm text-zinc-200">
+                      Intent + Risk validation
+                    </div>
+                    <div className="rounded-lg border border-zinc-700/70 bg-zinc-800/60 px-3 py-2 text-sm text-zinc-200">
+                      Scoped provider controls
+                    </div>
+                    <div className="rounded-lg border border-zinc-700/70 bg-zinc-800/60 px-3 py-2 text-sm text-zinc-200">
+                      MCP, Plugin, Backend governance
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    Real-time approvals and policy decisions in one operator surface.
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800/50 mt-20">
-        <div className="max-w-7xl mx-auto px-6 py-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-slate-400 text-sm">
-            © 2026 Agent-Lock. Open source security for AI agents.
-          </p>
-          <div className="flex gap-6">
-            <a href="https://github.com/edies76/agent-locker" className="text-slate-400 hover:text-white transition-colors">
-              GitHub
-            </a>
-            <Link href="/dashboard/overview" className="text-slate-400 hover:text-white transition-colors">
-              Dashboard
-            </Link>
-            <Link href="/dashboard/about" className="text-slate-400 hover:text-white transition-colors">
-              About
-            </Link>
-          </div>
-        </div>
+        <section className="mt-14">
+          <h2 className="text-2xl font-bold text-zinc-100">{t.sections.whatIs}</h2>
+          <SectionStream items={t.cards.whatIs} />
+        </section>
+
+        <section className="mt-14">
+          <h2 className="text-2xl font-bold text-zinc-100">{t.sections.usage}</h2>
+          <SectionStream items={t.cards.usage} />
+        </section>
+
+        <section className="mt-14">
+          <h2 className="text-2xl font-bold text-zinc-100">{t.sections.integrations}</h2>
+          <SectionStream items={t.cards.integrations} />
+        </section>
+
+        <section className="mt-14">
+          <h2 className="text-2xl font-bold text-zinc-100">{t.sections.howToUse}</h2>
+          <SectionStream items={t.cards.howToUse} />
+        </section>
+      </main>
+
+      <footer className="border-t border-zinc-700/70 bg-zinc-900/70">
+        <div className="mx-auto max-w-7xl px-6 py-6 text-sm text-zinc-400">{t.footer}</div>
       </footer>
     </div>
   )
 }
 
-function FeatureCard({ icon, title, description }: { icon: string; title: string; description: string }) {
-  return (
-    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all hover:shadow-lg hover:shadow-cyan-500/5">
-      <div className="text-4xl mb-4">{icon}</div>
-      <h3 className="text-xl font-semibold text-white mb-3">{title}</h3>
-      <p className="text-slate-400 leading-relaxed">{description}</p>
-    </div>
-  )
-}
-
-function StepCard({ number, title, description }: { number: string; title: string; description: string }) {
-  return (
-    <div className="relative">
-      <div className="flex flex-col items-center text-center">
-        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold text-xl mb-4 shadow-lg shadow-cyan-500/20">
-          {number}
-        </div>
-        <h3 className="text-lg font-semibold text-white mb-2">{title}</h3>
-        <p className="text-sm text-slate-400">{description}</p>
-      </div>
-      {number !== "4" && (
-        <div className="hidden md:block absolute top-6 left-[calc(50%+24px)] w-[calc(100%-48px)] h-0.5 bg-gradient-to-r from-cyan-500/50 to-transparent"></div>
-      )}
-    </div>
-  )
-}
-
-function CodeBlock({ title, children }: { title: string; children: string }) {
-  return (
-    <div>
-      <p className="text-sm text-slate-400 mb-2">{title}</p>
-      <pre className="bg-slate-950 border border-slate-800 rounded-lg p-4 overflow-x-auto">
-        <code className="text-sm text-cyan-400 font-mono">{children}</code>
-      </pre>
-    </div>
-  )
-}

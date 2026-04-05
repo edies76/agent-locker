@@ -29,6 +29,21 @@ export async function getBackendConnectionInfo() {
   return (await resolveBackendEndpoint()) ?? getLastBackendResolution()
 }
 
+export async function getAuthFlowLinks() {
+  const { baseUrl } = await resolveBackendEndpoint()
+  const b = baseUrl.replace(/\/+$/, "")
+  return {
+    backend_url: b,
+    account_login_url: `${b}/auth/login?force_success=true`,
+    account_logout_url: `${b}/auth/logout`,
+    provider_login_urls: {
+      google: `${b}/auth/login?connection=google-oauth2&force_success=true`,
+      github: `${b}/auth/login?connection=github&force_success=true`,
+      slack: `${b}/auth/login?connection=slack&force_success=true`,
+    },
+  }
+}
+
 export async function fetchHealth() {
   const res = await fetch(await buildUrl("/health"), { cache: "no-store" })
   return res.json()
@@ -196,6 +211,7 @@ export async function updateRuntimeControls(body: {
   first_time_manual_approval_enabled?: boolean
   notify_auto_approved_actions?: boolean
   integration_modes?: Record<string, "auto" | "manual" | "disabled">
+  integration_scopes_enabled?: Record<string, Record<string, boolean>>
 }) {
   const base = await buildUrl("")
   const res = await fetch(`${base}/settings/runtime-controls`, {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from "react"
+import { usePathname } from "next/navigation"
 import { ThemeProvider } from "@/contexts/ThemeContext"
 import Sidebar from "./Sidebar"
 import AIAssistantWidget from "./AIAssistantWidget"
@@ -74,11 +75,26 @@ export default function ClientProviders({
 }: {
   children: React.ReactNode
 }) {
+  const pathname = usePathname()
+  const isLandingPage = pathname === "/"
+
+  useEffect(() => {
+    if (isLandingPage) {
+      document.body.classList.add("landing-no-sidebar")
+    } else {
+      document.body.classList.remove("landing-no-sidebar")
+    }
+
+    return () => {
+      document.body.classList.remove("landing-no-sidebar")
+    }
+  }, [isLandingPage])
+
   return (
     <ThemeProvider>
-      <BackendConnectionNotice />
-      <Sidebar />
-      <AIAssistantWidget />
+      {!isLandingPage && <BackendConnectionNotice />}
+      {!isLandingPage && <Sidebar />}
+      {!isLandingPage && <AIAssistantWidget />}
       {children}
     </ThemeProvider>
   )

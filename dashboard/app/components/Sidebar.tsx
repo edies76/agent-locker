@@ -87,6 +87,16 @@ const navSections = [
         ),
       },
       {
+        href: "/dashboard/scopes",
+        label: "Scopes",
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M9 2l6 3.5v7L9 16 3 12.5v-7L9 2z" />
+            <path d="M9 2v14M3 5.5l6 3.5 6-3.5" strokeLinecap="round" />
+          </svg>
+        ),
+      },
+      {
         href: "/dashboard/cli",
         label: "CLI",
         icon: (
