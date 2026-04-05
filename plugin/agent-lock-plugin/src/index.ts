@@ -201,7 +201,7 @@ let activeChannel = PREFERRED_CHANNEL;
 let heartbeatConnectedAnnounced = false;
 let heartbeatAnnouncedChannel = "";
 
-const AUTH_GATED_TOOL_KEYWORDS = ["gmail", "email", "mail", "calendar", "slack", "github", "vault"];
+const AUTH_GATED_TOOL_KEYWORDS = ["gmail", "email", "mail", "calendar", "slack", "github", "drive", "youtube", "vault"];
 
 function isAuthGatedTool(toolName: string): boolean {
     const normalized = (toolName || "").toLowerCase();
@@ -1100,6 +1100,145 @@ export default function register(api: any) {
             },
         });
         log("info", "agent_lock_calendar tool registered (Central)");
+
+        // ── Drive Central Tool ───────────────────────────────────────────────────
+        api.registerTool({
+            name: "agent_lock_drive",
+            label: "Agent-Lock Drive",
+            description: "Interact with Google Drive using Agent-Lock Token Vault (zero-config)",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: { type: "string", enum: ["list_files", "create_file", "move_file"], description: "The Drive action to perform" },
+                    page_size: { type: "number", description: "Maximum files to return for list_files (default 20)" },
+                    query: { type: "string", description: "Optional Drive query filter for list_files (q parameter)" },
+                    name: { type: "string", description: "File name for create_file" },
+                    content: { type: "string", description: "File content for create_file" },
+                    mime_type: { type: "string", description: "MIME type for create_file (default text/plain)" },
+                    parent_folder_id: { type: "string", description: "Optional parent folder ID for create_file" },
+                    file_id: { type: "string", description: "File ID for move_file" },
+                    target_folder_id: { type: "string", description: "Target folder ID for move_file" },
+                },
+                required: ["action"],
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const action = String(params.action || "");
+                log("info", `Drive ${action} via Token Vault`, {});
+                const authMsg = await authInfoMessage("agent_lock_drive");
+                if (authMsg) return authMsg;
+
+                if (action === "list_files") {
+                    const page_size_raw = Number(params.page_size ?? 20);
+                    const page_size = Number.isFinite(page_size_raw) ? Math.max(1, Math.min(100, Math.floor(page_size_raw))) : 20;
+                    const query = String(params.query || "").trim();
+                    try {
+                        const body: Record<string, unknown> = {
+                            method_id: "drive.files.list",
+                            query: {
+                                pageSize: page_size,
+                                fields: "files(id,name,mimeType,modifiedTime,webViewLink),nextPageToken",
+                            },
+                        };
+                        if (query) {
+                            (body.query as Record<string, unknown>).q = query;
+                        }
+                        const response = await post("/vault/google/drive/execute", body, undefined, SUBJECT_TOKEN, true) as any;
+                        const result = response?.result ?? {};
+                        const files = Array.isArray(result?.files) ? result.files : [];
+                        return jsonToolResult({
+                            success: true,
+                            message: `✅ Found ${files.length} Drive file(s).`,
+                            count: files.length,
+                            files,
+                            next_page_token: result?.nextPageToken ?? null,
+                        });
+                    } catch (error: any) {
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to list files: ${error?.message ?? "unknown"}` });
+                    }
+                }
+
+                if (action === "create_file") {
+                    const name = String(params.name || "");
+                    const content = String(params.content || "");
+                    const mime_type = String(params.mime_type || "text/plain");
+                    const parent_folder_id = String(params.parent_folder_id || "");
+                    if (!name || !content) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "name and content are required for create_file." });
+                    }
+                    try {
+                        const response = await post("/vault/google/drive/files/create", {
+                            name,
+                            content,
+                            mime_type,
+                            parent_folder_id: parent_folder_id || undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: `✅ File created: ${name}`, details: response });
+                    } catch (error: any) {
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to create file: ${error?.message ?? "unknown"}` });
+                    }
+                }
+
+                if (action === "move_file") {
+                    const file_id = String(params.file_id || "");
+                    const target_folder_id = String(params.target_folder_id || "");
+                    if (!file_id || !target_folder_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "file_id and target_folder_id are required for move_file." });
+                    }
+                    try {
+                        const response = await post("/vault/google/drive/files/move", {
+                            file_id,
+                            target_folder_id,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: "✅ File moved successfully.", details: response });
+                    } catch (error: any) {
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to move file: ${error?.message ?? "unknown"}` });
+                    }
+                }
+
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
+            },
+        });
+        log("info", "agent_lock_drive tool registered (Central)");
+
+        // ── YouTube Central Tool ────────────────────────────────────────────────
+        api.registerTool({
+            name: "agent_lock_youtube",
+            label: "Agent-Lock YouTube",
+            description: "Interact with YouTube using Agent-Lock Token Vault (zero-config)",
+            parameters: {
+                type: "object",
+                properties: {
+                    action: { type: "string", enum: ["list_channels"], description: "The YouTube action to perform" },
+                    mine: { type: "boolean", description: "Whether to list channels for the authenticated user (default true)" },
+                },
+                required: ["action"],
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const action = String(params.action || "");
+                log("info", `YouTube ${action} via Token Vault`, {});
+                const authMsg = await authInfoMessage("agent_lock_youtube");
+                if (authMsg) return authMsg;
+
+                if (action === "list_channels") {
+                    const mine = typeof params.mine === "boolean" ? params.mine : true;
+                    try {
+                        const response = await post("/vault/google/youtube/channels/list", { mine }, undefined, SUBJECT_TOKEN, true) as any;
+                        const items = Array.isArray(response?.items) ? response.items : [];
+                        return jsonToolResult({
+                            success: true,
+                            message: `✅ Found ${items.length} YouTube channel(s).`,
+                            count: items.length,
+                            items,
+                        });
+                    } catch (error: any) {
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to list channels: ${error?.message ?? "unknown"}` });
+                    }
+                }
+
+                return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
+            },
+        });
+        log("info", "agent_lock_youtube tool registered (Central)");
 
     }
     // ── Intercept tool calls ──────────────────────────────────────────────────
