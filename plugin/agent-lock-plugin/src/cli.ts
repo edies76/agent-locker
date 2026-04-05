@@ -740,7 +740,7 @@ async function login(provider?: string): Promise<void> {
             log("Necesitas reloguear la cuenta principal para habilitar providers:");
             log("  1) agent-lock logout");
             log("  2) agent-lock login");
-            log(`  3) agent-lock provider-login ${normalizedProvider}`);
+            log(`  3) agent-lock login ${normalizedProvider}`);
             return false;
           }
         } catch {}
@@ -751,7 +751,7 @@ async function login(provider?: string): Promise<void> {
     : await waitForLoginCompletion(runtime);
   if (!ok) {
     fail(connection
-      ? `Conexión de provider ${normalizedProvider} no confirmada todavía. Intenta: agent-lock provider-login ${normalizedProvider}`
+      ? `Conexión de provider ${normalizedProvider} no confirmada todavía. Intenta: agent-lock login ${normalizedProvider}`
       : "Login no confirmado todavía. Intenta de nuevo: agent-lock login");
   }
 }
@@ -940,24 +940,29 @@ async function scopesCmd(provider?: string): Promise<void> {
     }
 
     const connected: boolean = Boolean(scopeData?.connected);
-    const scopes: any[] = Array.isArray(scopeData?.scopes) ? scopeData.scopes : [];
+    const availableScopes: any[] = Array.isArray(scopeData?.available_scopes)
+      ? scopeData.available_scopes
+      : (Array.isArray(scopeData?.scopes) ? scopeData.scopes : []);
+    const grantedScopes: any[] = Array.isArray(scopeData?.granted_scopes) ? scopeData.granted_scopes : [];
     const icon = connected ? "✅" : "❌";
     const scopesSource = typeof scopeData?.scopes_source === "string" ? scopeData.scopes_source : "unknown";
+    const grantedSource = typeof scopeData?.granted_source === "string" ? scopeData.granted_source : "unknown";
 
     log(`${icon} Provider: ${p.toUpperCase()} — ${connected ? "connected" : "not connected"}`);
     log(`   connection: ${scopeData?.connection ?? "-"}`);
-    log(`   scopes_source: ${scopesSource}`);
+    log(`   available_source: ${scopesSource}`);
+    log(`   granted_source: ${grantedSource}`);
 
-    if (scopes.length === 0) {
-      log(`   (no scopes configured in Auth0 for this connection)`);
+    if (availableScopes.length === 0) {
+      log(`   available_scopes: (none from Auth0 connection)`);
     } else {
-      // Group scopes by prefix for readability
       const groups: Record<string, any[]> = {};
-      for (const s of scopes) {
+      for (const s of availableScopes) {
         const prefix = (s.scope as string).split(".")[0];
         if (!groups[prefix]) groups[prefix] = [];
         groups[prefix].push(s);
       }
+      log(`   available_scopes (${availableScopes.length}):`);
       for (const [group, groupScopes] of Object.entries(groups)) {
         log(`   [${group}]`);
         for (const s of groupScopes) {
@@ -966,6 +971,23 @@ async function scopesCmd(provider?: string): Promise<void> {
           const modeTag = mode === "auto" ? " 🟢 auto" : mode === "ask" ? " 🔴 ask" : "";
           log(`     • ${s.scope}${modeTag}`);
         }
+      }
+    }
+
+    if (grantedScopes.length === 0) {
+      log(`   granted_scopes: (not available or not granted yet)`);
+    } else {
+      log(`   granted_scopes (${grantedScopes.length}):`);
+      for (const s of grantedScopes) {
+        log(`     • ${s.scope}`);
+      }
+    }
+
+    const missingFromGranted: string[] = Array.isArray(scopeData?.missing_from_granted) ? scopeData.missing_from_granted : [];
+    if (missingFromGranted.length > 0) {
+      log(`   missing_from_granted (${missingFromGranted.length}):`);
+      for (const scope of missingFromGranted) {
+        log(`     • ${scope}`);
       }
     }
     log("");
@@ -1315,7 +1337,8 @@ function usage(): void {
   log("  account-status  Alias of auth-status");
   log("  account-logout  Alias of logout");
   log("  services  Show provider connection status (google/github/slack)");
-  log("  provider-login <provider>   Connect one provider (google|github|slack)");
+  log("  login <provider>   Connect/add one provider (google|github|slack)");
+  log("  provider-login <provider>   Alias of login <provider>");
   log("  provider-status <provider>  Show one provider status");
   log("  provider-logout <provider>  Disconnect one provider");
   log("  logout  Logout primary Agent-Lock account");
@@ -1331,11 +1354,11 @@ function usage(): void {
   log("  agent-lock uninstall");
   log("  agent-lock update");
   log("  agent-lock login");
-  log("  agent-lock provider-login github");
+  log("  agent-lock login github");
   log("  agent-lock auth-status");
   log("  agent-lock account-status");
   log("  agent-lock services");
-  log("  agent-lock provider-login github");
+  log("  agent-lock login github");
   log("  agent-lock provider-status github");
   log("  agent-lock provider-logout github");
   log("  agent-lock logout");
