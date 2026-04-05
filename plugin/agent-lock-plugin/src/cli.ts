@@ -740,7 +740,7 @@ async function login(provider?: string): Promise<void> {
             log("Necesitas reloguear la cuenta principal para habilitar providers:");
             log("  1) agent-lock logout");
             log("  2) agent-lock login");
-            log(`  3) agent-lock login ${normalizedProvider}`);
+            log(`  3) agent-lock provider-login ${normalizedProvider}`);
             return false;
           }
         } catch {}
@@ -785,7 +785,9 @@ async function authStatus(): Promise<void> {
     const me = JSON.parse(text);
     const authenticated = Boolean(me?.authenticated);
     const sub = typeof me?.sub === "string" ? me.sub : "(none)";
-    const email = typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)";
+    const email = typeof me?.email === "string"
+      ? me.email
+      : (typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)");
     log("🔎 Agent-Lock account status (primary)");
     log(`backend: ${runtime.backend_url}`);
     log(`authenticated: ${authenticated}`);
