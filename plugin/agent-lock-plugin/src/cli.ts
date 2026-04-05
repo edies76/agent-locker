@@ -829,6 +829,12 @@ async function servicesStatus(): Promise<void> {
     if (typeof data?.source === "string" && data.source.trim()) {
       log(`account_source: ${data.source}`);
     }
+    if (typeof data?.account_login_url === "string" && data.account_login_url.trim()) {
+      log(`account_login_url: ${data.account_login_url}`);
+    }
+    if (typeof data?.account_logout_url === "string" && data.account_logout_url.trim()) {
+      log(`account_logout_url: ${data.account_logout_url}`);
+    }
     if (typeof data?.email === "string" && data.email.trim()) {
       log(`email: ${data.email}`);
     }
@@ -884,7 +890,7 @@ async function providerStatus(provider: string): Promise<void> {
     log(`⚠️  No puedes desconectarlo (usa 'agent-lock logout' para salir completamente)`);
   } else if (status === "connected_via_connected_accounts") {
     log(`status: ${status}`);
-    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'logout ${provider}')`);
+    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'provider-logout ${provider}')`);
   } else {
     log(`status: ${status}`);
   }
