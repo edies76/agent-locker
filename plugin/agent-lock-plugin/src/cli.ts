@@ -729,6 +729,14 @@ async function login(provider?: string): Promise<void> {
             process.stdout.write(`\r✅ ${normalizedProvider} conectado.                      \n`);
             return true;
           }
+          if (String(status?.status ?? "") === "refresh_token_missing") {
+            process.stdout.write(`\r❌ Falta refresh token en tu sesión principal.           \n`);
+            log("Necesitas reloguear la cuenta principal para habilitar providers:");
+            log("  1) agent-lock logout");
+            log("  2) agent-lock login");
+            log(`  3) agent-lock login ${normalizedProvider}`);
+            return false;
+          }
         } catch {}
         await sleep(1500);
       }
@@ -854,13 +862,14 @@ async function providerLogin(provider: string): Promise<void> {
   const base = normalizeBaseUrl(runtime.backend_url);
   const connection = provider === "google" ? "google-oauth2" : provider;
   const hasSubject = typeof runtime.subject_token === "string" && runtime.subject_token.trim().length > 0;
-  const query = new URLSearchParams({ connection });
+  const query = new URLSearchParams({ connection, provider_connect: "true" });
   if (hasSubject) {
     query.set("subject_token", runtime.subject_token!.trim());
   }
   query.set("force_success", "true");
   const loginUrl = `${base}/auth/login?${query.toString()}`;
-  log(`🔐 Agent-Lock provider login (${provider})`);
+  log(`🔐 Agent-Lock provider connect (${provider})`);
+  log(`This will show a Google consent screen requesting API permissions (Gmail, Calendar, etc.)`);
   const opened = openUrlInBrowser(loginUrl);
   if (!opened) {
     log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
@@ -873,10 +882,25 @@ async function providerStatus(provider: string): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
   const data = await backendGet(runtime, `/auth/providers/${provider}/status`);
+  const status = String(data?.status ?? "unknown");
+  const connected = Boolean(data?.connected);
+  
   log(`🔎 Agent-Lock provider status (${provider})`);
   log(`authenticated: ${Boolean(data?.authenticated)}`);
-  log(`connected: ${Boolean(data?.connected)}`);
-  log(`status: ${String(data?.status ?? "unknown")}`);
+  log(`connected: ${connected}`);
+  
+  // Show clear explanation based on connection type
+  if (status === "connected_via_primary_identity") {
+    log(`status: ${status}`);
+    log(`⚠️  Este provider es tu identidad principal de Agent-Lock`);
+    log(`⚠️  No puedes desconectarlo (usa 'agent-lock logout' para salir completamente)`);
+  } else if (status === "connected_via_connected_accounts") {
+    log(`status: ${status}`);
+    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'logout ${provider}')`);
+  } else {
+    log(`status: ${status}`);
+  }
+  
   if (typeof data?.login_url === "string" && data.login_url.trim()) {
     log(`login_url: ${data.login_url}`);
   }
@@ -887,9 +911,27 @@ async function providerLogout(provider: string): Promise<void> {
   const runtime = ensureRuntimeConfig(extDir);
   const data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
   const disconnected = Boolean(data?.disconnected);
+  const reason = String(data?.reason ?? "unknown");
+  
   log(`🚪 Agent-Lock provider logout (${provider})`);
-  log(`disconnected: ${disconnected}`);
-  log(`reason: ${String(data?.reason ?? "unknown")}`);
+  
+  if (disconnected) {
+    log(`✅ ${provider} desconectado exitosamente`);
+  } else {
+    log(`❌ No se pudo desconectar`);
+    
+    // Show clear explanation for why logout failed
+    if (reason === "primary_identity_disconnect_not_supported" || reason === "connected_via_primary_identity") {
+      log(`⚠️  Razón: Este provider es tu identidad principal de Agent-Lock`);
+      log(`⚠️  No puedes desconectarlo sin cerrar sesión completamente`);
+      log(`💡 Usa 'agent-lock logout' para salir de tu cuenta`);
+    } else if (reason === "refresh_token_missing") {
+      log(`⚠️  Razón: No hay token para desconectar (ya estaba desconectado)`);
+    } else {
+      log(`reason: ${reason}`);
+    }
+  }
+  
   if (typeof data?.login_url === "string" && data.login_url.trim()) {
     log(`login_url: ${data.login_url}`);
   }
