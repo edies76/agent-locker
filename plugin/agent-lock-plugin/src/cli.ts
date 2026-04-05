@@ -1020,7 +1020,19 @@ function scopeToToolKey(scope: string, _provider: string): string {
 async function providerLogout(provider: string): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
-  const data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
+  let data: any;
+  try {
+    data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("HTTP 401")) {
+      log(`🚪 Agent-Lock provider logout (${provider})`);
+      log("❌ No hay sesión principal activa.");
+      log("💡 Primero inicia sesión: agent-lock login");
+      return;
+    }
+    fail(`provider-logout failed: ${msg}`);
+  }
   const disconnected = Boolean(data?.disconnected);
   const reason = String(data?.reason ?? "unknown");
   
