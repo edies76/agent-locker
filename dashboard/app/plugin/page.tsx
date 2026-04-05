@@ -325,13 +325,11 @@ export default function PluginPage() {
         setVaultStatus(vault)
 
         const typedSettings = settings as Settings
-        const googleConnection = String(typedSettings?.auth0?.google_connection_name || "").trim() || "google-oauth2"
-        const githubConnection = String(typedSettings?.auth0?.github_connection_name || "").trim() || "github"
 
         setProviderLoginUrls({
           account: vault?.login_url || `${baseUrl}/auth/login`,
-          google: `${baseUrl}/auth/login?connection=${encodeURIComponent(googleConnection)}`,
-          github: `${baseUrl}/auth/login?connection=${encodeURIComponent(githubConnection)}`,
+          google: `${baseUrl}/auth/provider-login/google`,
+          github: `${baseUrl}/auth/provider-login/github`,
         })
       } catch {
         if (!mounted) return

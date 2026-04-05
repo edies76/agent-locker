@@ -37,9 +37,9 @@ export async function getAuthFlowLinks() {
     account_login_url: `${b}/auth/login?force_success=true`,
     account_logout_url: `${b}/auth/logout`,
     provider_login_urls: {
-      google: `${b}/auth/login?connection=google-oauth2&force_success=true`,
-      github: `${b}/auth/login?connection=github&force_success=true`,
-      slack: `${b}/auth/login?connection=slack&force_success=true`,
+      google: `${b}/auth/provider-login/google?force_success=true`,
+      github: `${b}/auth/provider-login/github?force_success=true`,
+      slack: `${b}/auth/provider-login/slack?force_success=true`,
     },
   }
 }

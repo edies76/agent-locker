@@ -293,7 +293,7 @@ async function waitForEnterOrSpace(timeoutMs: number): Promise<"trigger" | "time
       process.stdin.off("data", onData);
       try {
         process.stdin.setRawMode(false);
-      } catch {}
+      } catch { }
       process.stdin.pause();
     };
 
@@ -325,7 +325,7 @@ async function waitForLoginCompletion(runtime: AgentLockRuntimeConfig, maxWaitMs
         process.stdout.write("\r✅ Login confirmado.                              \n");
         return true;
       }
-    } catch {}
+    } catch { }
     const mark = spinner[i % spinner.length];
     process.stdout.write(`\r${mark} Esperando login en navegador...`);
     i += 1;
@@ -448,7 +448,7 @@ function update(): void {
     try {
       void install();
       log("✅ Previous extension restored.");
-    } catch {}
+    } catch { }
     fail(`❌ Step 2 failed (global install): ${npmResult.error.message}`);
   }
   if ((npmResult.status ?? 1) !== 0) {
@@ -456,7 +456,7 @@ function update(): void {
     try {
       void install();
       log("✅ Previous extension restored.");
-    } catch {}
+    } catch { }
     fail("❌ Step 2 failed (global install). Try manually: npm i -g @agentlock/agent-lock@latest");
   }
   const updatedGlobal = getGlobalInstalledVersion();
@@ -484,7 +484,7 @@ function update(): void {
     try {
       void install();
       log("✅ Extension restored with current CLI build.");
-    } catch {}
+    } catch { }
     fail(`❌ Step 3 failed (agent-lock install): ${installResult.error.message}`);
   }
   if ((installResult.status ?? 1) !== 0) {
@@ -492,7 +492,7 @@ function update(): void {
     try {
       void install();
       log("✅ Extension restored with current CLI build.");
-    } catch {}
+    } catch { }
     fail("❌ Step 3 failed (agent-lock install). Run manually: agent-lock install");
   }
   const updatedExtension = getExtensionInstalledVersion();
@@ -694,23 +694,17 @@ async function login(provider?: string): Promise<void> {
   const normalizedProvider = provider?.trim().toLowerCase();
   const connection =
     normalizedProvider === "google" ? "google-oauth2" :
-    normalizedProvider === "github" ? "github" :
-    normalizedProvider === "slack" ? "slack" :
-    undefined;
+      normalizedProvider === "github" ? "github" :
+        normalizedProvider === "slack" ? "slack" :
+          undefined;
   if (normalizedProvider && !connection) {
     fail("Provider inválido para login. Usa: google | github | slack");
   }
   const loginUrl = connection
-    ? `${normalizeBaseUrl(runtime.backend_url)}/auth/login?connection=${encodeURIComponent(connection)}&subject_token=${encodedSubject}&force_success=true`
+    ? `${normalizeBaseUrl(runtime.backend_url)}/auth/provider-login/${encodeURIComponent(normalizedProvider!)}?subject_token=${encodedSubject}&force_success=true`
     : `${normalizeBaseUrl(runtime.backend_url)}/auth/login?subject_token=${encodedSubject}&force_success=true`;
-  if (connection) {
-    log(`🔐 Agent-Lock provider connect (${normalizedProvider})`);
-    log("Esto conecta un provider a tu cuenta principal (puede pedir consent de permisos).");
-  } else {
-    log("🔐 Agent-Lock account login (primary)");
-    log("Esto autentica tu cuenta principal de Agent-Lock.");
-  }
-  log("Preparando para abrir login...");
+  log(connection ? `🔐 Agent-Lock login (${normalizedProvider})` : "🔐 Agent-Lock login");
+  log("Preparando para logearse...");
   log("Presiona Enter o Espacio para abrir navegador (auto en 3s).");
 
   const trigger = await waitForEnterOrSpace(3000);
@@ -743,7 +737,7 @@ async function login(provider?: string): Promise<void> {
             log(`  3) agent-lock login ${normalizedProvider}`);
             return false;
           }
-        } catch {}
+        } catch { }
         await sleep(1500);
       }
       return false;
@@ -751,7 +745,7 @@ async function login(provider?: string): Promise<void> {
     : await waitForLoginCompletion(runtime);
   if (!ok) {
     fail(connection
-      ? `Conexión de provider ${normalizedProvider} no confirmada todavía. Intenta: agent-lock login ${normalizedProvider}`
+      ? `Login de ${normalizedProvider} no confirmado todavía. Intenta de nuevo: agent-lock login ${normalizedProvider}`
       : "Login no confirmado todavía. Intenta de nuevo: agent-lock login");
   }
 }
@@ -759,7 +753,7 @@ async function login(provider?: string): Promise<void> {
 async function authStatus(): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
-  
+
   // Force use of configured backend (no fallback to local)
   const base = normalizeBaseUrl(runtime.backend_url);
   const url = `${base}/auth/me`;
@@ -767,7 +761,7 @@ async function authStatus(): Promise<void> {
   if (runtime.subject_token) {
     headers.Authorization = `Bearer ${runtime.subject_token}`;
   }
-  
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -776,22 +770,20 @@ async function authStatus(): Promise<void> {
       headers,
       signal: controller.signal,
     }).finally(() => clearTimeout(timeout));
-    
+
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
-    
+
     const me = JSON.parse(text);
     const authenticated = Boolean(me?.authenticated);
     const sub = typeof me?.sub === "string" ? me.sub : "(none)";
-    const email = typeof me?.email === "string"
-      ? me.email
-      : (typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)");
-    log("🔎 Agent-Lock account status (primary)");
+    const email = typeof me?.claims?.email === "string" ? me.claims.email : "(not provided)";
+    log("🔎 Agent-Lock auth status");
     log(`backend: ${runtime.backend_url}`);
     log(`authenticated: ${authenticated}`);
-    log(`account_sub: ${sub}`);
+    log(`sub: ${sub}`);
     log(`email: ${email}`);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -827,15 +819,9 @@ async function servicesStatus(): Promise<void> {
     const authenticated = Boolean(data?.authenticated);
     log("🔎 Agent-Lock services");
     log(`backend: ${runtime.backend_url}`);
-    log(`account_authenticated: ${authenticated}`);
+    log(`authenticated: ${authenticated}`);
     if (typeof data?.source === "string" && data.source.trim()) {
-      log(`account_source: ${data.source}`);
-    }
-    if (typeof data?.account_login_url === "string" && data.account_login_url.trim()) {
-      log(`account_login_url: ${data.account_login_url}`);
-    }
-    if (typeof data?.account_logout_url === "string" && data.account_logout_url.trim()) {
-      log(`account_logout_url: ${data.account_logout_url}`);
+      log(`source: ${data.source}`);
     }
     if (typeof data?.email === "string" && data.email.trim()) {
       log(`email: ${data.email}`);
@@ -871,7 +857,24 @@ function parseProvider(argv: string[]): string {
 }
 
 async function providerLogin(provider: string): Promise<void> {
-  await login(provider);
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  const base = normalizeBaseUrl(runtime.backend_url);
+  const connection = provider === "google" ? "google-oauth2" : provider;
+  const hasSubject = typeof runtime.subject_token === "string" && runtime.subject_token.trim().length > 0;
+  const query = new URLSearchParams({ connection });
+  if (hasSubject) {
+    query.set("subject_token", runtime.subject_token!.trim());
+  }
+  query.set("force_success", "true");
+  const loginUrl = `${base}/auth/login?${query.toString()}`;
+  log(`🔐 Agent-Lock provider login (${provider})`);
+  const opened = openUrlInBrowser(loginUrl);
+  if (!opened) {
+    log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
+  } else {
+    log(`Abriendo navegador para conectar ${provider}...`);
+  }
 }
 
 async function providerStatus(provider: string): Promise<void> {
@@ -880,11 +883,11 @@ async function providerStatus(provider: string): Promise<void> {
   const data = await backendGet(runtime, `/auth/providers/${provider}/status`);
   const status = String(data?.status ?? "unknown");
   const connected = Boolean(data?.connected);
-  
+
   log(`🔎 Agent-Lock provider status (${provider})`);
   log(`authenticated: ${Boolean(data?.authenticated)}`);
   log(`connected: ${connected}`);
-  
+
   // Show clear explanation based on connection type
   if (status === "connected_via_primary_identity") {
     log(`status: ${status}`);
@@ -892,157 +895,30 @@ async function providerStatus(provider: string): Promise<void> {
     log(`⚠️  No puedes desconectarlo (usa 'agent-lock logout' para salir completamente)`);
   } else if (status === "connected_via_connected_accounts") {
     log(`status: ${status}`);
-    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'provider-logout ${provider}')`);
+    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'logout ${provider}')`);
   } else {
     log(`status: ${status}`);
   }
-  
+
   if (typeof data?.login_url === "string" && data.login_url.trim()) {
     log(`login_url: ${data.login_url}`);
   }
 }
 
-async function scopesCmd(provider?: string): Promise<void> {
-  const { extDir } = getInstallPaths();
-  const runtime = ensureRuntimeConfig(extDir);
-
-  const KNOWN_PROVIDERS = ["google", "github", "slack"];
-  const providers = provider
-    ? [provider.toLowerCase()]
-    : KNOWN_PROVIDERS;
-
-  if (provider && !KNOWN_PROVIDERS.includes(provider.toLowerCase())) {
-    fail(`Unknown provider: ${provider}. Use: google | github | slack`);
-  }
-
-  log(`🔑 Agent-Lock Scopes${provider ? ` (${provider})` : " (all providers)"}`);
-  log(`backend: ${runtime.backend_url}`);
-  log(`source: Auth0 connection options (live when available)`);
-  log("");
-
-  // Get policy overrides to annotate each scope
-  let policyMap: Record<string, string> = {};
-  try {
-    const policies = await backendGet(runtime, "/policy/list") as any;
-    if (policies && typeof policies === "object") {
-      policyMap = policies;
-    }
-  } catch { /* policy endpoint may not respond — show scopes without annotations */ }
-
-  for (const p of providers) {
-    let scopeData: any;
-    try {
-      scopeData = await backendGet(runtime, `/auth/providers/${p}/scopes`);
-    } catch (error) {
-      log(`❌ ${p.toUpperCase()}: failed to reach backend — ${error instanceof Error ? error.message : String(error)}`);
-      log("");
-      continue;
-    }
-
-    const connected: boolean = Boolean(scopeData?.connected);
-    const availableScopes: any[] = Array.isArray(scopeData?.available_scopes)
-      ? scopeData.available_scopes
-      : (Array.isArray(scopeData?.scopes) ? scopeData.scopes : []);
-    const grantedScopes: any[] = Array.isArray(scopeData?.granted_scopes) ? scopeData.granted_scopes : [];
-    const icon = connected ? "✅" : "❌";
-    const scopesSource = typeof scopeData?.scopes_source === "string" ? scopeData.scopes_source : "unknown";
-    const grantedSource = typeof scopeData?.granted_source === "string" ? scopeData.granted_source : "unknown";
-
-    log(`${icon} Provider: ${p.toUpperCase()} — ${connected ? "connected" : "not connected"}`);
-    log(`   connection: ${scopeData?.connection ?? "-"}`);
-    log(`   available_source: ${scopesSource}`);
-    log(`   granted_source: ${grantedSource}`);
-
-    if (availableScopes.length === 0) {
-      log(`   available_scopes: (none from Auth0 connection)`);
-    } else {
-      const groups: Record<string, any[]> = {};
-      for (const s of availableScopes) {
-        const prefix = (s.scope as string).split(".")[0];
-        if (!groups[prefix]) groups[prefix] = [];
-        groups[prefix].push(s);
-      }
-      log(`   available_scopes (${availableScopes.length}):`);
-      for (const [group, groupScopes] of Object.entries(groups)) {
-        log(`   [${group}]`);
-        for (const s of groupScopes) {
-          const toolKey = scopeToToolKey(s.scope, p);
-          const mode = policyMap[toolKey] ?? "default";
-          const modeTag = mode === "auto" ? " 🟢 auto" : mode === "ask" ? " 🔴 ask" : "";
-          log(`     • ${s.scope}${modeTag}`);
-        }
-      }
-    }
-
-    if (grantedScopes.length === 0) {
-      log(`   granted_scopes: (not available or not granted yet)`);
-    } else {
-      log(`   granted_scopes (${grantedScopes.length}):`);
-      for (const s of grantedScopes) {
-        log(`     • ${s.scope}`);
-      }
-    }
-
-    const missingFromGranted: string[] = Array.isArray(scopeData?.missing_from_granted) ? scopeData.missing_from_granted : [];
-    if (missingFromGranted.length > 0) {
-      log(`   missing_from_granted (${missingFromGranted.length}):`);
-      for (const scope of missingFromGranted) {
-        log(`     • ${scope}`);
-      }
-    }
-    log("");
-  }
-
-  log("Legend:");
-  log("  🟢 auto    = always executes without asking");
-  log("  🔴 ask     = always requires confirmation");
-  log("  (blank)    = default: Gemini + rules decide");
-  log("");
-  log("To change policy for a tool:");
-  log("  Tell the agent: 'ponle modo auto a agent_lock_gmail'");
-  log("  or: agent-lock policy set agent_lock_gmail auto");
-  log("");
-  log("To add/remove scopes: Auth0 Dashboard → Applications → Connections");
-  log("  Changes take effect immediately on next 'agent-lock scopes' run.");
-}
-
-function scopeToToolKey(scope: string, _provider: string): string {
-  // Map a scope prefix to the canonical tool name for policy lookup
-  if (scope.startsWith("gmail."))    return "agent_lock_gmail";
-  if (scope.startsWith("calendar.")) return "agent_lock_calendar";
-  if (scope.startsWith("github."))   return "agent_lock_github";
-  if (scope.startsWith("slack."))    return "agent_lock_slack";
-  if (scope.startsWith("drive."))    return "agent_lock_drive";
-  if (scope.startsWith("youtube."))  return "agent_lock_youtube";
-  return scope;
-}
-
 async function providerLogout(provider: string): Promise<void> {
   const { extDir } = getInstallPaths();
   const runtime = ensureRuntimeConfig(extDir);
-  let data: any;
-  try {
-    data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("HTTP 401")) {
-      log(`🚪 Agent-Lock provider logout (${provider})`);
-      log("❌ No hay sesión principal activa.");
-      log("💡 Primero inicia sesión: agent-lock login");
-      return;
-    }
-    fail(`provider-logout failed: ${msg}`);
-  }
+  const data = await backendPost(runtime, `/auth/providers/${provider}/logout`, {});
   const disconnected = Boolean(data?.disconnected);
   const reason = String(data?.reason ?? "unknown");
-  
+
   log(`🚪 Agent-Lock provider logout (${provider})`);
-  
+
   if (disconnected) {
     log(`✅ ${provider} desconectado exitosamente`);
   } else {
     log(`❌ No se pudo desconectar`);
-    
+
     // Show clear explanation for why logout failed
     if (reason === "primary_identity_disconnect_not_supported" || reason === "connected_via_primary_identity") {
       log(`⚠️  Razón: Este provider es tu identidad principal de Agent-Lock`);
@@ -1054,53 +930,10 @@ async function providerLogout(provider: string): Promise<void> {
       log(`reason: ${reason}`);
     }
   }
-  
+
   if (typeof data?.login_url === "string" && data.login_url.trim()) {
     log(`login_url: ${data.login_url}`);
   }
-}
-
-async function deleteAccountCmd(): Promise<void> {
-  const { extDir } = getInstallPaths();
-  const runtime = ensureRuntimeConfig(extDir);
-  const targets = [normalizeBaseUrl(runtime.backend_url)];
-  if (normalizeBaseUrl(runtime.backend_url) !== OFFICIAL_BACKEND_URL) {
-    targets.push(OFFICIAL_BACKEND_URL);
-  }
-
-  let success = false;
-  let auth0LogoutUrl: string | null = null;
-  const results: string[] = [];
-
-  for (const target of targets) {
-    const targetRuntime: AgentLockRuntimeConfig = { ...runtime, backend_url: target };
-    try {
-      const resp = await backendPost(targetRuntime, "/auth/account/delete", {});
-      results.push(`ok:${target}`);
-      success = true;
-      if (!auth0LogoutUrl && resp && typeof resp === "object" && "auth0_logout_url" in resp) {
-        auth0LogoutUrl = (resp as any).auth0_logout_url;
-      }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      results.push(`fail:${target}:${msg}`);
-    }
-  }
-
-  if (!success) {
-    fail(`account-delete failed: ${results.join(" | ")}`);
-  }
-
-  log("🗑️ Agent-Lock primary account deleted");
-  log(`targets: ${results.join(" | ")}`);
-  if (auth0LogoutUrl) {
-    log("Cerrando sesión en Auth0...");
-    const opened = openUrlInBrowser(auth0LogoutUrl);
-    if (!opened) {
-      log(`Abre este link para completar logout: ${auth0LogoutUrl}`);
-    }
-  }
-  log("Cuenta y providers desvinculados para esta identidad.");
 }
 
 async function logoutCmd(): Promise<void> {
@@ -1138,9 +971,9 @@ async function logoutCmd(): Promise<void> {
   }
 
   if (success) {
-    log("✅ Agent-Lock primary account logged out");
+    log("✅ Agent-Lock logged out");
     log(`targets: ${results.join(" | ")}`);
-    
+
     // Open Auth0 logout to clear browser session too
     if (auth0LogoutUrl) {
       log("Cerrando sesión en Auth0...");
@@ -1149,8 +982,8 @@ async function logoutCmd(): Promise<void> {
         log(`Abre este link para completar logout: ${auth0LogoutUrl}`);
       }
     }
-    
-    log("Next protected action should require primary account login again.");
+
+    log("Next protected action should require login again.");
     return;
   }
 
@@ -1343,20 +1176,14 @@ function usage(): void {
   log("  restart   Restart OpenClaw gateway");
   log("  uninstall Remove plugin from OpenClaw");
   log("  update    Update package and reinstall plugin");
-  log("  login  Login primary Agent-Lock account");
-  log("  auth-status  Show primary account status");
-  log("  account-login   Alias of login");
-  log("  account-status  Alias of auth-status");
-  log("  account-logout  Alias of logout");
+  log("  login [provider]  Open browser login (optional provider: google|github|slack)");
+  log("  auth-status  Show current authenticated account");
   log("  services  Show provider connection status (google/github/slack)");
-  log("  login <provider>   Connect/add one provider (google|github|slack)");
-  log("  provider-login <provider>   Alias of login <provider>");
+  log("  provider-login <provider>   Connect one provider (google|github|slack)");
   log("  provider-status <provider>  Show one provider status");
   log("  provider-logout <provider>  Disconnect one provider");
-  log("  logout  Logout primary Agent-Lock account");
-  log("  account-delete  Delete primary account and disconnect providers");
+  log("  logout [provider]  Logout Agent-Lock session or disconnect one provider");
   log("  cloud-logout  Alias of logout (deprecated)");
-  log("  scopes [provider]  List all scopes and their current policy (google|github|slack|system)");
   log("");
   log("Examples:");
   log("  agent-lock install");
@@ -1368,13 +1195,12 @@ function usage(): void {
   log("  agent-lock login");
   log("  agent-lock login github");
   log("  agent-lock auth-status");
-  log("  agent-lock account-status");
   log("  agent-lock services");
-  log("  agent-lock login github");
+  log("  agent-lock provider-login github");
   log("  agent-lock provider-status github");
   log("  agent-lock provider-logout github");
   log("  agent-lock logout");
-  log("  agent-lock account-delete");
+  log("  agent-lock logout github");
   log("  agent-lock cloud-logout");
 }
 
@@ -1422,23 +1248,10 @@ async function main(): Promise<void> {
   }
   if (cmd === "login") {
     const provider = process.argv[3];
-    if (provider && provider.trim()) {
-      log("⚠️ Para provider usa comando explícito: agent-lock provider-login <provider>");
-      await providerLogin(provider.trim().toLowerCase());
-      return;
-    }
     await login(provider);
     return;
   }
-  if (cmd === "account-login") {
-    await login();
-    return;
-  }
   if (cmd === "auth-status") {
-    await authStatus();
-    return;
-  }
-  if (cmd === "account-status") {
     await authStatus();
     return;
   }
@@ -1464,29 +1277,15 @@ async function main(): Promise<void> {
   if (cmd === "logout") {
     const provider = process.argv[3];
     if (provider && provider.trim()) {
-      log("⚠️ Para provider usa comando explícito: agent-lock provider-logout <provider>");
       await providerLogout(provider.trim().toLowerCase());
       return;
     }
     await logoutCmd();
     return;
   }
-  if (cmd === "account-logout") {
-    await logoutCmd();
-    return;
-  }
-  if (cmd === "account-delete") {
-    await deleteAccountCmd();
-    return;
-  }
   if (cmd === "cloud-logout") {
     const provider = process.argv[3];
     await cloudLogoutCmd(provider);
-    return;
-  }
-  if (cmd === "scopes") {
-    const provider = process.argv[3];
-    await scopesCmd(provider);
     return;
   }
 

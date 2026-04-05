@@ -723,7 +723,7 @@ function Auth0Section({ settings }: { settings: Settings | null }) {
             </code>
           </span>,
           "Restart the backend server",
-          "For brokered Gmail demo, call POST /vault/google/gmail/send after authenticating with /auth/login?connection=google-oauth2",
+          "For brokered Gmail demo, call POST /vault/google/gmail/send after authenticating with /auth/provider-login/google",
         ]}
       />
     </SectionCard>
