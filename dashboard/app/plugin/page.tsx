@@ -7,6 +7,8 @@ import { useToast } from "../components/Toast"
 import {
   approveAction,
   createPluginPairing,
+  fetchSettings,
+  fetchTokenVaultStatus,
   fetchPending,
   fetchPluginActions,
   fetchPluginPairings,
@@ -14,7 +16,7 @@ import {
   setPluginPairingChannel,
 } from "@/lib/api"
 import { resolveBackendEndpoint } from "@/lib/backendEndpoint"
-import { Action, PluginActionsResponse, PluginPairing, PluginPairingsResponse, PluginStatus } from "@/types"
+import { Action, PluginActionsResponse, PluginPairing, PluginPairingsResponse, PluginStatus, Settings } from "@/types"
 
 type MessageType = "user" | "assistant" | "system" | "approval"
 
@@ -134,6 +136,16 @@ export default function PluginPage() {
   const [preferredChannel, setPreferredChannel] = useState<PreferredChannel>("agentlock_dashboard")
   const [latestToken, setLatestToken] = useState("")
   const [socketConnected, setSocketConnected] = useState(false)
+  const [vaultStatus, setVaultStatus] = useState<{
+    enabled?: boolean
+    authenticated?: boolean
+    login_url?: string
+  } | null>(null)
+  const [providerLoginUrls, setProviderLoginUrls] = useState<{
+    account?: string
+    google?: string
+    github?: string
+  }>({})
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
@@ -297,6 +309,50 @@ export default function PluginPage() {
       setSocketConnected(false)
     }
   }, [showToast])
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadAuthData = async () => {
+      try {
+        const [{ baseUrl }, vault, settings] = await Promise.all([
+          resolveBackendEndpoint(true),
+          fetchTokenVaultStatus(),
+          fetchSettings(),
+        ])
+        if (!mounted) return
+
+        setVaultStatus(vault)
+
+        const typedSettings = settings as Settings
+        const googleConnection = String(typedSettings?.auth0?.google_connection_name || "").trim() || "google-oauth2"
+        const githubConnection = String(typedSettings?.auth0?.github_connection_name || "").trim() || "github"
+
+        setProviderLoginUrls({
+          account: vault?.login_url || `${baseUrl}/auth/login`,
+          google: `${baseUrl}/auth/login?connection=${encodeURIComponent(googleConnection)}`,
+          github: `${baseUrl}/auth/login?connection=${encodeURIComponent(githubConnection)}`,
+        })
+      } catch {
+        if (!mounted) return
+        setVaultStatus(null)
+        setProviderLoginUrls({})
+      }
+    }
+
+    void loadAuthData()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const openLogin = (url?: string, title?: string) => {
+    if (!url) {
+      showToast({ type: "error", title: title || "Login URL unavailable" })
+      return
+    }
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
 
   useEffect(() => {
     void loadOperationalData()
@@ -501,6 +557,30 @@ export default function PluginPage() {
         </Link>
       </div>
 
+      <Card padding="md" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Connected Accounts</h3>
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              Sign in once with your main account, then connect Google/GitHub providers for Token Vault tools.
+            </p>
+          </div>
+          <Badge variant={vaultStatus?.authenticated ? "success" : "warning"}>
+            {vaultStatus?.authenticated ? "Account Session Ready" : "Account Session Missing"}
+          </Badge>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Button variant="secondary" size="sm" onClick={() => openLogin(providerLoginUrls.account, "Account login URL unavailable")}>Account Login</Button>
+          <Button variant="secondary" size="sm" onClick={() => openLogin(providerLoginUrls.google, "Google login URL unavailable")}>Connect Google</Button>
+          <Button variant="secondary" size="sm" onClick={() => openLogin(providerLoginUrls.github, "GitHub login URL unavailable")}>Connect GitHub</Button>
+        </div>
+
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          Account login creates the user session. Provider login grants scoped access for provider-specific tools.
+        </p>
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card padding="md" className="space-y-3">
           <div className="flex items-center justify-between">
@@ -621,7 +701,7 @@ export default function PluginPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <Card className="flex h-[calc(100vh-260px)] flex-col overflow-hidden" padding="none">
+        <Card className="flex min-h-[52vh] md:h-[calc(100vh-260px)] flex-col overflow-hidden" padding="none">
           <div className="flex-1 overflow-y-auto p-4">
             {messages.map((message) => (
               <MessageBubble
@@ -663,7 +743,7 @@ export default function PluginPage() {
           </div>
         </Card>
 
-        <Card padding="md" className="h-[calc(100vh-260px)] overflow-y-auto">
+        <Card padding="md" className="min-h-[44vh] md:h-[calc(100vh-260px)] overflow-y-auto">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Recent Plugin Actions</h3>
             {loadingState && <span className="text-xs" style={{ color: "var(--text-muted)" }}>Refreshing...</span>}

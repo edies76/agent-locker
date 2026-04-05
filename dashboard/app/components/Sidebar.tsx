@@ -65,6 +65,15 @@ const navSections = [
         ),
       },
       {
+        href: "/dashboard/chat",
+        label: "Channel Chat",
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M3 4.5a1.5 1.5 0 011.5-1.5h9A1.5 1.5 0 0115 4.5v6A1.5 1.5 0 0113.5 12H8l-3 3v-3H4.5A1.5 1.5 0 013 10.5v-6z" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ),
+      },
+      {
         href: "/dashboard/mcp",
         label: "MCP",
         icon: (
@@ -215,7 +224,7 @@ export default function Sidebar() {
           <div className="space-y-0.5">
             {section.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
-              const showBadge = item.href === "/approvals" && pendingCount > 0
+              const showBadge = item.href === "/dashboard/approvals" && pendingCount > 0
 
               return (
                 <Link

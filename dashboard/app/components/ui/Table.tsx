@@ -7,7 +7,7 @@ interface TableProps extends TableHTMLAttributes<HTMLTableElement> {}
 
 export function Table({ children, className = '', ...props }: TableProps) {
   return (
-    <div className="overflow-x-auto [-webkit-overflow-scrolling:touch]">
+    <div className="table-wrap">
       <table className={`table min-w-[640px] sm:min-w-full ${className}`} {...props}>
         {children}
       </table>

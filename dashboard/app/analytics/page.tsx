@@ -190,7 +190,12 @@ export default function AnalyticsPage() {
         <Card padding="lg">
           <div className="text-center py-4">
             <p className="text-lg font-medium" style={{ color: "var(--danger)" }}>{error}</p>
-            <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>No se pudieron cargar datos de analytics.</p>
+            <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+              Analytics data could not be loaded. Check backend connectivity and retry.
+            </p>
+            <Button variant="secondary" size="sm" className="mt-3" onClick={load}>
+              Retry now
+            </Button>
           </div>
         </Card>
       )}

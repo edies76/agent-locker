@@ -123,9 +123,9 @@ export default function OverviewPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="page-title">Dashboard</h1>
-          <p className="page-subtitle">Operational snapshot for approvals, risk, and gateway activity</p>
+          <p className="page-subtitle max-w-2xl">Operational snapshot for approvals, risk, and gateway activity</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
           {/* Status indicator */}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-md" style={{ background: 'var(--bg-tertiary)' }}>
             <span className={`status-dot ${backendOk ? 'status-dot-success status-pulse' : backendOk === false ? 'status-dot-danger' : 'status-dot-neutral'}`} />
@@ -195,7 +195,7 @@ export default function OverviewPage() {
       )}
 
       {/* Middle Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
         {/* Risk Breakdown */}
         <Card className="lg:col-span-2">
           <CardHeader title="Risk Distribution" subtitle={`${total} total actions`} />

@@ -17,19 +17,20 @@ const ThemeContext = createContext<ThemeContextType>({
 })
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('system')
-  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>('light')
-
-  const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemTheme : theme
-
-  // Read browser theme state on client mount to keep server/client markup consistent.
-  useEffect(() => {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === 'undefined') return 'system'
     const stored = localStorage.getItem('theme') as Theme | null
     if (stored && ['light', 'dark', 'system'].includes(stored)) {
-      setThemeState(stored)
+      return stored
     }
-    setSystemTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  }, [])
+    return 'system'
+  })
+  const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => {
+    if (typeof window === 'undefined') return 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+
+  const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemTheme : theme
 
   useEffect(() => {
     if (resolvedTheme === 'dark') {

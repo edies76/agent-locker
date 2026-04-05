@@ -11,11 +11,13 @@ function ApprovalCard({
   onDecision,
   isSelected,
   onSelect,
+  nowTs,
 }: {
   action: Action
   onDecision: (id: string, decision: "YES" | "NO") => Promise<void>
   isSelected: boolean
   onSelect: () => void
+  nowTs: number
 }) {
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState<"approved" | "rejected" | null>(null)
@@ -24,7 +26,7 @@ function ApprovalCard({
 
   // Check if message is older than 20 minutes
   const isStale = () => {
-    const ageMinutes = (Date.now() - new Date(action.timestamp).getTime()) / (1000 * 60)
+    const ageMinutes = (nowTs - new Date(action.timestamp).getTime()) / (1000 * 60)
     return ageMinutes >= 20
   }
 
@@ -213,6 +215,7 @@ function ApprovalCard({
 
 export default function ApprovalsPage() {
   const [pending, setPending] = useState<Action[]>([])
+  const [nowTs, setNowTs] = useState(() => Date.now())
   const [loading, setLoading] = useState(true)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [recentDecisions, setRecentDecisions] = useState<Record<string, number>>({})
@@ -223,6 +226,7 @@ export default function ApprovalsPage() {
       const data = await fetchPending()
       if (Array.isArray(data)) {
         const now = Date.now()
+        setNowTs(now)
         const activeLocks = Object.fromEntries(
           Object.entries(recentDecisions).filter(([, expiresAt]) => expiresAt > now)
         )
@@ -312,7 +316,7 @@ export default function ApprovalsPage() {
         <div>
           <h1 className="page-title">Approvals</h1>
           <p className="page-subtitle">
-            {pending.length} pending {pending.length === 1 ? 'request' : 'requests'}
+            {pending.length} pending {pending.length === 1 ? 'request' : 'requests'} requiring human decision
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -323,6 +327,15 @@ export default function ApprovalsPage() {
             Refresh
           </Button>
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <span className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-tertiary)] px-3 py-1 text-xs text-[var(--text-secondary)]">
+          HIGH/CRITICAL should be reviewed with intent + args
+        </span>
+        <span className="rounded-full border border-[var(--border-primary)] bg-[var(--bg-tertiary)] px-3 py-1 text-xs text-[var(--text-secondary)]">
+          Stale actions (&gt;20 min) are dimmed for quick triage
+        </span>
       </div>
 
       {/* Content */}
@@ -355,6 +368,7 @@ export default function ApprovalsPage() {
               onDecision={handleDecision}
               isSelected={index === selectedIndex}
               onSelect={() => setSelectedIndex(index)}
+              nowTs={nowTs}
             />
           ))}
         </div>
