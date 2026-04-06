@@ -127,9 +127,18 @@ const TOOL_SCOPES: Record<string, string> = {
     "http_request": "web.http.request",
 };
 
-function resolveScope(toolName: string, action: string): string {
+function resolveScope(toolName: string, args: Record<string, unknown>): string {
+    const action = typeof args.action === "string" ? args.action : "";
+    const methodId = typeof args.method_id === "string" ? args.method_id.trim().toLowerCase() : "";
     const key = action ? `${toolName}:${action}` : "";
     if (key && TOOL_ACTION_SCOPES[key]) return TOOL_ACTION_SCOPES[key];
+    if (methodId) {
+        if (toolName.includes("gmail") || methodId.startsWith("gmail.")) return `google.gmail.${methodId}`;
+        if (toolName.includes("calendar") || methodId.startsWith("calendar.")) return `google.calendar.${methodId}`;
+        if (toolName.includes("drive") || methodId.startsWith("drive.")) return `google.drive.${methodId}`;
+        if (toolName.includes("youtube") || methodId.startsWith("youtube.")) return `google.youtube.${methodId}`;
+        return `tool.${toolName}.${methodId}`;
+    }
     if (TOOL_SCOPES[toolName]) return TOOL_SCOPES[toolName];
     const t = toolName.toLowerCase();
     if (t.includes("gmail"))    return `gmail.${action || "unknown"}`;
@@ -139,6 +148,26 @@ function resolveScope(toolName: string, action: string): string {
     if (t.includes("exec") || t.includes("bash") || t.includes("terminal")) return "system.shell.execute";
     if (t.includes("file") || t.includes("write") || t.includes("read"))    return "fs.file.unknown";
     return `tool.${toolName}.${action || "call"}`;
+}
+
+function getGoogleService(toolName: string, args: Record<string, unknown>): string | null {
+    const methodId = typeof args.method_id === "string" ? args.method_id.trim().toLowerCase() : "";
+    if (methodId.startsWith("gmail.")) return "gmail";
+    if (methodId.startsWith("calendar.")) return "calendar";
+    if (methodId.startsWith("drive.")) return "drive";
+    if (methodId.startsWith("youtube.")) return "youtube";
+    const lowered = toolName.toLowerCase();
+    if (lowered.includes("gmail")) return "gmail";
+    if (lowered.includes("calendar")) return "calendar";
+    if (lowered.includes("drive")) return "drive";
+    if (lowered.includes("youtube")) return "youtube";
+    return null;
+}
+
+function normalizeInterceptToolName(toolName: string, args: Record<string, unknown>): string {
+    const service = getGoogleService(toolName, args);
+    if (service) return "agent_lock_google";
+    return toolName;
 }
 
 // ── Structured log buffer for the dashboard ────────────────────────────────
@@ -174,6 +203,10 @@ function logBlue(message: string): void {
     const BLUE = "\x1b[94m";
     const RESET = "\x1b[0m";
     console.log(`${BLUE}[Agent-Lock] ${message}${RESET}`);
+}
+
+function live(message: string): void {
+    logBlue(message);
 }
 
 // Cache: session → latest user message
@@ -226,10 +259,39 @@ async function authInfoMessage(toolName: string): Promise<ReturnType<typeof json
     return jsonToolResult({
         success: true,
         requires_login: true,
-        message: `🔵 Debes iniciar sesión antes de ejecutar ${toolName}.`,
-        next_step: "Abre login_url, completa login y vuelve a intentar.",
+        message: `🔵 You must log in before running ${toolName}.`,
+        next_step: "Open login_url, complete login, then retry.",
         login_url: loginUrl,
     });
+}
+
+function parseBackendAuthRequired(error: any): { isAuthRequired: boolean; loginUrl?: string; message: string } {
+    const fallbackMessage = error?.message ?? "Unknown error";
+    let detail: any = null;
+    const rawMessage = String(fallbackMessage);
+    const splitIdx = rawMessage.indexOf(": ");
+    if (splitIdx >= 0) {
+        const maybeJson = rawMessage.slice(splitIdx + 2).trim();
+        if (maybeJson.startsWith("{") || maybeJson.startsWith("[")) {
+            try {
+                const parsed = JSON.parse(maybeJson);
+                detail = parsed?.detail ?? parsed;
+            } catch {
+                detail = null;
+            }
+        }
+    }
+    const errorCode = typeof detail?.error === "string" ? detail.error.toLowerCase() : "";
+    const loginUrl = typeof detail?.login_url === "string" ? detail.login_url : undefined;
+    const isAuthRequired =
+        errorCode === "auth_required" ||
+        rawMessage.includes("HTTP 401") ||
+        rawMessage.toLowerCase().includes("authentication required");
+    return {
+        isAuthRequired,
+        loginUrl,
+        message: typeof detail?.message === "string" ? detail.message : rawMessage,
+    };
 }
 
 async function post(
@@ -703,12 +765,11 @@ export default function register(api: any) {
                         message: "provider must be one of: google, github, slack",
                     });
                 }
-                const connection = provider === "google" ? "google-oauth2" : provider;
-                const query = new URLSearchParams({ connection, force_success: "true" });
+                const query = new URLSearchParams({ force_success: "true" });
                 if (SUBJECT_TOKEN && String(SUBJECT_TOKEN).trim()) {
                     query.set("subject_token", String(SUBJECT_TOKEN).trim());
                 }
-                const loginUrl = `${activeBackendUrl}/auth/login?${query.toString()}`;
+                const loginUrl = `${activeBackendUrl}/auth/provider-login/${encodeURIComponent(provider)}?${query.toString()}`;
                 return jsonToolResult({
                     success: true,
                     provider,
@@ -850,6 +911,7 @@ export default function register(api: any) {
                     const data = await get(`/auth/providers/${provider}/scopes`, undefined, SUBJECT_TOKEN) as any;
                     const scopes: any[] = Array.isArray(data?.scopes) ? data.scopes : [];
                     const scopeNames = scopes.map((s: any) => s.scope);
+                    const capabilityScopes: any[] = Array.isArray(data?.capability_scopes) ? data.capability_scopes : [];
 
                     return jsonToolResult({
                         success: true,
@@ -857,9 +919,13 @@ export default function register(api: any) {
                         connection: data?.connection,
                         connected: data?.connected,
                         scope_count: scopes.length,
+                        configured_scope_count: Number(data?.configured_scope_count ?? scopes.length),
+                        capability_scope_count: Number(data?.capability_scope_count ?? capabilityScopes.length),
                         scopes_source: data?.scopes_source ?? null,
                         granted_source: data?.granted_source ?? null,
                         available_scopes: Array.isArray(data?.available_scopes) ? data.available_scopes : scopes,
+                        configured_scopes: Array.isArray(data?.configured_scopes) ? data.configured_scopes : (Array.isArray(data?.available_scopes) ? data.available_scopes : scopes),
+                        capability_scopes: capabilityScopes,
                         granted_scopes: Array.isArray(data?.granted_scopes) ? data.granted_scopes : [],
                         missing_from_granted: Array.isArray(data?.missing_from_granted) ? data.missing_from_granted : [],
                         scopes: scopeNames,
@@ -867,7 +933,7 @@ export default function register(api: any) {
                         note: data?.note,
                         message: scopes.length === 0
                             ? `No scopes configured in Auth0 for ${provider}.`
-                            : `${provider} has ${scopes.length} OAuth scope(s) available: ${scopeNames.join(", ")}`,
+                            : `${provider} configured scopes: ${Number(data?.configured_scope_count ?? scopes.length)}; capability scopes: ${Number(data?.capability_scope_count ?? capabilityScopes.length)}.`,
                     });
                 } catch (error: any) {
                     log("error", "Scopes discovery failed", { provider, error: error?.message });
@@ -940,22 +1006,32 @@ export default function register(api: any) {
         api.registerTool({
             name: "agent_lock_gmail",
             label: "Agent-Lock Gmail",
-            description: "Interact with Gmail via Agent-Lock Token Vault (zero-config, secure)",
+            description: "Interact with Gmail via Token Vault. Dynamic mode: provide method_id directly (no action required).",
             parameters: {
                 type: "object",
                 properties: {
-                    action: { type: "string", enum: ["send"], description: "The Gmail action to perform" },
+                    action: { type: "string", enum: ["send", "execute"], description: "Optional legacy mode. If omitted and method_id is present, execute is used." },
                     to: { type: "string", description: "Recipient email" },
                     subject: { type: "string", description: "Email subject" },
                     body_text: { type: "string", description: "Email body" },
+                    method_id: { type: "string", description: "Discovery method id for execute (e.g. gmail.users.messages.list)" },
+                    user_id: { type: "string", description: "Gmail user id for execute (default: me)" },
+                    path_params: { type: "object", description: "Path parameters for execute" },
+                    query: { type: "object", description: "Query parameters for execute" },
+                    body: { type: "object", description: "Request body for execute" },
+                    requested_scope: { type: "string", description: "Optional explicit scope for execute" },
                 },
-                required: ["action", "to", "subject", "body_text"],
+                required: [],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const action = String(params.action || "");
+                const method_id = String(params.method_id || "").trim();
+                let action = String(params.action || "").trim();
                 const to = String(params.to || "");
                 const subject = String(params.subject || "");
                 const body_text = String(params.body_text || "");
+                if (!action) {
+                    action = method_id ? "execute" : (to || subject || body_text ? "send" : "");
+                }
 
                 log("info", `Gmail ${action} via Token Vault`, { to, subject });
                 const authMsg = await authInfoMessage("agent_lock_gmail");
@@ -970,12 +1046,44 @@ export default function register(api: any) {
                         log("info", "Gmail sent successfully", { to, message_id: (response as any).message_id });
                         return jsonToolResult({ success: true, message: `✅ Email sent to ${to}`, details: response });
                     } catch (error: any) {
-                        const errorMessage = error?.message ?? "Unknown error";
-                        log("error", "Gmail send failed", { to, error: errorMessage });
-                        if (errorMessage.includes("401")) {
-                            return jsonToolResult({ success: false, error: "AUTH_REQUIRED", message: "🔐 Authentication required. Complete Agent-Lock login and retry." });
+                        const parsed = parseBackendAuthRequired(error);
+                        log("error", "Gmail send failed", { to, error: parsed.message });
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for Gmail. Connect Google and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/google?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
                         }
-                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to send email: ${errorMessage}` });
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to send email: ${parsed.message}` });
+                    }
+                }
+                if (action === "execute") {
+                    if (!method_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
+                    }
+                    try {
+                        const response = await post("/vault/google/gmail/execute", {
+                            method_id,
+                            user_id: String(params.user_id || "me"),
+                            path_params: (typeof params.path_params === "object" && params.path_params !== null) ? params.path_params : {},
+                            query: (typeof params.query === "object" && params.query !== null) ? params.query : {},
+                            body: (typeof params.body === "object" && params.body !== null) ? params.body : undefined,
+                            requested_scope: String(params.requested_scope || "") || undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: `✅ Gmail execute: ${method_id}`, details: response });
+                    } catch (error: any) {
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for Gmail. Connect Google and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/google?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Gmail execute failed: ${parsed.message}` });
                     }
                 }
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
@@ -983,41 +1091,104 @@ export default function register(api: any) {
         });
         log("info", "agent_lock_gmail tool registered (Central)");
 
+        api.registerTool({
+            name: "agent_lock_method_modes",
+            label: "Agent-Lock Method Modes",
+            description: "Returns exact auto/manual mode per method from backend for gmail/github (no guessing).",
+            parameters: {
+                type: "object",
+                properties: {
+                    provider: { type: "string", enum: ["gmail", "github"] },
+                },
+                required: ["provider"],
+                additionalProperties: false,
+            },
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+                const provider = String(params.provider || "").toLowerCase();
+                if (!["gmail", "github"].includes(provider)) {
+                    return jsonToolResult({
+                        success: false,
+                        error: "INVALID_PROVIDER",
+                        message: "provider must be gmail or github",
+                    });
+                }
+                const path = provider === "gmail" ? "/vault/google/gmail/methods" : "/vault/github/methods";
+                try {
+                    const data = await get(path, undefined, SUBJECT_TOKEN) as any;
+                    const modes = (typeof data?.method_modes === "object" && data?.method_modes)
+                        ? data.method_modes
+                        : {};
+                    return jsonToolResult({
+                        success: true,
+                        provider,
+                        count: Number(data?.count ?? 0),
+                        method_modes: modes,
+                        message: `Method modes loaded for ${provider}.`,
+                    });
+                } catch (error: any) {
+                    const parsed = parseBackendAuthRequired(error);
+                    if (parsed.isAuthRequired) {
+                        return jsonToolResult({
+                            success: false,
+                            error: "AUTH_REQUIRED",
+                            message: `🔐 Authentication required for ${provider}. Connect and retry.`,
+                            login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/login?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                        });
+                    }
+                    return jsonToolResult({
+                        success: false,
+                        error: "BACKEND_ERROR",
+                        message: parsed.message || `Failed to load method modes for ${provider}`,
+                    });
+                }
+            },
+        });
+        log("info", "agent_lock_method_modes tool registered");
+
 
         // ── GitHub Central Tool ──────────────────────────────────────────────────
         api.registerTool({
             name: "agent_lock_github",
             label: "Agent-Lock GitHub",
-            description: "Interact with GitHub using Agent-Lock Token Vault (secure, audited, brokered)",
+            description: "Interact with GitHub via Token Vault. Dynamic mode: provide method_id directly (no action required).",
             parameters: {
                 type: "object",
                 properties: {
                     action: { 
                         type: "string", 
-                        enum: ["create_issue"], 
-                        description: "The GitHub action to perform" 
+                        enum: ["create_issue", "execute"],
+                        description: "Optional legacy mode. If omitted and method_id is present, execute is used."
                     },
                     owner: { type: "string", description: "Repository owner" },
                     repo: { type: "string", description: "Repository name" },
                     title: { type: "string", description: "Issue title (for create_issue)" },
                     body: { type: "string", description: "Issue body (for create_issue)" },
+                    method_id: { type: "string", description: "Method id for execute (e.g. github.issues.list_for_repo)" },
+                    path_params: { type: "object", description: "Path parameters for execute" },
+                    query: { type: "object", description: "Query parameters for execute" },
+                    requested_scope: { type: "string", description: "Optional explicit scope for execute" },
+                    request_body: { type: "object", description: "Optional request body for execute methods that accept body" },
                 },
-                required: ["action", "owner", "repo"],
+                required: [],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const action = String(params.action || "");
+                const method_id = String(params.method_id || "").trim();
+                let action = String(params.action || "").trim();
                 const owner = String(params.owner || "");
                 const repo = String(params.repo || "");
+                const title = String(params.title || "");
+                if (!action) {
+                    action = method_id ? "execute" : (owner && repo && title ? "create_issue" : "");
+                }
                 
                 log("info", `GitHub ${action} via Token Vault`, { owner, repo });
                 const authMsg = await authInfoMessage("agent_lock_github");
                 if (authMsg) return authMsg;
 
                 if (action === "create_issue") {
-                    const title = String(params.title || "");
                     const body = String(params.body || "");
-                    if (!title) {
-                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "title is required for create_issue." });
+                    if (!owner || !repo || !title) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "owner, repo and title are required for create_issue." });
                     }
                     try {
                         const response = await post("/vault/github/issues/create", {
@@ -1034,7 +1205,52 @@ export default function register(api: any) {
                             details: response,
                         });
                     } catch (error: any) {
-                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed: ${error?.message ?? "unknown"}` });
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for GitHub. Connect GitHub and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/github?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed: ${parsed.message}` });
+                    }
+                }
+                if (action === "execute") {
+                    if (!method_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
+                    }
+                    const path_params = (typeof params.path_params === "object" && params.path_params !== null)
+                        ? params.path_params as Record<string, unknown>
+                        : {
+                            owner,
+                            repo,
+                        };
+                    try {
+                        const response = await post("/vault/github/execute", {
+                            method_id,
+                            path_params,
+                            query: (typeof params.query === "object" && params.query !== null) ? params.query : {},
+                            requested_scope: String(params.requested_scope || "") || undefined,
+                            body: (typeof params.request_body === "object" && params.request_body !== null) ? params.request_body : undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({
+                            success: true,
+                            message: `✅ GitHub execute: ${method_id}`,
+                            details: response,
+                        });
+                    } catch (error: any) {
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for GitHub. Connect GitHub and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/github?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ GitHub execute failed: ${parsed.message}` });
                     }
                 }
 
@@ -1091,24 +1307,34 @@ export default function register(api: any) {
         api.registerTool({
             name: "agent_lock_calendar",
             label: "Agent-Lock Calendar",
-            description: "Interact with Google Calendar using Agent-Lock Token Vault (zero-config)",
+            description: "Interact with Google Calendar via Token Vault. Dynamic mode: provide method_id directly (no action required).",
             parameters: {
                 type: "object",
                 properties: {
-                    action: { type: "string", enum: ["create_event"], description: "The Calendar action to perform" },
+                    action: { type: "string", enum: ["create_event", "execute"], description: "Optional legacy mode." },
                     summary: { type: "string", description: "Event title" },
                     start_time: { type: "string", description: "Start time (ISO 8601)" },
                     end_time: { type: "string", description: "End time (ISO 8601)" },
                     description: { type: "string", description: "Event description" },
+                    method_id: { type: "string", description: "Method id for execute (e.g. calendar.events.list)" },
+                    calendar_id: { type: "string", description: "Calendar id for execute (default: primary)" },
+                    path_params: { type: "object", description: "Path parameters for execute" },
+                    query: { type: "object", description: "Query parameters for execute" },
+                    body: { type: "object", description: "Request body for execute" },
+                    requested_scope: { type: "string", description: "Optional explicit scope for execute" },
                 },
-                required: ["action", "summary", "start_time", "end_time"],
+                required: [],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const action = String(params.action || "");
+                const method_id = String(params.method_id || "").trim();
+                let action = String(params.action || "").trim();
                 const summary = String(params.summary || "");
                 const start_time = String(params.start_time || "");
                 const end_time = String(params.end_time || "");
                 const description = String(params.description || "");
+                if (!action) {
+                    action = method_id ? "execute" : (summary && start_time && end_time ? "create_event" : "");
+                }
 
                 log("info", `Calendar ${action} via Token Vault`, { summary });
                 const authMsg = await authInfoMessage("agent_lock_calendar");
@@ -1128,6 +1354,33 @@ export default function register(api: any) {
                         return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to create event: ${errorMessage}` });
                     }
                 }
+                if (action === "execute") {
+                    if (!method_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
+                    }
+                    try {
+                        const response = await post("/vault/google/calendar/execute", {
+                            method_id,
+                            calendar_id: String(params.calendar_id || "primary"),
+                            path_params: (typeof params.path_params === "object" && params.path_params !== null) ? params.path_params : {},
+                            query: (typeof params.query === "object" && params.query !== null) ? params.query : {},
+                            body: (typeof params.body === "object" && params.body !== null) ? params.body : undefined,
+                            requested_scope: String(params.requested_scope || "") || undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: `✅ Calendar execute: ${method_id}`, details: response });
+                    } catch (error: any) {
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for Calendar. Connect Google and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/google?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Calendar execute failed: ${parsed.message}` });
+                    }
+                }
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
@@ -1137,11 +1390,11 @@ export default function register(api: any) {
         api.registerTool({
             name: "agent_lock_drive",
             label: "Agent-Lock Drive",
-            description: "Interact with Google Drive using Agent-Lock Token Vault (zero-config)",
+            description: "Interact with Google Drive via Token Vault. Dynamic mode: provide method_id directly (no action required).",
             parameters: {
                 type: "object",
                 properties: {
-                    action: { type: "string", enum: ["list_files", "create_file", "move_file"], description: "The Drive action to perform" },
+                    action: { type: "string", enum: ["list_files", "create_file", "move_file", "execute"], description: "Optional legacy mode." },
                     page_size: { type: "number", description: "Maximum files to return for list_files (default 20)" },
                     query: { type: "string", description: "Optional Drive query filter for list_files (q parameter)" },
                     name: { type: "string", description: "File name for create_file" },
@@ -1150,14 +1403,58 @@ export default function register(api: any) {
                     parent_folder_id: { type: "string", description: "Optional parent folder ID for create_file" },
                     file_id: { type: "string", description: "File ID for move_file" },
                     target_folder_id: { type: "string", description: "Target folder ID for move_file" },
+                    method_id: { type: "string", description: "Method id for execute (e.g. drive.files.list)" },
+                    path_params: { type: "object", description: "Path parameters for execute" },
+                    execute_query: { type: "object", description: "Query object for execute methods" },
+                    body: { type: "object", description: "Request body for execute" },
+                    requested_scope: { type: "string", description: "Optional explicit scope for execute" },
                 },
-                required: ["action"],
+                required: [],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const action = String(params.action || "");
+                const method_id = String(params.method_id || "").trim();
+                let action = String(params.action || "").trim();
+                if (!action) {
+                    if (method_id) {
+                        action = "execute";
+                    } else if (String(params.file_id || "") && String(params.target_folder_id || "")) {
+                        action = "move_file";
+                    } else if (String(params.name || "") && (params.content !== undefined)) {
+                        action = "create_file";
+                    } else if (params.query !== undefined || params.page_size !== undefined) {
+                        action = "list_files";
+                    }
+                }
                 log("info", `Drive ${action} via Token Vault`, {});
                 const authMsg = await authInfoMessage("agent_lock_drive");
                 if (authMsg) return authMsg;
+
+                if (action === "execute") {
+                    if (!method_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
+                    }
+                    try {
+                        const response = await post("/vault/google/drive/execute", {
+                            method_id,
+                            path_params: (typeof params.path_params === "object" && params.path_params !== null) ? params.path_params : {},
+                            query: (typeof params.execute_query === "object" && params.execute_query !== null) ? params.execute_query : {},
+                            body: (typeof params.body === "object" && params.body !== null) ? params.body : undefined,
+                            requested_scope: String(params.requested_scope || "") || undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: `✅ Drive execute: ${method_id}`, details: response });
+                    } catch (error: any) {
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for Drive. Connect Google and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/google?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Drive execute failed: ${parsed.message}` });
+                    }
+                }
 
                 if (action === "list_files") {
                     const page_size_raw = Number(params.page_size ?? 20);
@@ -1236,17 +1533,26 @@ export default function register(api: any) {
         api.registerTool({
             name: "agent_lock_youtube",
             label: "Agent-Lock YouTube",
-            description: "Interact with YouTube using Agent-Lock Token Vault (zero-config)",
+            description: "Interact with YouTube via Token Vault. Dynamic mode: provide method_id directly (no action required).",
             parameters: {
                 type: "object",
                 properties: {
-                    action: { type: "string", enum: ["list_channels"], description: "The YouTube action to perform" },
+                    action: { type: "string", enum: ["list_channels", "execute"], description: "Optional legacy mode." },
                     mine: { type: "boolean", description: "Whether to list channels for the authenticated user (default true)" },
+                    method_id: { type: "string", description: "Method id for execute (e.g. youtube.channels.list)" },
+                    path_params: { type: "object", description: "Path parameters for execute" },
+                    query: { type: "object", description: "Query parameters for execute" },
+                    body: { type: "object", description: "Request body for execute" },
+                    requested_scope: { type: "string", description: "Optional explicit scope for execute" },
                 },
-                required: ["action"],
+                required: [],
             },
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
-                const action = String(params.action || "");
+                const method_id = String(params.method_id || "").trim();
+                let action = String(params.action || "").trim();
+                if (!action) {
+                    action = method_id ? "execute" : "list_channels";
+                }
                 log("info", `YouTube ${action} via Token Vault`, {});
                 const authMsg = await authInfoMessage("agent_lock_youtube");
                 if (authMsg) return authMsg;
@@ -1266,6 +1572,32 @@ export default function register(api: any) {
                         return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ Failed to list channels: ${error?.message ?? "unknown"}` });
                     }
                 }
+                if (action === "execute") {
+                    if (!method_id) {
+                        return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
+                    }
+                    try {
+                        const response = await post("/vault/google/youtube/execute", {
+                            method_id,
+                            path_params: (typeof params.path_params === "object" && params.path_params !== null) ? params.path_params : {},
+                            query: (typeof params.query === "object" && params.query !== null) ? params.query : {},
+                            body: (typeof params.body === "object" && params.body !== null) ? params.body : undefined,
+                            requested_scope: String(params.requested_scope || "") || undefined,
+                        }, undefined, SUBJECT_TOKEN, true);
+                        return jsonToolResult({ success: true, message: `✅ YouTube execute: ${method_id}`, details: response });
+                    } catch (error: any) {
+                        const parsed = parseBackendAuthRequired(error);
+                        if (parsed.isAuthRequired) {
+                            return jsonToolResult({
+                                success: false,
+                                error: "AUTH_REQUIRED",
+                                message: "🔐 Authentication required for YouTube. Connect Google and retry.",
+                                login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/google?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
+                            });
+                        }
+                        return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ YouTube execute failed: ${parsed.message}` });
+                    }
+                }
 
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
@@ -1282,9 +1614,6 @@ export default function register(api: any) {
         // Debug-only hook trace
         log("debug", "before_tool_call fired", { tool_name: toolName });
 
-        if (toolName === "agent_lock_respond" || toolName === "agent_lock_auth_status" || toolName === "agent_lock_auth_logout" || toolName === "agent_lock_account_delete" || toolName === "agent_lock_services" || toolName === "agent_lock_provider_status" || toolName === "agent_lock_provider_login" || toolName === "agent_lock_provider_logout" || toolName === "agent_lock_policy" || toolName === "agent_lock_scopes") return undefined;
-
-
         const sessionKey = sessionOf(event);
 
         const userIntent = getIntent(sessionKey);
@@ -1294,8 +1623,21 @@ export default function register(api: any) {
             typeof args.code === "string" ? args.code :
             typeof args.script === "string" ? args.script : undefined;
 
+        const normalizedToolName = normalizeInterceptToolName(toolName, args);
+        const googleService = getGoogleService(toolName, args);
+        const interceptArgs: Record<string, unknown> = {
+            ...args,
+            original_tool_name: toolName,
+        };
+        if (googleService) {
+            interceptArgs.provider = "google";
+            interceptArgs.service = googleService;
+        }
+        live(`intercepted: ${toolName}`);
+
         log("info", "Tool intercepted", {
             tool_name: toolName,
+            normalized_tool_name: normalizedToolName,
             session_key: sessionKey,
             plugin_version: PLUGIN_VERSION,
         });
@@ -1307,9 +1649,10 @@ export default function register(api: any) {
                 const me = await get("/auth/me", undefined, SUBJECT_TOKEN) as any;
                 const isAuthed = Boolean(me?.authenticated);
                 if (!isAuthed) {
+                    live(`login required before running: ${toolName}`);
                     const authRequired = await post(`/intercept`, {
-                        tool_name: toolName,
-                        args,
+                        tool_name: normalizedToolName,
+                        args: interceptArgs,
                         user_intent: userIntent,
                         agent_id: "openclaw",
                         session_key: sessionKey,
@@ -1323,8 +1666,8 @@ export default function register(api: any) {
                     return jsonToolResult({
                         success: true,
                         requires_login: true,
-                        message: `🔵 Debes iniciar sesión antes de ejecutar ${toolName}.`,
-                        next_step: "Abre login_url, completa login y vuelve a intentar.",
+                        message: `🔵 You must log in before running ${toolName}.`,
+                        next_step: "Open login_url, complete login, then retry.",
                         login_url: loginUrl,
                     });
                 }
@@ -1337,8 +1680,8 @@ export default function register(api: any) {
                 return jsonToolResult({
                     success: true,
                     requires_login: true,
-                    message: `🔵 No pude confirmar tu sesión para ${toolName}.`,
-                    next_step: "Abre login_url, completa login y vuelve a intentar.",
+                    message: `🔵 I could not verify your session for ${toolName}.`,
+                    next_step: "Open login_url, complete login, then retry.",
                     login_url: loginUrl,
                 });
             }
@@ -1347,14 +1690,14 @@ export default function register(api: any) {
         let result: any;
         try {
             const interceptStart = Date.now();
+            live(`checking policy for: ${toolName}`);
 
             // Resolve granular scope client-side (backed up by server-side resolution)
-            const action = typeof (args as any)?.action === "string" ? (args as any).action : "";
-            const scope = resolveScope(toolName, action);
+            const scope = resolveScope(normalizedToolName, interceptArgs);
 
             result = await post(`/intercept`, {
-                tool_name: toolName,
-                args,
+                tool_name: normalizedToolName,
+                args: interceptArgs,
                 user_intent: userIntent,
                 agent_id: "openclaw",
                 session_key: sessionKey,
@@ -1380,6 +1723,7 @@ export default function register(api: any) {
 
         const { action_id, status, analysis, auth_token } = result;
         let effectiveStatus = status as string;
+        live(`decision: ${effectiveStatus} (${toolName})`);
         log("info", "Intercept decision", {
             action_id,
             tool_name: toolName,
@@ -1439,6 +1783,7 @@ export default function register(api: any) {
                                 tool_name: toolName,
                                 polls,
                             });
+                            live(`auth completed, resuming: ${toolName}`);
                             stop("approved");
                             return;
                         }
@@ -1448,12 +1793,16 @@ export default function register(api: any) {
                                 tool_name: toolName,
                                 polls,
                             });
+                            live(`auth completed, awaiting approval: ${toolName}`);
                             stop("pending");
                             return;
                         }
                     } catch {}
 
                     polls += 1;
+                    if (polls > 0 && polls % 15 === 0) {
+                        live(`still waiting auth/approval for: ${toolName}`);
+                    }
                     if (!slowMode && polls >= 10 && STATUS_POLL_MS < STATUS_POLL_MS_MAX) {
                         slowMode = true;
                         if (timer) clearInterval(timer);
@@ -1477,6 +1826,7 @@ export default function register(api: any) {
             if (authResolution === "pending") {
                 effectiveStatus = "PENDING";
             } else {
+                live(`blocked (authentication timeout): ${toolName}`);
                 return { block: true, blockReason: "🦞 Agent-Lock: authentication required. Check your secure channel and retry." };
             }
         }
@@ -1511,6 +1861,7 @@ export default function register(api: any) {
         if (effectiveStatus === "AUTO_APPROVED" || effectiveStatus === "APPROVED") return undefined;
 
         if (effectiveStatus === "PENDING") {
+            live(`awaiting manual approval: ${toolName}`);
             const decision = await new Promise<"approve" | "deny">((resolve) => {
                 pending.set(action_id, resolve);
                 let polls = 0;
@@ -1555,6 +1906,9 @@ export default function register(api: any) {
                         }
                     } catch {}
                     polls += 1;
+                    if (polls > 0 && polls % 15 === 0) {
+                        live(`still waiting approval for: ${toolName}`);
+                    }
 
                     // After a few fast polls, back off to reduce load.
                     // (setInterval can't change its delay; this is a best-effort fallback)
@@ -1584,7 +1938,11 @@ export default function register(api: any) {
                     }
                 }, Math.max(100, STATUS_POLL_MS));
             });
-            if (decision === "approve") return undefined;
+            if (decision === "approve") {
+                live(`approved, running now: ${toolName}`);
+                return undefined;
+            }
+            live(`blocked by decision: ${toolName}`);
             log("warn", "Tool call blocked after pending flow", {
                 action_id,
                 tool_name: toolName,
@@ -1592,6 +1950,7 @@ export default function register(api: any) {
             return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
         }
 
+        live(`blocked immediately: ${toolName}`);
         log("warn", "Tool call blocked by immediate decision", {
             action_id,
             tool_name: toolName,
