@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { usePathname } from "next/navigation"
 import {
   fetchHealth,
+  fetchHistorySummary,
   fetchMCPDiagnostics,
   fetchMCPStatus,
   fetchMCPTargets,
@@ -28,6 +29,10 @@ type PanelState = {
   y: number
 }
 
+type AIAssistantWidgetProps = {
+  embedded?: boolean
+}
+
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n))
 }
@@ -48,13 +53,14 @@ async function buildLargeContext(pathname: string): Promise<string> {
     `timestamp=${new Date().toISOString()}`,
   ]
 
-  const [health, diag, status, targets, stats, pending] = await Promise.allSettled([
+  const [health, diag, status, targets, stats, pending, history] = await Promise.allSettled([
     fetchHealth(),
     fetchMCPDiagnostics({ refresh: true }),
     fetchMCPStatus(),
     fetchMCPTargets(),
     fetchStats({ refresh: true }),
     fetchPending(),
+    fetchHistorySummary({ event_limit: 8000, refresh: true }),
   ])
 
   const pushSettled = (name: string, result: PromiseSettledResult<unknown>) => {
@@ -71,6 +77,7 @@ async function buildLargeContext(pathname: string): Promise<string> {
   pushSettled("mcp_targets", targets)
   pushSettled("stats", stats)
   pushSettled("pending", pending)
+  pushSettled("execution_history_summary", history)
 
   return chunks.join("\n")
 }
@@ -176,7 +183,7 @@ function renderMarkdown(text: string): React.ReactNode {
   return <div className="space-y-1">{blocks}</div>
 }
 
-export default function AIAssistantWidget() {
+export default function AIAssistantWidget({ embedded = false }: AIAssistantWidgetProps) {
   const pathname = usePathname()
   const contextCacheRef = useRef<{ at: number; text: string } | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -249,8 +256,10 @@ export default function AIAssistantWidget() {
     }
   }, [docked, panelPos.x, panelPos.y])
 
+  const effectiveOpen = embedded ? true : open
+
   useEffect(() => {
-    if (!open || docked) return
+    if (embedded || !effectiveOpen || docked) return
 
     const handleResize = () => {
       const panel = panelRef.current
@@ -264,7 +273,7 @@ export default function AIAssistantWidget() {
     window.addEventListener("resize", handleResize)
     handleResize()
     return () => window.removeEventListener("resize", handleResize)
-  }, [open, docked, panelPos.x, panelPos.y])
+  }, [docked, effectiveOpen, embedded, panelPos.x, panelPos.y])
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ block: "end" })
@@ -478,6 +487,68 @@ export default function AIAssistantWidget() {
     ? undefined
     : ({ left: `${panelPos.x}px`, top: `${panelPos.y}px` } as React.CSSProperties)
 
+  if (embedded) {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-300">Agent-Lock AI</p>
+            <p className="text-[10px] text-zinc-500">Persistent single chat</p>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-2">
+          {messages.map((m, idx) => (
+            m.role === "user" ? (
+              <div
+                key={`${m.role}-${idx}`}
+                className="ml-6 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-[13px] text-zinc-100"
+              >
+                {m.content}
+              </div>
+            ) : (
+              <div key={`${m.role}-${idx}`} className="text-[13px] text-zinc-200">
+                {renderMarkdown(m.content)}
+              </div>
+            )
+          ))}
+          {sending && (
+            <div className="text-[13px] text-zinc-400">
+              Thinking...
+            </div>
+          )}
+          <div ref={listEndRef} />
+        </div>
+
+        <div className="px-4 pb-8 pt-3">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            placeholder="Describe the issue..."
+            className="min-h-[52px] w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-[10px] text-zinc-500">Enter sends · Shift+Enter newline</p>
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={sending || !input.trim()}
+              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <button
@@ -489,7 +560,7 @@ export default function AIAssistantWidget() {
         AI
       </button>
 
-      {open && (
+      {effectiveOpen && (
         <div
           ref={panelRef}
           style={panelPositionStyle}

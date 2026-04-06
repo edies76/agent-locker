@@ -419,10 +419,10 @@ function update(): void {
     isRegisteredInOpenClaw();
 
   if (hasLatest) {
-    log("✅ Ya tienes la última versión instalada en global y OpenClaw.");
-    log("   No se requiere uninstall/install.");
+    log("✅ You already have the latest version installed globally and in OpenClaw.");
+    log("   No uninstall/install is required.");
     log("");
-    log("Siguiente paso:");
+    log("Next step:");
     log("  openclaw gateway restart");
     return;
   }
@@ -524,7 +524,7 @@ function update(): void {
 
   log("");
   log("🎉 Update completed correctly.");
-  log("Siguiente paso:");
+  log("Next step:");
   log("  openclaw gateway restart");
 }
 
@@ -551,7 +551,7 @@ function install(): void {
     backend_url: detected,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
-    log_level: "warn",
+    log_level: "info",
     subject_token: existing.subject_token ?? `agent-lock-${Date.now()}`,
   });
 
@@ -559,9 +559,9 @@ function install(): void {
   log(`   Extension: ${extDir}`);
   log(`   Config:    ${openclawJson}`);
   log("");
-  log("🎉 Felicidades, estás conectado.");
-  log(`Preferencia de backend: local (${LOCAL_BACKEND_URL}) -> nube (${detected})`);
-  log("Siguiente paso:");
+  log("🎉 Success, you are connected.");
+  log(`Backend preference: local (${LOCAL_BACKEND_URL}) -> cloud (${detected})`);
+  log("Next step:");
   log("  1) Verifica estado:");
   log("     agent-lock status");
   log("  2) Reinicia OpenClaw:");
@@ -588,7 +588,7 @@ function connect(backendUrl?: string): void {
     backend_url: finalUrl,
     status_poll_ms: 500,
     status_poll_ms_max: 2000,
-    log_level: "warn",
+    log_level: "info",
     subject_token: existing.subject_token ?? `agent-lock-${Date.now()}`,
   });
 
@@ -596,13 +596,13 @@ function connect(backendUrl?: string): void {
   log(`   Backend URL: ${finalUrl}`);
   log(`   Strategy: local (${LOCAL_BACKEND_URL}) -> cloud fallback`);
   log("");
-  log("🎉 Felicidades, estás conectado.");
-  log("Ahora reinicia OpenClaw con:");
+  log("🎉 Success, you are connected.");
+  log("Now restart OpenClaw with:");
   log("  openclaw gateway restart");
   log("");
-  log("Verificación recomendada:");
-  log("  - Ejecuta una acción segura en OpenClaw");
-  log("  - Revisa Dashboard: /overview, /activity, /logs");
+  log("Recommended verification:");
+  log("  - Run a safe action in OpenClaw");
+  log("  - Review Dashboard: /overview, /activity, /logs");
 }
 
 async function status(): Promise<void> {
@@ -665,17 +665,17 @@ async function status(): Promise<void> {
 
   if (connected && authenticated) {
     log("");
-    log("🎉 Felicidades, estás conectado y autenticado.");
+    log("🎉 Success, you are connected and authenticated.");
     log("Reinicia OpenClaw con:");
     log("  openclaw gateway restart");
   } else if (connected && !authenticated) {
     log("");
-    log("⚠️  Plugin conectado pero no autenticado.");
-    log("Inicia sesión con:");
+    log("⚠️  Plugin connected but not authenticated.");
+    log("Log in with:");
     log("  agent-lock login");
   } else {
     log("");
-    log("Aún no está completamente conectado. Haz esto:");
+    log("It is not fully connected yet. Do this:");
     if (!installed) {
       log("  1) agent-lock install");
     }
@@ -698,25 +698,25 @@ async function login(provider?: string): Promise<void> {
         normalizedProvider === "slack" ? "slack" :
           undefined;
   if (normalizedProvider && !connection) {
-    fail("Provider inválido para login. Usa: google | github | slack");
+    fail("Invalid provider for login. Use: google | github | slack");
   }
   const loginUrl = connection
     ? `${normalizeBaseUrl(runtime.backend_url)}/auth/provider-login/${encodeURIComponent(normalizedProvider!)}?subject_token=${encodedSubject}&force_success=true`
     : `${normalizeBaseUrl(runtime.backend_url)}/auth/login?subject_token=${encodedSubject}&force_success=true`;
   log(connection ? `🔐 Agent-Lock login (${normalizedProvider})` : "🔐 Agent-Lock login");
-  log("Preparando para logearse...");
-  log("Presiona Enter o Espacio para abrir navegador (auto en 3s).");
+  log("Preparing login...");
+  log("Press Enter or Space to open the browser (auto in 3s).");
 
   const trigger = await waitForEnterOrSpace(3000);
   if (trigger === "trigger") {
-    log("Abriendo navegador...");
+    log("Opening browser...");
   } else {
-    log("Abriendo navegador automáticamente...");
+    log("Opening browser automatically...");
   }
 
   const opened = openUrlInBrowser(loginUrl);
   if (!opened) {
-    log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
+    log(`Could not open it automatically. Use this link: ${loginUrl}`);
   }
 
   const ok = connection
@@ -726,12 +726,12 @@ async function login(provider?: string): Promise<void> {
         try {
           const status = await backendGet(runtime, `/auth/providers/${normalizedProvider}/status`);
           if (Boolean(status?.connected)) {
-            process.stdout.write(`\r✅ ${normalizedProvider} conectado.                      \n`);
+            process.stdout.write(`\r✅ ${normalizedProvider} connected.                      \n`);
             return true;
           }
           if (String(status?.status ?? "") === "refresh_token_missing") {
-            process.stdout.write(`\r❌ Falta refresh token en tu sesión principal.           \n`);
-            log("Necesitas reloguear la cuenta principal para habilitar providers:");
+            process.stdout.write(`\r❌ Missing refresh token in your primary session.           \n`);
+            log("You need to re-login to your primary account to enable providers:");
             log("  1) agent-lock logout");
             log("  2) agent-lock login");
             log(`  3) agent-lock login ${normalizedProvider}`);
@@ -745,8 +745,8 @@ async function login(provider?: string): Promise<void> {
     : await waitForLoginCompletion(runtime);
   if (!ok) {
     fail(connection
-      ? `Login de ${normalizedProvider} no confirmado todavía. Intenta de nuevo: agent-lock login ${normalizedProvider}`
-      : "Login no confirmado todavía. Intenta de nuevo: agent-lock login");
+      ? `Login for ${normalizedProvider} is not confirmed yet. Try again: agent-lock login ${normalizedProvider}`
+      : "Login is not confirmed yet. Try again: agent-lock login");
   }
 }
 
@@ -851,30 +851,13 @@ async function servicesStatus(): Promise<void> {
 function parseProvider(argv: string[]): string {
   const provider = (argv[3] ?? "").trim().toLowerCase();
   if (!provider || !["google", "github", "slack"].includes(provider)) {
-    fail("Provider inválido. Usa: google | github | slack");
+    fail("Invalid provider. Use: google | github | slack");
   }
   return provider;
 }
 
 async function providerLogin(provider: string): Promise<void> {
-  const { extDir } = getInstallPaths();
-  const runtime = ensureRuntimeConfig(extDir);
-  const base = normalizeBaseUrl(runtime.backend_url);
-  const connection = provider === "google" ? "google-oauth2" : provider;
-  const hasSubject = typeof runtime.subject_token === "string" && runtime.subject_token.trim().length > 0;
-  const query = new URLSearchParams({ connection });
-  if (hasSubject) {
-    query.set("subject_token", runtime.subject_token!.trim());
-  }
-  query.set("force_success", "true");
-  const loginUrl = `${base}/auth/login?${query.toString()}`;
-  log(`🔐 Agent-Lock provider login (${provider})`);
-  const opened = openUrlInBrowser(loginUrl);
-  if (!opened) {
-    log(`No pude abrirlo automáticamente. Usa este link: ${loginUrl}`);
-  } else {
-    log(`Abriendo navegador para conectar ${provider}...`);
-  }
+  await login(provider);
 }
 
 async function providerStatus(provider: string): Promise<void> {
@@ -891,11 +874,11 @@ async function providerStatus(provider: string): Promise<void> {
   // Show clear explanation based on connection type
   if (status === "connected_via_primary_identity") {
     log(`status: ${status}`);
-    log(`⚠️  Este provider es tu identidad principal de Agent-Lock`);
-    log(`⚠️  No puedes desconectarlo (usa 'agent-lock logout' para salir completamente)`);
+    log(`⚠️  This provider is your primary Agent-Lock identity`);
+    log(`⚠️  You cannot disconnect it (use 'agent-lock logout' for full logout)`);
   } else if (status === "connected_via_connected_accounts") {
     log(`status: ${status}`);
-    log(`ℹ️  Conectado como cuenta secundaria (puedes usar 'logout ${provider}')`);
+    log(`ℹ️  Connected as a secondary account (you can use 'logout ${provider}')`);
   } else {
     log(`status: ${status}`);
   }
@@ -915,17 +898,17 @@ async function providerLogout(provider: string): Promise<void> {
   log(`🚪 Agent-Lock provider logout (${provider})`);
 
   if (disconnected) {
-    log(`✅ ${provider} desconectado exitosamente`);
+    log(`✅ ${provider} disconnected successfully`);
   } else {
-    log(`❌ No se pudo desconectar`);
+    log(`❌ Could not disconnect`);
 
     // Show clear explanation for why logout failed
     if (reason === "primary_identity_disconnect_not_supported" || reason === "connected_via_primary_identity") {
-      log(`⚠️  Razón: Este provider es tu identidad principal de Agent-Lock`);
-      log(`⚠️  No puedes desconectarlo sin cerrar sesión completamente`);
-      log(`💡 Usa 'agent-lock logout' para salir de tu cuenta`);
+      log(`⚠️  Reason: This provider is your primary Agent-Lock identity`);
+      log(`⚠️  You cannot disconnect it without full logout`);
+      log(`💡 Use 'agent-lock logout' to sign out of your account`);
     } else if (reason === "refresh_token_missing") {
-      log(`⚠️  Razón: No hay token para desconectar (ya estaba desconectado)`);
+      log(`⚠️  Reason: No token available to disconnect (it was already disconnected)`);
     } else {
       log(`reason: ${reason}`);
     }
@@ -976,7 +959,7 @@ async function logoutCmd(): Promise<void> {
 
     // Open Auth0 logout to clear browser session too
     if (auth0LogoutUrl) {
-      log("Cerrando sesión en Auth0...");
+      log("Signing out from Auth0...");
       const opened = openUrlInBrowser(auth0LogoutUrl);
       if (!opened) {
         log(`Abre este link para completar logout: ${auth0LogoutUrl}`);
@@ -996,6 +979,39 @@ async function cloudLogoutCmd(provider?: string): Promise<void> {
     return;
   }
   await logoutCmd();
+}
+
+async function scopesCmd(provider?: string): Promise<void> {
+  const { extDir } = getInstallPaths();
+  const runtime = ensureRuntimeConfig(extDir);
+  
+  try {
+    const providers = provider ? [provider.toLowerCase()] : ["google", "github", "slack"];
+    log("🔑 Agent-Lock scopes");
+    log(`backend: ${runtime.backend_url}`);
+    for (const p of providers) {
+      try {
+        const data = await backendGet(runtime, `/auth/providers/${p}/scopes`);
+        const available = Array.isArray(data?.available_scopes) ? data.available_scopes : [];
+        const configured = Array.isArray(data?.configured_scopes) ? data.configured_scopes : available;
+        const capability = Array.isArray(data?.capability_scopes) ? data.capability_scopes : [];
+        const granted = Array.isArray(data?.granted_scopes) ? data.granted_scopes : [];
+        log(`\n${p.toUpperCase()}:`);
+        log(`  configured: ${configured.length} (${String(data?.scopes_source ?? "unknown")})`);
+        log(`  capability: ${capability.length} (provider_catalog)`);
+        log(`  granted:   ${granted.length} (${String(data?.granted_source ?? "unknown")})`);
+        if (Array.isArray(data?.missing_from_granted) && data.missing_from_granted.length > 0) {
+          log(`  missing:   ${data.missing_from_granted.length}`);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        log(`\n${p.toUpperCase()}: failed (${msg})`);
+      }
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    fail(`Could not fetch scopes: ${msg}`);
+  }
 }
 
 async function connectWsCmd(token?: string): Promise<void> {
@@ -1023,7 +1039,7 @@ async function connectWsCmd(token?: string): Promise<void> {
     rl.question("🔑 Paste dashboard pairing token: ", (answer: string) => {
       rl.close();
       if (!answer.trim()) {
-        fail("❌ Token inválido o vacío.");
+        fail("❌ Invalid or empty token.");
       }
       runtime.dashboard_bridge_token = answer.trim();
       runtime.ws_bridge_token = answer.trim();
@@ -1160,7 +1176,7 @@ function uninstall(): void {
   log(`   Removed: ${extDir}`);
   log(`   Updated: ${openclawJson}`);
   log("");
-  log("Siguiente paso:");
+  log("Next step:");
   log("  openclaw gateway restart");
 }
 
@@ -1179,11 +1195,11 @@ function usage(): void {
   log("  login [provider]  Open browser login (optional provider: google|github|slack)");
   log("  auth-status  Show current authenticated account");
   log("  services  Show provider connection status (google/github/slack)");
-  log("  provider-login <provider>   Connect one provider (google|github|slack)");
   log("  provider-status <provider>  Show one provider status");
   log("  provider-logout <provider>  Disconnect one provider");
   log("  logout [provider]  Logout Agent-Lock session or disconnect one provider");
   log("  cloud-logout  Alias of logout (deprecated)");
+  log("  scopes [provider]  Show available and permitted scopes");
   log("");
   log("Examples:");
   log("  agent-lock install");
@@ -1196,7 +1212,6 @@ function usage(): void {
   log("  agent-lock login github");
   log("  agent-lock auth-status");
   log("  agent-lock services");
-  log("  agent-lock provider-login github");
   log("  agent-lock provider-status github");
   log("  agent-lock provider-logout github");
   log("  agent-lock logout");
@@ -1259,11 +1274,6 @@ async function main(): Promise<void> {
     await servicesStatus();
     return;
   }
-  if (cmd === "provider-login") {
-    const provider = parseProvider(process.argv);
-    await providerLogin(provider);
-    return;
-  }
   if (cmd === "provider-status") {
     const provider = parseProvider(process.argv);
     await providerStatus(provider);
@@ -1286,6 +1296,11 @@ async function main(): Promise<void> {
   if (cmd === "cloud-logout") {
     const provider = process.argv[3];
     await cloudLogoutCmd(provider);
+    return;
+  }
+  if (cmd === "scopes") {
+    const provider = process.argv[3];
+    await scopesCmd(provider);
     return;
   }
 

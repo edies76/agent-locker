@@ -10,7 +10,7 @@ type ChatMessage = {
 type GeminiPart = { text: string }
 type GeminiContent = { role: "user" | "model"; parts: GeminiPart[] }
 
-type KeyResolution = {
+type KeyCandidate = {
   key: string | null
   source: string
 }
@@ -21,7 +21,8 @@ const AGENT_LOCK_PRIMER = [
   "- Plugin integrations: separate adapters (for example the plugin bridge).",
   "Do not claim plugin status when only MCP gateway telemetry is available.",
   "If plugin telemetry is missing, explicitly say 'plugin status unavailable' instead of guessing.",
-  "Ground all diagnostics in provided context fields (health, mcp_status, mcp_targets, mcp_diagnostics, stats, pending).",
+  "Ground all diagnostics in provided context fields (health, mcp_status, mcp_targets, mcp_diagnostics, stats, pending, execution_history_summary).",
+  "Use execution_history_summary to answer historical questions (counts by date/tool/hour).",
   "When evidence is missing, say what is unknown and provide concrete next verification steps.",
 ].join("\n")
 
@@ -38,19 +39,24 @@ function buildGeminiUrl(model: string, apiKey: string, stream: boolean): string 
 
 function readBackendGeminiKeyFromEnvFile(): string | null {
   try {
-    const backendEnvPath = path.resolve(process.cwd(), "..", "backend", ".env")
-    if (!fs.existsSync(backendEnvPath)) return null
+    const candidates = [
+      path.resolve(process.cwd(), "..", "backend-agentlock", ".env"),
+      path.resolve(process.cwd(), "..", "backend", ".env"),
+    ]
 
-    const raw = fs.readFileSync(backendEnvPath, "utf-8")
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith("#")) continue
-      const idx = trimmed.indexOf("=")
-      if (idx <= 0) continue
-      const key = trimmed.slice(0, idx).trim()
-      if (key !== "GEMINI_API_KEY") continue
-      const value = trimmed.slice(idx + 1).trim().replace(/^"|"$/g, "")
-      return value || null
+    for (const backendEnvPath of candidates) {
+      if (!fs.existsSync(backendEnvPath)) continue
+      const raw = fs.readFileSync(backendEnvPath, "utf-8")
+      for (const line of raw.split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith("#")) continue
+        const idx = trimmed.indexOf("=")
+        if (idx <= 0) continue
+        const key = trimmed.slice(0, idx).trim()
+        if (key !== "GEMINI_API_KEY") continue
+        const value = trimmed.slice(idx + 1).trim().replace(/^"|"$/g, "")
+        if (value) return value
+      }
     }
     return null
   } catch {
@@ -58,23 +64,50 @@ function readBackendGeminiKeyFromEnvFile(): string | null {
   }
 }
 
-function resolveGeminiKey(): KeyResolution {
+function resolveGeminiKeyCandidates(): KeyCandidate[] {
+  const candidates: KeyCandidate[] = []
+
   if (process.env.AGENT_LOCK_GEMINI_API_KEY) {
-    return { key: process.env.AGENT_LOCK_GEMINI_API_KEY, source: "AGENT_LOCK_GEMINI_API_KEY" }
+    candidates.push({ key: process.env.AGENT_LOCK_GEMINI_API_KEY, source: "AGENT_LOCK_GEMINI_API_KEY" })
   }
   if (process.env.GEMINI_API_KEY) {
-    return { key: process.env.GEMINI_API_KEY, source: "GEMINI_API_KEY" }
+    candidates.push({ key: process.env.GEMINI_API_KEY, source: "GEMINI_API_KEY" })
   }
   if (process.env.GOOGLE_API_KEY) {
-    return { key: process.env.GOOGLE_API_KEY, source: "GOOGLE_API_KEY" }
+    candidates.push({ key: process.env.GOOGLE_API_KEY, source: "GOOGLE_API_KEY" })
   }
 
   const backendKey = readBackendGeminiKeyFromEnvFile()
   if (backendKey) {
-    return { key: backendKey, source: "backend/.env:GEMINI_API_KEY" }
+    candidates.push({ key: backendKey, source: "backend/.env:GEMINI_API_KEY" })
   }
 
-  return { key: null, source: "none" }
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    const value = candidate.key?.trim()
+    if (!value) return false
+    if (seen.has(value)) return false
+    seen.add(value)
+    return true
+  })
+}
+
+function isInvalidGeminiKeyError(parsed: any): boolean {
+  const reason = parsed?.error?.details?.[0]?.reason
+  return reason === "API_KEY_INVALID" || /API key not valid/i.test(String(parsed?.error?.message || ""))
+}
+
+function isRetryableGeminiFailure(parsed: any, statusCode: number): boolean {
+  if (statusCode === 429 || statusCode === 503) return true
+  const reason = String(parsed?.error?.details?.[0]?.reason || "").toUpperCase()
+  const status = String(parsed?.error?.status || "").toUpperCase()
+  const message = String(parsed?.error?.message || "").toLowerCase()
+  return (
+    reason === "RESOURCE_EXHAUSTED" ||
+    status === "RESOURCE_EXHAUSTED" ||
+    message.includes("quota") ||
+    message.includes("rate limit")
+  )
 }
 
 function toGeminiContents(messages: ChatMessage[]): GeminiContent[] {
@@ -185,29 +218,25 @@ export async function POST(req: NextRequest) {
       : []
 
     const context = typeof body?.context === "string" ? body.context : ""
-  const streamRequested = body?.stream !== false
+    const streamRequested = body?.stream !== false
 
     if (incomingMessages.length === 0) {
       return NextResponse.json({ error: "No messages provided" }, { status: 400 })
     }
 
-    const keyResolution = resolveGeminiKey()
-    const apiKey = keyResolution.key
+    const keyCandidates = resolveGeminiKeyCandidates()
+    const model = process.env.AGENT_LOCK_GEMINI_MODEL ?? "gemini-2.5-flash"
 
-    const model = process.env.AGENT_LOCK_GEMINI_MODEL ?? "gemini-3.0-flash"
-
-    if (!apiKey) {
+    if (keyCandidates.length === 0) {
       return NextResponse.json(
         {
           error:
             "AI assistant not configured. Set AGENT_LOCK_GEMINI_API_KEY (or GEMINI_API_KEY) in dashboard/.env.local and restart Next dev server.",
-          key_source: keyResolution.source,
+          key_source: "none",
         },
         { status: 500 }
       )
     }
-
-    const geminiUrl = buildGeminiUrl(model, apiKey, streamRequested)
 
     const systemPrompt = [
       "You are Agent-Lock AI, the operational assistant for the dashboard.",
@@ -231,55 +260,76 @@ export async function POST(req: NextRequest) {
       },
     }
 
-    const response = await fetch(geminiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestPayload),
-      cache: "no-store",
-    })
+    const retryableFailureSources: string[] = []
+    const invalidKeySources: string[] = []
 
-    const contentType = response.headers.get("content-type") || ""
-    const isSse = /text\/event-stream/i.test(contentType)
-
-    if (streamRequested && response.ok && response.body && isSse) {
-      return new Response(createGeminiTextStream(response.body), {
+    for (const candidate of keyCandidates) {
+      const geminiUrl = buildGeminiUrl(model, candidate.key as string, streamRequested)
+      const response = await fetch(geminiUrl, {
+        method: "POST",
         headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store, no-transform",
-          Connection: "keep-alive",
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify(requestPayload),
+        cache: "no-store",
       })
+
+      const contentType = response.headers.get("content-type") || ""
+      const isSse = /text\/event-stream/i.test(contentType)
+
+      if (streamRequested && response.ok && response.body && isSse) {
+        return new Response(createGeminiTextStream(response.body), {
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store, no-transform",
+            Connection: "keep-alive",
+          },
+        })
+      }
+
+      const raw = await response.text()
+      let parsed: any = null
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        parsed = { raw }
+      }
+
+      if (!response.ok) {
+        if (isInvalidGeminiKeyError(parsed)) {
+          invalidKeySources.push(candidate.source)
+          continue
+        }
+        if (isRetryableGeminiFailure(parsed, response.status)) {
+          retryableFailureSources.push(candidate.source)
+          continue
+        }
+
+        return NextResponse.json(
+          {
+            error: parsed?.error?.message || parsed?.message || "Gemini request failed",
+            status: response.status,
+            key_source: candidate.source,
+          },
+          { status: 500 }
+        )
+      }
+
+      const assistant = extractGeminiText(parsed)
+      return NextResponse.json({ message: assistant, key_source: candidate.source })
     }
 
-    const raw = await response.text()
-    let parsed: any = null
-
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      parsed = { raw }
-    }
-
-    if (!response.ok) {
-      const reason = parsed?.error?.details?.[0]?.reason
-      const invalidKey = reason === "API_KEY_INVALID" || /API key not valid/i.test(String(parsed?.error?.message || ""))
-
-      return NextResponse.json(
-        {
-          error: invalidKey
-            ? `Invalid Gemini API key (${keyResolution.source}). Rotate/create a valid key in Google AI Studio and set AGENT_LOCK_GEMINI_API_KEY in dashboard/.env.local.`
-            : parsed?.error?.message || parsed?.message || "Gemini request failed",
-          status: response.status,
-          key_source: keyResolution.source,
-        },
-        { status: 500 }
-      )
-    }
-
-    const assistant = extractGeminiText(parsed)
-    return NextResponse.json({ message: assistant })
+    const failedSources = [...invalidKeySources, ...retryableFailureSources]
+    return NextResponse.json(
+      {
+        error:
+          failedSources.length > 0
+            ? `All Gemini keys failed (${failedSources.join(", ")}). Keys may be invalid or quota-limited.`
+            : "No working Gemini key is available.",
+        status: 500,
+      },
+      { status: 500 }
+    )
   } catch (error) {
     return NextResponse.json(
       {

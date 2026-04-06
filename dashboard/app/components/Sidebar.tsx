@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
 import { fetchPending } from "@/lib/api"
 import { useTheme } from "@/contexts/ThemeContext"
+import AIAssistantWidget from "./AIAssistantWidget"
 
 const navSections = [
   {
@@ -147,6 +148,7 @@ export default function Sidebar() {
   const [pendingCount, setPendingCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [panelMode, setPanelMode] = useState<"sidebar" | "ai">("sidebar")
   const { theme, resolvedTheme, setTheme } = useTheme()
 
   useEffect(() => {
@@ -188,11 +190,40 @@ export default function Sidebar() {
     }
   }, [mobileOpen])
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("agent-lock-left-panel-mode")
+      if (raw === "sidebar" || raw === "ai") {
+        setPanelMode(raw)
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("agent-lock-left-panel-mode", panelMode)
+    } catch {
+      // ignore storage errors
+    }
+  }, [panelMode])
+
   const cycleTheme = () => {
     const themes: Array<'light' | 'dark' | 'system'> = ['light', 'dark', 'system']
     const currentIndex = themes.indexOf(theme)
     const nextIndex = (currentIndex + 1) % themes.length
     setTheme(themes[nextIndex])
+  }
+
+  const togglePanelMode = () => {
+    setPanelMode((prev) => {
+      const next = prev === "sidebar" ? "ai" : "sidebar"
+      if (next === "ai" && collapsed) {
+        setCollapsed(false)
+      }
+      return next
+    })
   }
 
   const themeIcon =
@@ -334,10 +365,13 @@ export default function Sidebar() {
       )}
 
       <aside
-        className={`fixed left-0 top-0 z-50 hidden h-screen flex-col transition-all duration-200 md:flex ${collapsed ? 'w-16' : 'w-56'}`}
+        className={`fixed left-0 top-0 z-50 hidden h-screen flex-col transition-all duration-200 md:flex ${collapsed ? 'w-16' : 'w-[15.4rem]'}`}
         style={{ background: 'var(--bg-primary)', borderRight: '1px solid var(--border-primary)' }}
       >
-        <div className="flex h-14 items-center justify-between px-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
+        <div
+          className="flex h-14 items-center justify-between px-4"
+          style={{ borderBottom: panelMode === "ai" ? "none" : '1px solid var(--border-primary)' }}
+        >
           {!collapsed && (
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded bg-[var(--accent-primary)] text-sm font-bold text-white">
@@ -364,9 +398,33 @@ export default function Sidebar() {
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-3">{nav(false)}</nav>
+        <div className="flex-1 overflow-hidden">
+          {panelMode === "sidebar" ? (
+            <nav className="h-full overflow-y-auto py-3">{nav(false)}</nav>
+          ) : (
+            <div className="h-full">
+              <AIAssistantWidget embedded />
+            </div>
+          )}
+        </div>
 
         <div className="px-3 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
+          <button
+            onClick={togglePanelMode}
+            className={`mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}
+            style={{ color: 'var(--text-secondary)' }}
+            title={panelMode === "sidebar" ? "Switch to AI panel" : "Switch to navigation panel"}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+              {panelMode === "sidebar" ? (
+                <path d="M4 4h10v10H4zM7 7h4M7 10h4" strokeLinecap="round" strokeLinejoin="round" />
+              ) : (
+                <path d="M3 4h12M3 9h12M3 14h12" strokeLinecap="round" />
+              )}
+            </svg>
+            {!collapsed && <span>{panelMode === "sidebar" ? "AI Panel" : "Navigation"}</span>}
+          </button>
+
           <button
             onClick={cycleTheme}
             className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}

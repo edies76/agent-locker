@@ -188,11 +188,9 @@ function log(
     logBuffer.push({ ts: new Date().toISOString(), level, message, context });
     if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
 
-    // Console: clean text only — no JSON noise
-    const line = `[Agent-Lock][${level.toUpperCase()}] ${message}`;
-    if (level === "warn") { console.warn(line); return; }
-    if (level === "error") { console.error(line); return; }
-    console.log(line);
+    // Console: always blue for Agent-Lock lines
+    const line = `[${level.toUpperCase()}] ${message}`;
+    logBlue(line);
 }
 
 /** Returns the in-memory structured log buffer (for dashboard polling). */
@@ -534,7 +532,7 @@ export default function register(api: any) {
     };
 
     if (DASHBOARD_BRIDGE_TOKEN) {
-        log("info", "Dashboard channel token detected", {
+        log("debug", "Dashboard channel token detected", {
             preferred_channel: PREFERRED_CHANNEL,
             client_label: CLIENT_LABEL,
         });
@@ -628,7 +626,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, message: "Action not found." });
             },
         });
-        log("info", "agent_lock_respond tool registered");
+        log("debug", "agent_lock_respond tool registered");
 
         // Auth Status Tool
         api.registerTool({
@@ -668,7 +666,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_auth_status tool registered");
+        log("debug", "agent_lock_auth_status tool registered");
 
         // Services Status Tool
         api.registerTool({
@@ -701,7 +699,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_services tool registered");
+        log("debug", "agent_lock_services tool registered");
 
         // Provider Status Tool
         api.registerTool({
@@ -741,7 +739,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_provider_status tool registered");
+        log("debug", "agent_lock_provider_status tool registered");
 
         // Provider Login Helper Tool
         api.registerTool({
@@ -778,7 +776,7 @@ export default function register(api: any) {
                 });
             },
         });
-        log("info", "agent_lock_provider_login tool registered");
+        log("debug", "agent_lock_provider_login tool registered");
 
         // Provider Logout Tool
         api.registerTool({
@@ -818,7 +816,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_provider_logout tool registered");
+        log("debug", "agent_lock_provider_logout tool registered");
 
         // Auth Logout Tool
         api.registerTool({
@@ -853,7 +851,7 @@ export default function register(api: any) {
                 });
             },
         });
-        log("info", "agent_lock_auth_logout tool registered");
+        log("debug", "agent_lock_auth_logout tool registered");
 
         api.registerTool({
             name: "agent_lock_account_delete",
@@ -882,7 +880,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_account_delete tool registered");
+        log("debug", "agent_lock_account_delete tool registered");
 
         // ── Scopes Discovery Tool ─────────────────────────────────────────────────
         api.registerTool({
@@ -941,7 +939,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_scopes tool registered");
+        log("debug", "agent_lock_scopes tool registered");
 
 
         // ── Policy Control Tool ──────────────────────────────────────────────────
@@ -998,7 +996,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_policy tool registered");
+        log("debug", "agent_lock_policy tool registered");
 
         // ── Token Vault Tools ─────────────────────────────────────────────────────
 
@@ -1089,7 +1087,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_gmail tool registered (Central)");
+        log("debug", "agent_lock_gmail tool registered (Central)");
 
         api.registerTool({
             name: "agent_lock_method_modes",
@@ -1143,7 +1141,7 @@ export default function register(api: any) {
                 }
             },
         });
-        log("info", "agent_lock_method_modes tool registered");
+        log("debug", "agent_lock_method_modes tool registered");
 
 
         // ── GitHub Central Tool ──────────────────────────────────────────────────
@@ -1221,6 +1219,15 @@ export default function register(api: any) {
                     if (!method_id) {
                         return jsonToolResult({ success: false, error: "INVALID_INPUT", message: "method_id is required for execute." });
                     }
+                    const methodAliases: Record<string, string> = {
+                        "repos.createorupdatefilecontents": "github.repos.contents.upsert",
+                        "repos.getcontent": "github.repos.contents.get",
+                        "repos.deletefile": "github.repos.contents.delete",
+                        "github.repos.createorupdatefilecontents": "github.repos.contents.upsert",
+                        "github.repos.getcontent": "github.repos.contents.get",
+                        "github.repos.deletefile": "github.repos.contents.delete",
+                    };
+                    const normalizedMethodId = methodAliases[method_id.toLowerCase()] ?? method_id;
                     const path_params = (typeof params.path_params === "object" && params.path_params !== null)
                         ? params.path_params as Record<string, unknown>
                         : {
@@ -1229,7 +1236,7 @@ export default function register(api: any) {
                         };
                     try {
                         const response = await post("/vault/github/execute", {
-                            method_id,
+                            method_id: normalizedMethodId,
                             path_params,
                             query: (typeof params.query === "object" && params.query !== null) ? params.query : {},
                             requested_scope: String(params.requested_scope || "") || undefined,
@@ -1237,7 +1244,7 @@ export default function register(api: any) {
                         }, undefined, SUBJECT_TOKEN, true);
                         return jsonToolResult({
                             success: true,
-                            message: `✅ GitHub execute: ${method_id}`,
+                            message: `✅ GitHub execute: ${normalizedMethodId}`,
                             details: response,
                         });
                     } catch (error: any) {
@@ -1250,6 +1257,29 @@ export default function register(api: any) {
                                 login_url: parsed.loginUrl ?? `${activeBackendUrl}/auth/provider-login/github?subject_token=${encodeURIComponent(SUBJECT_TOKEN || "default")}&force_success=true`,
                             });
                         }
+                        const backendMessage = String(parsed.message || "");
+                        const maybeUnknownMethod =
+                            backendMessage.includes("Unknown GitHub method_id") ||
+                            backendMessage.includes("unknown_method_id");
+                        if (maybeUnknownMethod) {
+                            try {
+                                const methodsData = await get("/vault/github/methods", undefined, SUBJECT_TOKEN) as any;
+                                const ids = Array.isArray(methodsData?.method_ids) ? methodsData.method_ids : [];
+                                const aliases = (methodsData?.method_aliases && typeof methodsData.method_aliases === "object")
+                                    ? methodsData.method_aliases
+                                    : {};
+                                return jsonToolResult({
+                                    success: false,
+                                    error: "UNKNOWN_METHOD_ID",
+                                    message: `❌ Unknown GitHub method_id: ${normalizedMethodId}`,
+                                    normalized_method_id: normalizedMethodId,
+                                    available_method_ids: ids,
+                                    method_aliases: aliases,
+                                });
+                            } catch {
+                                // fall through to default BROKER_FAILED
+                            }
+                        }
                         return jsonToolResult({ success: false, error: "BROKER_FAILED", message: `❌ GitHub execute failed: ${parsed.message}` });
                     }
                 }
@@ -1257,7 +1287,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' is not yet supported.` });
             },
         });
-        log("info", "agent_lock_github tool registered (Central)");
+        log("debug", "agent_lock_github tool registered (Central)");
 
 
         // ── Slack Central Tool ───────────────────────────────────────────────────
@@ -1300,7 +1330,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_slack tool registered (Central)");
+        log("debug", "agent_lock_slack tool registered (Central)");
 
 
         // ── Calendar Central Tool ────────────────────────────────────────────────
@@ -1384,7 +1414,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_calendar tool registered (Central)");
+        log("debug", "agent_lock_calendar tool registered (Central)");
 
         // ── Drive Central Tool ───────────────────────────────────────────────────
         api.registerTool({
@@ -1527,7 +1557,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_drive tool registered (Central)");
+        log("debug", "agent_lock_drive tool registered (Central)");
 
         // ── YouTube Central Tool ────────────────────────────────────────────────
         api.registerTool({
@@ -1602,7 +1632,7 @@ export default function register(api: any) {
                 return jsonToolResult({ success: false, error: "UNSUPPORTED_ACTION", message: `Action '${action}' not supported.` });
             },
         });
-        log("info", "agent_lock_youtube tool registered (Central)");
+        log("debug", "agent_lock_youtube tool registered (Central)");
 
     }
     // ── Intercept tool calls ──────────────────────────────────────────────────
@@ -1942,12 +1972,19 @@ export default function register(api: any) {
                 live(`approved, running now: ${toolName}`);
                 return undefined;
             }
-            live(`blocked by decision: ${toolName}`);
+            live(`blocked by decision/timeout: ${toolName}`);
             log("warn", "Tool call blocked after pending flow", {
                 action_id,
                 tool_name: toolName,
             });
-            return { block: true, blockReason: `🦞 Agent-Lock blocked: ${analysis}` };
+            let detail = analysis;
+            try {
+                const latest = await get(`/status/${action_id}`) as any;
+                if (latest?.reason && typeof latest.reason === "string" && latest.reason.trim().length > 0) {
+                    detail = latest.reason.trim();
+                }
+            } catch {}
+            return { block: true, blockReason: `🦞 Agent-Lock blocked: ${detail}` };
         }
 
         live(`blocked immediately: ${toolName}`);

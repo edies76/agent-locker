@@ -146,6 +146,25 @@ export async function fetchPluginActions(limit = 30, options?: { refresh?: boole
   })
 }
 
+export async function fetchHistorySummary(query?: {
+  from_ts?: string
+  to_ts?: string
+  tool?: string
+  event_limit?: number
+  refresh?: boolean
+}) {
+  const params = new URLSearchParams()
+  if (query?.from_ts) params.set("from_ts", query.from_ts)
+  if (query?.to_ts) params.set("to_ts", query.to_ts)
+  if (query?.tool) params.set("tool", query.tool)
+  if (query?.event_limit) params.set("event_limit", String(query.event_limit))
+  const qs = params.toString()
+  return cachedFromPath(`/dashboard/history/summary${qs ? `?${qs}` : ""}`, {
+    ttl: 5000,
+    refresh: query?.refresh,
+  })
+}
+
 export async function createPluginPairing(body: { label?: string; preferred_channel?: string }) {
   const base = await buildUrl("")
   const res = await fetch(`${base}/dashboard/plugin/pairings`, {
