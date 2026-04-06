@@ -15,9 +15,9 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <head />
-      <body className="min-h-screen">
+      <body className="min-h-screen bg-[var(--bg-secondary)] text-[var(--text-primary)]">
         <ErrorBoundary>
           <ToastProvider>
             <ClientProviders>
