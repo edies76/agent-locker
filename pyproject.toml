@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-lock-mcp"
+version = "1.2.2"
+description = "Governance & security gateway for Claude Desktop — intercepts every MCP tool call with Gemini risk analysis and Telegram human-in-the-loop approval."
+readme = "mcp_server/README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["mcp", "claude", "ai", "security", "governance", "agent", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+authors = [
+  { name = "Agent-Lock Team" }
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.25.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/edies76/agent-locker"
+Repository = "https://github.com/edies76/agent-locker"
+Issues = "https://github.com/edies76/agent-locker/issues"
+
+[project.scripts]
+# Allows: agent-lock-mcp setup / agent-lock-mcp run
+agent-lock-mcp = "mcp_server.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_server"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "mcp_server/",
+    "mcp_server/README.md",
+    "LICENSE",
+]
