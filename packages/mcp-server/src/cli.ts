@@ -11,6 +11,93 @@ const OFFICIAL_BACKEND_URL = "https://agent-lock-backend-api-7.azurewebsites.net
 const NPM_LOOKUP_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_LOOKUP_TIMEOUT_MS ?? "30000");
 const NPM_INSTALL_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_INSTALL_TIMEOUT_MS ?? "300000");
 
+// ── Curated default MCP servers ──────────────────────────────────────────────
+// These are bundled with every Agent-Lock installation.
+// Servers marked enabled:true work out of the box (no API keys required).
+// Servers marked enabled:false need environment variables — they appear in
+// the config so the user can activate them by adding their credentials.
+const DEFAULT_SERVERS: Array<{
+    name: string;
+    label: string;
+    description: string;
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+    enabled: boolean;
+    requires?: string;
+}> = [
+    {
+        name: "filesystem",
+        label: "Filesystem",
+        description: "Read and write files in your Documents folder.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-filesystem", os.homedir() + "/Documents"],
+        enabled: true,
+    },
+    {
+        name: "puppeteer",
+        label: "Puppeteer (Browser)",
+        description: "Control a real browser — scrape pages, take screenshots, fill forms.",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+        enabled: true,
+    },
+    {
+        name: "fetch",
+        label: "Fetch (HTTP)",
+        description: "Make HTTP requests to any URL — read APIs, download content.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-fetch"],
+        enabled: true,
+    },
+    {
+        name: "memory",
+        label: "Memory",
+        description: "Persistent memory store — Claude remembers facts across conversations.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-memory"],
+        enabled: true,
+    },
+    {
+        name: "sequential-thinking",
+        label: "Sequential Thinking",
+        description: "Structured multi-step reasoning for complex problems.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-sequential-thinking"],
+        enabled: true,
+    },
+    {
+        name: "github",
+        label: "GitHub",
+        description: "Create issues, PRs, clone repos. Requires GITHUB_TOKEN.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-github"],
+        env: { GITHUB_TOKEN: "" },
+        enabled: false,
+        requires: "Set GITHUB_TOKEN in the env block to activate.",
+    },
+    {
+        name: "brave-search",
+        label: "Brave Search",
+        description: "Real-time web search. Requires BRAVE_API_KEY (free tier available).",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-brave-search"],
+        env: { BRAVE_API_KEY: "" },
+        enabled: false,
+        requires: "Get a free key at brave.com/search/api and set BRAVE_API_KEY.",
+    },
+    {
+        name: "postgres",
+        label: "PostgreSQL",
+        description: "Query your Postgres database. Requires a connection string.",
+        command: "npx",
+        args: ["-y", "@anthropic/mcp-server-postgres", "postgresql://localhost/mydb"],
+        enabled: false,
+        requires: "Replace the connection string in the args array.",
+    },
+];
+
+
 type MCPConfig = {
     target_servers: Array<{
         name: string;
@@ -219,7 +306,14 @@ function install(silent = false): void {
     // Create default mcp_config.json if it does not exist
     if (!fs.existsSync(configFile)) {
         const defaultConfig: MCPConfig = {
-            target_servers: [],
+            // Pre-bundled curated servers — 5 enabled by default, 3 need config first
+            target_servers: DEFAULT_SERVERS.map(s => ({
+                name: s.name,
+                command: s.command,
+                args: s.args,
+                env: s.env ?? {},
+                enabled: s.enabled,
+            })),
             backend_url: OFFICIAL_BACKEND_URL,
             subject_token: "",
             auto_approve_low_risk: true,
@@ -231,7 +325,12 @@ function install(silent = false): void {
         };
         ensureDir(configDir);
         writeJson(configFile, defaultConfig);
-        if (!silent) log(`   Created config: ${configFile}`);
+        if (!silent) {
+            const enabled = DEFAULT_SERVERS.filter(s => s.enabled).length;
+            const disabled = DEFAULT_SERVERS.filter(s => !s.enabled).length;
+            log(`   Created config with ${enabled} servers enabled, ${disabled} ready to activate`);
+            log(`   Config: ${configFile}`);
+        }
     } else {
         if (!silent) log(`   Config exists: ${configFile}`);
     }
@@ -481,6 +580,38 @@ function update(): void {
     log(`🎉 Update complete! v${versionOrUnknown(currentInstalled)} → v${versionOrUnknown(updatedVersion)}`);
 }
 
+function listServers(): void {
+    log("");
+    log("🦞  Agent-Lock — Bundled MCP Servers");
+    log("=".repeat(50));
+    log("");
+
+    const { configFile } = getInstallPaths();
+    const currentConfig = readJson<Partial<MCPConfig>>(configFile, {});
+    const currentServers = new Map<string, boolean>();
+    for (const s of currentConfig.target_servers ?? []) {
+        currentServers.set(s.name, s.enabled !== false);
+    }
+
+    for (const s of DEFAULT_SERVERS) {
+        const activeEnabled = currentServers.has(s.name)
+            ? currentServers.get(s.name)
+            : s.enabled;
+        const badge = activeEnabled ? "✅ ON " : "⭕ OFF";
+        const needsConfig = !s.enabled ? " (needs config)" : "";
+        log(`  ${badge}  ${s.label.padEnd(22)} — ${s.description}`);
+        if (s.requires && !activeEnabled) {
+            log(`         ↳ ${s.requires}`);
+        }
+    }
+
+    log("");
+    log(`Config file: ${configFile}`);
+    log("To activate a server: edit the config and set \"enabled\": true");
+    log("Then restart Claude Desktop.");
+    log("");
+}
+
 function usage(): void {
     const v = getPackageVersion();
     log(`agent-lock-mcp v${v} — Governance gateway for Claude Desktop`);
@@ -489,19 +620,22 @@ function usage(): void {
     log("  npx @agentlock/mcp-server            Start MCP server (Claude Desktop)");
     log("  npx @agentlock/mcp-server setup      Install + auto-configure Claude Desktop");
     log("  npx @agentlock/mcp-server status     Show installation status");
+    log("  npx @agentlock/mcp-server list-servers  Show bundled MCP servers + status");
     log("  npx @agentlock/mcp-server update     Update to latest version");
     log("");
     log("Commands:");
     log("  setup          One-shot install + Claude Desktop config patch");
     log("  serve          Start MCP server (stdio mode, default)");
+    log("  list-servers   Show all bundled MCP servers and their on/off status");
     log("  status         Show status, versions, and connected servers");
     log("  update         Update npm package + reinstall MCP server");
-    log("  add-server     Add a target MCP server to protect");
+    log("  add-server     Add a custom target MCP server");
     log("  config-path    Print path to mcp_config.json");
     log("  uninstall      Remove MCP server files (keeps config)");
     log("");
     log("Examples:");
     log("  npx @agentlock/mcp-server setup");
+    log("  npx @agentlock/mcp-server list-servers");
     log("  npx @agentlock/mcp-server add-server filesystem npx \"-y @anthropic/mcp-server-filesystem /path\"");
     log("");
     log("  📖 https://github.com/edies76/agent-locker");
@@ -558,6 +692,9 @@ function main(): void {
             addServer(name, command, serverArgs);
             break;
         }
+        case "list-servers":
+            listServers();
+            break;
         case "uninstall":
             uninstall();
             break;

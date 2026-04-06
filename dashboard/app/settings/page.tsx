@@ -10,6 +10,7 @@ import {
   fetchRuntimeControls,
   updateRuntimeControls,
   getAuthFlowLinks,
+  updateSettingsEnv,
 } from "@/lib/api"
 import { Settings, PoliciesResponse, RuntimeControls } from "@/types"
 import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
@@ -465,7 +466,37 @@ function TelegramSection({ settings }: { settings: Settings | null }) {
 
 // ─── Gemini Section ────────────────────────────────────────────────────────────
 function GeminiSection({ settings }: { settings: Settings | null }) {
+  const { showToast } = useToast()
+  const [apiKey, setApiKey] = useState("")
+  const [saving, setSaving] = useState(false)
   const gm = settings?.gemini
+
+  async function handleSaveGeminiKey() {
+    const trimmed = apiKey.trim()
+    if (!trimmed) return
+
+    setSaving(true)
+    try {
+      const res = await updateSettingsEnv({ gemini_api_key: trimmed })
+      if (!res?.ok) {
+        throw new Error(String(res?.detail || res?.error || "Could not update Gemini API key"))
+      }
+      setApiKey("")
+      showToast({
+        type: "success",
+        title: "Gemini key updated",
+        message: "Global Gemini API key has been replaced.",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Failed to update Gemini key",
+        message: error instanceof Error ? error.message : "Unexpected error",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <SectionCard title="🧠 Gemini AI Analysis">
@@ -477,10 +508,29 @@ function GeminiSection({ settings }: { settings: Settings | null }) {
       </div>
 
       {gm ? (
-        <ConfigRow label="API Key" value={gm.key_preview} mono />
+        <ConfigRow label="API Key" value={gm.configured ? "Configured (hidden)" : "Not configured"} />
       ) : (
         <Skeleton className="h-10" />
       )}
+
+      <div className="rounded-lg border border-brand-border bg-brand-bg/40 p-4 space-y-3">
+        <label className="block text-xs uppercase tracking-wide text-slate-500">Replace global Gemini API key</label>
+        <Input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="Paste new Gemini key (AIza...)"
+        />
+        <div className="flex justify-end">
+          <Button
+            onClick={handleSaveGeminiKey}
+            disabled={saving || !apiKey.trim()}
+            className="bg-indigo-700 hover:bg-indigo-600 text-white"
+          >
+            {saving ? "Saving..." : "Save Global Key"}
+          </Button>
+        </div>
+      </div>
 
       <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-sm text-slate-400 leading-relaxed">
         <p>
