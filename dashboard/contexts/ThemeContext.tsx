@@ -23,7 +23,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (stored && ['light', 'dark', 'system'].includes(stored)) {
       return stored
     }
-    return 'system'
+    return 'dark'
   })
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') return 'light'
