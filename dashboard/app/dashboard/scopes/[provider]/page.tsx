@@ -45,7 +45,7 @@ export default function ProviderScopesPage() {
   const [controls, setControls] = useState<RuntimeControls | null>(null)
   const [catalog, setCatalog] = useState<Record<string, ScopeCatalogItem[]>>({})
 
-  const scopes = catalog[provider] ?? []
+  const scopes = useMemo(() => catalog[provider] ?? [], [catalog, provider])
   const scopeMap = controls?.integration_scopes_enabled?.[provider] ?? {}
 
   const load = useCallback(async () => {
