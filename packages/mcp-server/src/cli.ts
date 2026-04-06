@@ -3,12 +3,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawnSync, spawn, ChildProcess } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const PACKAGE_NAME = "@agentlock/mcp-server";
 const OFFICIAL_BACKEND_URL = "https://agent-lock-backend-api-7.azurewebsites.net";
-const LOCAL_BACKEND_URL = "http://localhost:8000";
 const NPM_LOOKUP_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_LOOKUP_TIMEOUT_MS ?? "30000");
 const NPM_INSTALL_TIMEOUT_MS = Number(process.env.AGENT_LOCK_NPM_INSTALL_TIMEOUT_MS ?? "300000");
 
@@ -33,6 +32,10 @@ type MCPConfig = {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function log(msg: string): void {
     process.stdout.write(`${msg}\n`);
+}
+
+function err(msg: string): void {
+    process.stderr.write(`${msg}\n`);
 }
 
 function fail(msg: string): never {
@@ -90,27 +93,94 @@ function checkPython(): { available: boolean; command: string; version: string }
 }
 
 function checkPythonDeps(pythonCmd: string): boolean {
-    const result = spawnSync(pythonCmd, ["-c", "import mcp, httpx, pydantic"], {
+    const result = spawnSync(pythonCmd, ["-c", "import mcp, httpx"], {
         encoding: "utf8",
         shell: process.platform === "win32",
     });
     return result.status === 0;
 }
 
+// ── Claude Desktop config helpers ────────────────────────────────────────────
+
+function getClaudeConfigPath(): string | null {
+    if (process.platform === "win32") {
+        // Claude Desktop on Windows is sometimes in a sandboxed Packages path or plain APPDATA
+        const appdata = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+        // Try sandboxed path first (Microsoft Store install)
+        const pkgsDir = path.join(os.homedir(), "AppData", "Local", "Packages");
+        if (fs.existsSync(pkgsDir)) {
+            const entries = fs.readdirSync(pkgsDir).filter(d => d.startsWith("Claude_"));
+            if (entries.length > 0) {
+                return path.join(pkgsDir, entries[0], "LocalCache", "Roaming", "Claude", "claude_desktop_config.json");
+            }
+        }
+        return path.join(appdata, "Claude", "claude_desktop_config.json");
+    } else if (process.platform === "darwin") {
+        return path.join(os.homedir(), "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    }
+    return null;
+}
+
+function patchClaudeConfig(): boolean {
+    const configPath = getClaudeConfigPath();
+    if (!configPath) {
+        log("  ⚠️  Could not auto-detect Claude Desktop config path on this OS.");
+        printManualConfig();
+        return false;
+    }
+
+    let claudeCfg: Record<string, unknown> = {};
+    if (fs.existsSync(configPath)) {
+        try {
+            claudeCfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        } catch {
+            claudeCfg = {};
+        }
+    }
+
+    if (!claudeCfg.mcpServers || typeof claudeCfg.mcpServers !== "object") {
+        claudeCfg.mcpServers = {};
+    }
+    (claudeCfg.mcpServers as Record<string, unknown>)["agent-lock"] = {
+        command: "npx",
+        args: ["-y", "@agentlock/mcp-server"],
+    };
+
+    ensureDir(path.dirname(configPath));
+    fs.writeFileSync(configPath, JSON.stringify(claudeCfg, null, 2) + "\n", "utf8");
+    log(`  ✅ Claude Desktop config patched`);
+    log(`     → ${configPath}`);
+    return true;
+}
+
+function printManualConfig(): void {
+    log("");
+    log('  Add this to your claude_desktop_config.json under "mcpServers":');
+    log("");
+    log('  "agent-lock": {');
+    log('    "command": "npx",');
+    log('    "args": ["-y", "@agentlock/mcp-server"]');
+    log('  }');
+    log("");
+    log(`  File location (Windows): %APPDATA%\\Claude\\claude_desktop_config.json`);
+    log(`  File location (macOS):   ~/Library/Application Support/Claude/claude_desktop_config.json`);
+}
+
 // ── Commands ─────────────────────────────────────────────────────────────────
-function install(): void {
+
+function install(silent = false): void {
     const version = getPackageVersion();
-    log(`📦 Installing Agent-Lock MCP Server v${version}...`);
+    if (!silent) log(`📦 Installing Agent-Lock MCP Server v${version}...`);
 
     const { configDir, configFile, pythonDir } = getInstallPaths();
     const python = checkPython();
 
     if (!python.available) {
-        fail("Python 3.8+ is required. Install Python and try again.");
+        fail("Python 3.8+ is required but not found. Install Python and try again.");
     }
-    log(`   Python: ${python.command}`);
+    if (!silent) log(`   Python: ${python.command} (${python.version})`);
 
-    // Copy Python MCP server files
+    // Copy Python MCP server files bundled inside this npm package
     const sourcePython = path.join(__dirname, "..", "python");
     if (!fs.existsSync(sourcePython)) {
         fail(`Python source not found at ${sourcePython}. Package may be corrupted.`);
@@ -125,27 +195,31 @@ function install(): void {
             );
         }
     }
-    log(`   Copied MCP server to: ${pythonDir}`);
+    if (!silent) log(`   Copied MCP server to: ${pythonDir}`);
 
-    // Check/install Python dependencies
+    // Install Python dependencies if needed
     if (!checkPythonDeps(python.command)) {
-        log("   Installing Python dependencies...");
-        const pipResult = spawnSync(python.command, ["-m", "pip", "install", "--quiet", "mcp", "httpx", "pydantic", "pydantic-settings"], {
-            stdio: "inherit",
-            shell: process.platform === "win32",
-        });
+        if (!silent) log("   Installing Python dependencies (mcp, httpx)...");
+        const pipResult = spawnSync(
+            python.command,
+            ["-m", "pip", "install", "--quiet", "mcp", "httpx"],
+            {
+                stdio: silent ? "pipe" : "inherit",
+                shell: process.platform === "win32",
+            }
+        );
         if (pipResult.status !== 0) {
-            log("⚠️  Could not auto-install Python deps. Run manually:");
-            log(`   ${python.command} -m pip install mcp httpx pydantic pydantic-settings`);
+            log("  ⚠️  Could not auto-install Python deps. Run manually:");
+            log(`      ${python.command} -m pip install mcp httpx`);
+        } else if (!silent) {
+            log("   Python dependencies installed.");
         }
     }
 
-    // Create default config if not exists
+    // Create default mcp_config.json if it does not exist
     if (!fs.existsSync(configFile)) {
         const defaultConfig: MCPConfig = {
-            target_servers: [
-                // Example servers (commented in description)
-            ],
+            target_servers: [],
             backend_url: OFFICIAL_BACKEND_URL,
             subject_token: "",
             auto_approve_low_risk: true,
@@ -157,82 +231,103 @@ function install(): void {
         };
         ensureDir(configDir);
         writeJson(configFile, defaultConfig);
-        log(`   Created config: ${configFile}`);
+        if (!silent) log(`   Created config: ${configFile}`);
     } else {
-        log(`   Config exists: ${configFile}`);
+        if (!silent) log(`   Config exists: ${configFile}`);
     }
 
+    if (!silent) {
+        log("");
+        log("✅ Agent-Lock MCP Server installed!");
+    }
+}
+
+function setup(): void {
     log("");
-    log("✅ Agent-Lock MCP Server installed!");
+    log("🦞  Agent-Lock MCP Server — Setup");
+    log("=".repeat(50));
     log("");
-    log("📝 Next steps:");
-    log(`   1) Edit config: ${configFile}`);
-    log("   2) Add your target MCP servers");
-    log("   3) Run: agent-lock-mcp start");
+
+    // ── Step 1: Install Python server + config ────────────────────────────────
+    log("Step 1/2 — Installing MCP server files...");
+    install(true);
+    const { configFile } = getInstallPaths();
+    log(`  ✅ MCP server installed`);
+    log(`  ✅ Config ready → ${configFile}`);
+
+    // ── Step 2: Patch Claude Desktop config ───────────────────────────────────
     log("");
-    log("For Claude Desktop, add to claude_desktop_config.json:");
-    log(`   "agent-lock": {`);
-    log(`     "command": "agent-lock-mcp",`);
-    log(`     "args": ["serve"]`);
-    log(`   }`);
+    log("Step 2/2 — Patching Claude Desktop config...");
+    patchClaudeConfig();
+
+    // ── Done ──────────────────────────────────────────────────────────────────
+    log("");
+    log("=".repeat(50));
+    log("✅  Setup complete!");
+    log("");
+    log("Next steps:");
+    log("  1. Restart Claude Desktop completely (quit → reopen).");
+    log("  2. Open a new chat and type: agent_lock__status");
+    log("  3. To add MCP servers to protect, edit:");
+    log(`       ${configFile}`);
+    log("");
+    log("  📖 Full docs: https://github.com/edies76/agent-locker");
+    log("");
 }
 
 function status(): void {
-    const { configDir, configFile, pythonDir } = getInstallPaths();
+    const { configFile, pythonDir } = getInstallPaths();
     const version = getPackageVersion();
     const installedVersion = getInstalledVersion();
-    const globalVersion = getGlobalInstalledVersion();
     const latestVersion = getLatestPublishedVersion();
     const python = checkPython();
     const configExists = fs.existsSync(configFile);
-    const pythonExists = fs.existsSync(path.join(pythonDir, "server.py"));
+    const serverInstalled = fs.existsSync(path.join(pythonDir, "server.py"));
 
     log(`🦞 Agent-Lock MCP Server`);
     log("");
-    log(`package_version:   v${version}`);
-    log(`global_version:    v${versionOrUnknown(globalVersion)}`);
-    log(`installed_version: v${versionOrUnknown(installedVersion)}`);
-    log(`npm_latest:        v${versionOrUnknown(latestVersion)}`);
+    log(`  package_version:   v${version}`);
+    log(`  installed_version: v${versionOrUnknown(installedVersion)}`);
+    log(`  npm_latest:        v${versionOrUnknown(latestVersion)}`);
     log("");
-    log(`installed:         ${pythonExists}`);
-    log(`config_exists:     ${configExists}`);
-    log(`config_path:       ${configFile}`);
-    log(`python_path:       ${pythonDir}`);
-    log(`python_cmd:        ${python.available ? `${python.command} (${python.version})` : "(not found)"}`);
-    log(`backend_url:       ${OFFICIAL_BACKEND_URL}`);
-    log(`local_backend:     ${LOCAL_BACKEND_URL}`);
+    log(`  server_installed:  ${serverInstalled}`);
+    log(`  config_exists:     ${configExists}`);
+    log(`  config_path:       ${configFile}`);
+    log(`  python:            ${python.available ? `${python.command} (${python.version})` : "(not found)"}`);
+    log(`  backend_url:       ${OFFICIAL_BACKEND_URL}`);
 
     if (configExists) {
         const config = readJson<Partial<MCPConfig>>(configFile, {});
         log("");
-        log("Config:");
-        log(`  target_servers: ${config.target_servers?.length ?? 0}`);
-        for (const srv of config.target_servers ?? []) {
-            log(`    - ${srv.name}: ${srv.command} ${(srv.args ?? []).join(" ")} ${srv.enabled === false ? "(disabled)" : ""}`);
+        log("  Target servers:");
+        const servers = config.target_servers ?? [];
+        if (servers.length === 0) {
+            log("    (none — edit config to add MCP servers to protect)");
+        } else {
+            for (const srv of servers) {
+                const state = srv.enabled === false ? " [disabled]" : "";
+                log(`    • ${srv.name}: ${srv.command} ${(srv.args ?? []).join(" ")}${state}`);
+            }
         }
-        log(`  backend_url:    ${config.backend_url ?? "(default)"}`);
-        log(`  subject_token:  ${config.subject_token ? "(set)" : "(not set)"}`);
+        log(`  subject_token:     ${config.subject_token ? "(set)" : "(not set)"}`);
     }
 
     log("");
-    if (pythonExists && python.available) {
-        if (latestVersion && globalVersion && compareSemver(globalVersion, latestVersion) < 0) {
-            log(`⚠️  Update available: v${globalVersion} -> v${latestVersion}`);
-            log("   Run: agent-lock-mcp update");
-        } else {
-            log("🎉 Ready to use. Run: agent-lock-mcp serve");
-        }
-    } else if (!pythonExists) {
-        log("⚠️  MCP server not installed. Run: agent-lock-mcp install");
-    } else {
+    if (!python.available) {
         log("⚠️  Python not found. Install Python 3.8+");
+    } else if (!serverInstalled) {
+        log("⚠️  MCP server not installed. Run: npx @agentlock/mcp-server setup");
+    } else if (latestVersion && installedVersion && installedVersion !== latestVersion) {
+        log(`⚠️  Update available: v${installedVersion} → v${latestVersion}`);
+        log("   Run: npx @agentlock/mcp-server update");
+    } else {
+        log("🎉 Ready. Restart Claude Desktop to apply any config changes.");
     }
 }
 
 function serve(transport: string = "stdio", port: number = 8001): void {
     const { pythonDir, configFile } = getInstallPaths();
     const python = checkPython();
-    const version = getInstalledVersion() || getPackageVersion();
 
     if (!python.available) {
         fail("Python not found. Install Python 3.8+");
@@ -240,24 +335,22 @@ function serve(transport: string = "stdio", port: number = 8001): void {
 
     const serverPy = path.join(pythonDir, "server.py");
     if (!fs.existsSync(serverPy)) {
-        fail("MCP server not installed. Run: agent-lock-mcp install");
+        // Auto-install silently if missing (first run via npx)
+        install(true);
     }
 
-    log(`🦞 Starting Agent-Lock MCP Server v${version}`);
-    log(`   Transport: ${transport}`);
-    log(`   Config:    ${configFile}`);
-    log(`   Python:    ${python.command} (${python.version})`);
-    log("");
-
-
-    const args = ["-m", "mcp_server"];
+    // stdio mode: do NOT log to stdout — it would corrupt the MCP json stream
     if (transport !== "stdio") {
-        args.push("--transport", transport, "--port", String(port));
+        err(`🦞 Starting Agent-Lock MCP Gateway (${transport}:${port})...`);
     }
-    args.push("--config", configFile);
 
-    // For stdio, we need to run in the python dir and pass through stdin/stdout
-    const serverProcess = spawn(python.command, args, {
+    const pyArgs = ["-m", "mcp_server"];
+    if (transport !== "stdio") {
+        pyArgs.push("--transport", transport, "--port", String(port));
+    }
+    pyArgs.push("--config", configFile);
+
+    const serverProcess = spawn(python.command, pyArgs, {
         cwd: path.dirname(pythonDir),
         stdio: transport === "stdio" ? "inherit" : ["ignore", "inherit", "inherit"],
         shell: process.platform === "win32",
@@ -267,14 +360,15 @@ function serve(transport: string = "stdio", port: number = 8001): void {
         },
     });
 
-    serverProcess.on("error", (err) => {
-        fail(`Failed to start server: ${err.message}`);
+    serverProcess.on("error", (e) => {
+        fail(`Failed to start MCP server: ${e.message}`);
     });
 
-    if (transport !== "stdio") {
-        log(`   Server running on port ${port}`);
-        log("   Press Ctrl+C to stop");
-    }
+    serverProcess.on("exit", (code) => {
+        if (code !== 0 && code !== null) {
+            process.exit(code);
+        }
+    });
 }
 
 function configPath(): void {
@@ -296,16 +390,12 @@ function addServer(name: string, command: string, argsStr: string): void {
     });
 
     const args = argsStr ? argsStr.split(" ") : [];
-    config.target_servers.push({
-        name,
-        command,
-        args,
-        enabled: true,
-    });
+    config.target_servers.push({ name, command, args, enabled: true });
 
     writeJson(configFile, config);
     log(`✅ Added server: ${name}`);
     log(`   Command: ${command} ${args.join(" ")}`);
+    log(`   Config:  ${configFile}`);
 }
 
 function uninstall(): void {
@@ -320,26 +410,9 @@ function uninstall(): void {
     }
 
     log("");
-    log("✅ Agent-Lock MCP Server uninstalled");
-    log(`   Previous version: v${versionOrUnknown(version)}`);
-    log(`   Config preserved at: ${configFile}`);
-}
-
-function getGlobalInstalledVersion(): string | null {
-    const result = spawnSync("npm", ["list", "-g", PACKAGE_NAME, "--depth=0", "--json"], {
-        encoding: "utf8",
-        shell: process.platform === "win32",
-        timeout: NPM_LOOKUP_TIMEOUT_MS,
-    });
-    if ((result.status ?? 1) !== 0 || !result.stdout) return null;
-    try {
-        const parsed = JSON.parse(result.stdout) as {
-            dependencies?: Record<string, { version?: string }>;
-        };
-        return parsed.dependencies?.[PACKAGE_NAME]?.version ?? null;
-    } catch {
-        return null;
-    }
+    log("✅ Uninstalled.");
+    log(`   Config preserved: ${configFile}`);
+    log("   (Delete it manually if you want a full clean slate)");
 }
 
 function getLatestPublishedVersion(): string | null {
@@ -361,7 +434,6 @@ function getInstalledVersion(): string | null {
     const { pythonDir } = getInstallPaths();
     const initPy = path.join(pythonDir, "__init__.py");
     if (!fs.existsSync(initPy)) return null;
-    
     try {
         const content = fs.readFileSync(initPy, "utf8");
         const match = content.match(/__version__\s*=\s*["']([^"']+)["']/);
@@ -371,119 +443,68 @@ function getInstalledVersion(): string | null {
     }
 }
 
-function hasMcpServerInstalled(): boolean {
-    const { pythonDir } = getInstallPaths();
-    return fs.existsSync(path.join(pythonDir, "server.py"));
-}
-
 function update(): void {
-    const currentGlobal = getGlobalInstalledVersion();
     const currentInstalled = getInstalledVersion();
     const latest = getLatestPublishedVersion();
 
-    log("🔄 Agent-Lock MCP Server update started");
-    log(`   Global (npm) version:   v${versionOrUnknown(currentGlobal)}`);
-    log(`   Installed version:      v${versionOrUnknown(currentInstalled)}`);
-    log(`   npm latest:             v${versionOrUnknown(latest)}`);
+    log("🔄 Agent-Lock MCP Server — Update");
+    log(`   Installed: v${versionOrUnknown(currentInstalled)}`);
+    log(`   Latest:    v${versionOrUnknown(latest)}`);
     log("");
 
-    // Step 1: Uninstall current
-    log("1) Removing current MCP server installation...");
-    try {
-        const { pythonDir } = getInstallPaths();
-        if (fs.existsSync(pythonDir)) {
-            fs.rmSync(pythonDir, { recursive: true, force: true });
-        }
-        log("✅ Step 1 complete: Old installation removed");
-    } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        fail(`❌ Step 1 failed: ${msg}`);
+    log("1) Removing current MCP server files...");
+    const { pythonDir } = getInstallPaths();
+    if (fs.existsSync(pythonDir)) {
+        fs.rmSync(pythonDir, { recursive: true, force: true });
     }
+    log("   ✅ Removed");
     log("");
 
-    // Step 2: Update global npm package
-    log("2) Installing latest global package (@agentlock/mcp-server@latest)...");
-    const npmResult = spawnSync("npm", ["i", "-g", `${PACKAGE_NAME}@latest`], {
-        stdio: "inherit",
-        shell: process.platform === "win32",
-        timeout: NPM_INSTALL_TIMEOUT_MS,
-    });
-    if (npmResult.error) {
-        fail(`❌ Step 2 failed (npm install): ${npmResult.error.message}`);
-    }
+    log("2) Fetching & installing latest package...");
+    const npmResult = spawnSync(
+        "npm",
+        ["i", "-g", `${PACKAGE_NAME}@latest`],
+        { stdio: "inherit", shell: process.platform === "win32", timeout: NPM_INSTALL_TIMEOUT_MS }
+    );
     if ((npmResult.status ?? 1) !== 0) {
-        fail("❌ Step 2 failed (npm install). Try manually: npm i -g @agentlock/mcp-server@latest");
+        fail(`npm install failed. Try: npm i -g ${PACKAGE_NAME}@latest`);
     }
-    const updatedGlobal = getGlobalInstalledVersion();
-    log(`✅ Step 2 complete: Global now v${versionOrUnknown(updatedGlobal)}`);
+    log("   ✅ npm updated");
     log("");
 
-    // Step 3: Reinstall MCP server with new CLI
-    log("3) Reinstalling MCP server with updated CLI...");
-    const installResult = spawnSync("agent-lock-mcp", ["install"], {
-        stdio: "inherit",
-        shell: process.platform === "win32",
-    });
-    if (installResult.error) {
-        fail(`❌ Step 3 failed (install): ${installResult.error.message}`);
-    }
-    if ((installResult.status ?? 1) !== 0) {
-        fail("❌ Step 3 failed. Run manually: agent-lock-mcp install");
-    }
-    const updatedInstalled = getInstalledVersion();
-    log(`✅ Step 3 complete: Installed v${versionOrUnknown(updatedInstalled)}`);
+    log("3) Reinstalling MCP server files...");
+    install(true);
+    const updatedVersion = getInstalledVersion();
+    log(`   ✅ Installed v${versionOrUnknown(updatedVersion)}`);
     log("");
 
-    // Step 4: Verification
-    log("4) Verification summary");
-    log(`   Global:    v${versionOrUnknown(currentGlobal)} -> v${versionOrUnknown(updatedGlobal)}`);
-    log(`   Installed: v${versionOrUnknown(currentInstalled)} -> v${versionOrUnknown(updatedInstalled)}`);
-    
-    if (latest && updatedGlobal) {
-        const cmp = compareSemver(updatedGlobal, latest);
-        if (cmp < 0) {
-            log(`⚠️  Installed below latest (v${updatedGlobal} < v${latest})`);
-        } else {
-            log(`✅ Aligned with npm latest (v${latest})`);
-        }
-    }
-
-    log("");
-    log("🎉 Update completed successfully!");
-}
-
-function compareSemver(a: string, b: string): number {
-    const parse = (v: string): number[] => {
-        const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
-        return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : [0, 0, 0];
-    };
-    const pa = parse(a);
-    const pb = parse(b);
-    for (let i = 0; i < 3; i++) {
-        if (pa[i] > pb[i]) return 1;
-        if (pa[i] < pb[i]) return -1;
-    }
-    return 0;
+    log(`🎉 Update complete! v${versionOrUnknown(currentInstalled)} → v${versionOrUnknown(updatedVersion)}`);
 }
 
 function usage(): void {
-    log("agent-lock-mcp <command>");
+    const v = getPackageVersion();
+    log(`agent-lock-mcp v${v} — Governance gateway for Claude Desktop`);
+    log("");
+    log("Usage:");
+    log("  npx @agentlock/mcp-server            Start MCP server (Claude Desktop)");
+    log("  npx @agentlock/mcp-server setup      Install + auto-configure Claude Desktop");
+    log("  npx @agentlock/mcp-server status     Show installation status");
+    log("  npx @agentlock/mcp-server update     Update to latest version");
     log("");
     log("Commands:");
-    log("  install                Install MCP server and create default config");
-    log("  status                 Show installation status and config");
-    log("  serve [--transport T]  Start MCP server (stdio|http, default: stdio)");
-    log("  update                 Update to latest version (global + local)");
-    log("  config-path            Print config file path");
-    log("  add-server <name> <cmd> [args]  Add a target MCP server");
-    log("  uninstall              Remove MCP server (keeps config)");
+    log("  setup          One-shot install + Claude Desktop config patch");
+    log("  serve          Start MCP server (stdio mode, default)");
+    log("  status         Show status, versions, and connected servers");
+    log("  update         Update npm package + reinstall MCP server");
+    log("  add-server     Add a target MCP server to protect");
+    log("  config-path    Print path to mcp_config.json");
+    log("  uninstall      Remove MCP server files (keeps config)");
     log("");
     log("Examples:");
-    log("  agent-lock-mcp install");
-    log("  agent-lock-mcp serve");
-    log("  agent-lock-mcp update");
-    log("  agent-lock-mcp serve --transport http --port 8001");
-    log("  agent-lock-mcp add-server filesystem npx '-y @anthropic/mcp-server-filesystem /path'");
+    log("  npx @agentlock/mcp-server setup");
+    log("  npx @agentlock/mcp-server add-server filesystem npx \"-y @anthropic/mcp-server-filesystem /path\"");
+    log("");
+    log("  📖 https://github.com/edies76/agent-locker");
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -491,32 +512,38 @@ function main(): void {
     const args = process.argv.slice(2);
     const cmd = args[0];
 
-    if (!cmd || cmd === "--help" || cmd === "-h") {
+    // Default: no args → serve in stdio mode (Claude Desktop calls with no args)
+    if (!cmd) {
+        serve("stdio");
+        return;
+    }
+
+    if (cmd === "--help" || cmd === "-h") {
         usage();
         return;
     }
 
     switch (cmd) {
-        case "install":
-            install();
+        case "setup":
+            setup();
             break;
-        case "status":
-            status();
+        case "install":
+            install(false);
             break;
         case "serve":
         case "start": {
             let transport = "stdio";
             let port = 8001;
             for (let i = 1; i < args.length; i++) {
-                if (args[i] === "--transport" && args[i + 1]) {
-                    transport = args[++i];
-                } else if (args[i] === "--port" && args[i + 1]) {
-                    port = parseInt(args[++i], 10);
-                }
+                if (args[i] === "--transport" && args[i + 1]) transport = args[++i];
+                else if (args[i] === "--port" && args[i + 1]) port = parseInt(args[++i], 10);
             }
             serve(transport, port);
             break;
         }
+        case "status":
+            status();
+            break;
         case "update":
             update();
             break;
@@ -527,9 +554,7 @@ function main(): void {
             const name = args[1];
             const command = args[2];
             const serverArgs = args.slice(3).join(" ");
-            if (!name || !command) {
-                fail("Usage: agent-lock-mcp add-server <name> <command> [args]");
-            }
+            if (!name || !command) fail("Usage: add-server <name> <command> [args]");
             addServer(name, command, serverArgs);
             break;
         }
@@ -537,7 +562,7 @@ function main(): void {
             uninstall();
             break;
         default:
-            fail(`Unknown command: ${cmd}. Run 'agent-lock-mcp --help'`);
+            fail(`Unknown command: "${cmd}". Run with --help to see available commands.`);
     }
 }
 

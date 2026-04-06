@@ -1,7 +1,7 @@
 {
   "name": "@agentlock/mcp-server",
-  "version": "1.0.0",
-  "description": "Agent-Lock MCP Server: Governance gateway for Claude Desktop, ChatGPT, and MCP-compatible clients",
+  "version": "1.2.2",
+  "description": "Agent-Lock MCP Server: Governance & security layer for Claude Desktop. Intercepts every tool call with Gemini risk analysis and Telegram human-in-the-loop approval.",
   "main": "dist/index.js",
   "bin": {
     "agent-lock-mcp": "dist/cli.js"
@@ -39,11 +39,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/agentlock/agent-lock.git"
+    "url": "git+https://github.com/edies76/agent-locker.git"
   },
-  "homepage": "https://github.com/agentlock/agent-lock#readme",
+  "homepage": "https://github.com/edies76/agent-locker#readme",
   "bugs": {
-    "url": "https://github.com/agentlock/agent-lock/issues"
+    "url": "https://github.com/edies76/agent-locker/issues"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

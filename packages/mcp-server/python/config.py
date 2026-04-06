@@ -162,6 +162,71 @@ DEFAULT_CONFIG = AgentLockMCPConfig(
 )
 
 
+# ── Remote server fetch ────────────────────────────────────────────────────────
+
+
+def fetch_remote_servers(
+    backend_url: str,
+    subject_token: str | None = None,
+    timeout: float = 5.0,
+) -> list[TargetServer]:
+    """
+    Fetch target MCP servers from the backend cloud registry.
+
+    Called at startup so that servers configured via the Dashboard are
+    automatically picked up without editing the local mcp_config.json.
+
+    Returns an empty list if the backend is unreachable or returns an error.
+    """
+    import urllib.request
+    import urllib.error
+
+    url = f"{backend_url.rstrip('/')}/api/mcp/servers"
+    req = urllib.request.Request(url, method="GET")
+    if subject_token:
+        req.add_header("Authorization", f"Bearer {subject_token}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status != 200:
+                print(
+                    f"[Agent-Lock] ⚠️  Remote server fetch returned HTTP {resp.status}",
+                    file=sys.stderr,
+                )
+                return []
+            data = json.loads(resp.read().decode("utf-8"))
+            raw_servers = data.get("servers", [])
+            result: list[TargetServer] = []
+            for s in raw_servers:
+                try:
+                    result.append(
+                        TargetServer(
+                            name=s["name"],
+                            command=s["command"],
+                            args=s.get("args", []),
+                            env=s.get("env", {}),
+                            enabled=s.get("enabled", True),
+                        )
+                    )
+                except (KeyError, TypeError) as e:
+                    print(
+                        f"[Agent-Lock] ⚠️  Skipping malformed remote server entry: {e}",
+                        file=sys.stderr,
+                    )
+            print(
+                f"[Agent-Lock] ☁️  Fetched {len(result)} server(s) from backend registry",
+                file=sys.stderr,
+            )
+            return result
+    except Exception as exc:
+        print(
+            f"[Agent-Lock] ℹ️  Could not reach backend registry ({exc}). "
+            "Using local config only.",
+            file=sys.stderr,
+        )
+        return []
+
+
 # ── load_config ───────────────────────────────────────────────────────────────
 
 
@@ -169,7 +234,12 @@ def load_config(config_path: str | None = None) -> AgentLockMCPConfig:
     """
     Load the Agent-Lock MCP Gateway configuration.
 
-    Resolution order:
+    Resolution order for target servers (highest priority first):
+      1. Local ``mcp_config.json`` target_servers
+      2. Remote backend cloud registry (GET /api/mcp/servers)
+         — merged with local; local entries win on name collision.
+
+    Resolution order for the config file itself:
       1. ``config_path`` argument (if provided via --config CLI flag)
       2. ``AGENT_LOCK_MCP_CONFIG`` environment variable
       3. Default location: ``~/.agent-lock/mcp_config.json``
@@ -192,32 +262,61 @@ def load_config(config_path: str | None = None) -> AgentLockMCPConfig:
             cfg = AgentLockMCPConfig.from_file(path)
             if not cfg.subject_token:
                 cfg.subject_token = os.environ.get("AGENT_LOCK_SUBJECT_TOKEN")
-            return cfg
         except Exception as exc:
             print(
                 f"[Agent-Lock] ⚠️  Failed to parse config at {path}: {exc}\n"
                 "             Falling back to defaults.",
                 file=sys.stderr,
             )
-            return AgentLockMCPConfig()
-
-    # First run — create a default config file so the user has a template.
-    print(
-        f"[Agent-Lock] No config found at {path}. Creating default template ...",
-        file=sys.stderr,
-    )
-    default = AgentLockMCPConfig(subject_token=os.environ.get("AGENT_LOCK_SUBJECT_TOKEN"))
-    try:
-        default.to_file(path)
+            cfg = AgentLockMCPConfig()
+    else:
+        # First run — create a default config file so the user has a template.
         print(
-            f"[Agent-Lock] ✅ Default config written to {path}\n"
-            "             Edit it to add your target MCP servers.",
+            f"[Agent-Lock] No config found at {path}. Creating default template ...",
             file=sys.stderr,
         )
-    except Exception as exc:
-        print(
-            f"[Agent-Lock] ⚠️  Could not write default config to {path}: {exc}",
-            file=sys.stderr,
-        )
+        cfg = AgentLockMCPConfig(subject_token=os.environ.get("AGENT_LOCK_SUBJECT_TOKEN"))
+        try:
+            cfg.to_file(path)
+            print(
+                f"[Agent-Lock] ✅ Default config written to {path}\n"
+                "             Edit it to add your target MCP servers.",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            print(
+                f"[Agent-Lock] ⚠️  Could not write default config to {path}: {exc}",
+                file=sys.stderr,
+            )
 
-    return default
+    # ── Merge remote servers from backend registry ─────────────────────────────
+    # Only fetch if backend is reachable (non-blocking: timeout=5s)
+    skip_remote = os.environ.get("AGENT_LOCK_NO_REMOTE_SERVERS", "").lower() in ("1", "true", "yes")
+    if not skip_remote:
+        remote_servers = fetch_remote_servers(
+            backend_url=cfg.backend_url,
+            subject_token=cfg.subject_token,
+            timeout=5.0,
+        )
+        if remote_servers:
+            # Build a map of local servers (name → TargetServer); local wins on conflict
+            local_map: dict[str, TargetServer] = {s.name: s for s in cfg.target_servers}
+            merged: list[TargetServer] = []
+            seen: set[str] = set()
+            # Remote first (lower priority), then local overrides
+            for rs in remote_servers:
+                if rs.name not in local_map:
+                    merged.append(rs)
+                    seen.add(rs.name)
+            # Append all local servers (they take priority)
+            for ls in cfg.target_servers:
+                merged.append(ls)
+                seen.add(ls.name)
+            cfg.target_servers = merged
+            print(
+                f"[Agent-Lock] ✅ Final target servers: "
+                f"{[s.name for s in cfg.target_servers]}",
+                file=sys.stderr,
+            )
+
+    return cfg

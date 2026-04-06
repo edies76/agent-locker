@@ -19,6 +19,7 @@ const PY_FILES = [
     "proxy.py",
     "server.py",
     "validator.py",
+    "setup_wizard.py",
 ];
 
 function main() {

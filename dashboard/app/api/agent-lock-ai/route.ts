@@ -142,12 +142,21 @@ function createGeminiTextStream(source: ReadableStream<Uint8Array>): ReadableStr
       let buffer = ""
       let emittedText = ""
 
-      const flushLine = (line: string) => {
-        const trimmed = line.trim()
-        if (!trimmed.startsWith("data:")) return
+      const flushEvent = (eventChunk: string) => {
+        const lines = eventChunk
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
 
-        const payload = trimmed.slice(5).trim()
-        if (!payload || payload === "[DONE]") return
+        const payloadLines = lines
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .filter(Boolean)
+
+        if (payloadLines.length === 0) return
+
+        const payload = payloadLines.join("\n")
+        if (payload === "[DONE]") return
 
         try {
           const parsed = JSON.parse(payload)
@@ -179,17 +188,19 @@ function createGeminiTextStream(source: ReadableStream<Uint8Array>): ReadableStr
             if (done) break
 
             buffer += decoder.decode(value, { stream: true })
-            let idx = buffer.indexOf("\n")
-            while (idx >= 0) {
-              const line = buffer.slice(0, idx)
-              flushLine(line)
-              buffer = buffer.slice(idx + 1)
-              idx = buffer.indexOf("\n")
+            buffer = buffer.replace(/\r\n/g, "\n")
+
+            let separatorIndex = buffer.indexOf("\n\n")
+            while (separatorIndex >= 0) {
+              const eventChunk = buffer.slice(0, separatorIndex)
+              flushEvent(eventChunk)
+              buffer = buffer.slice(separatorIndex + 2)
+              separatorIndex = buffer.indexOf("\n\n")
             }
           }
 
           if (buffer.trim()) {
-            flushLine(buffer)
+            flushEvent(buffer)
           }
           controller.close()
         } catch (e) {

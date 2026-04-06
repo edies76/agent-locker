@@ -520,7 +520,7 @@ export default function AIAssistantWidget({ embedded = false }: AIAssistantWidge
           <div ref={listEndRef} />
         </div>
 
-        <div className="px-4 pb-8 pt-3">
+        <div className="px-4 pb-10 pt-6">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

@@ -106,15 +106,6 @@ const navSections = [
           </svg>
         ),
       },
-      {
-        href: "/dashboard/cli",
-        label: "CLI",
-        icon: (
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M3.5 5.5l3 3-3 3M8 11.5h6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        ),
-      },
     ],
   },
   {
@@ -408,39 +399,68 @@ export default function Sidebar() {
           )}
         </div>
 
-        <div className="px-3 py-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
-          <button
-            onClick={togglePanelMode}
-            className={`mb-2 flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}
-            style={{ color: 'var(--text-secondary)' }}
-            title={panelMode === "sidebar" ? "Switch to AI panel" : "Switch to navigation panel"}
-          >
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-              {panelMode === "sidebar" ? (
-                <path d="M4 4h10v10H4zM7 7h4M7 10h4" strokeLinecap="round" strokeLinejoin="round" />
-              ) : (
-                <path d="M3 4h12M3 9h12M3 14h12" strokeLinecap="round" />
-              )}
-            </svg>
-            {!collapsed && <span>{panelMode === "sidebar" ? "AI Panel" : "Navigation"}</span>}
-          </button>
-
-          <button
-            onClick={cycleTheme}
-            className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${collapsed ? 'justify-center' : ''}`}
-            style={{ color: 'var(--text-secondary)' }}
-            title={`Theme: ${theme}`}
-          >
-            {themeIcon}
-            {!collapsed && <span className="capitalize">{theme}</span>}
-          </button>
-
-          {!collapsed && (
-            <div className="mt-3 px-3">
+        <div className="px-3 pb-3 pt-5" style={{ borderTop: '1px solid var(--border-primary)' }}>
+          {!collapsed ? (
+            <>
               <div className="flex items-center gap-2">
-                <span className="status-dot status-dot-success status-pulse" />
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>v1.0.0</span>
+                <button
+                  onClick={togglePanelMode}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title={panelMode === "sidebar" ? "Switch to AI panel" : "Switch to navigation panel"}
+                >
+                  <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    {panelMode === "sidebar" ? (
+                      <path d="M4 4h10v10H4zM7 7h4M7 10h4" strokeLinecap="round" strokeLinejoin="round" />
+                    ) : (
+                      <path d="M3 4h12M3 9h12M3 14h12" strokeLinecap="round" />
+                    )}
+                  </svg>
+                  <span>Navigation</span>
+                </button>
+
+                <button
+                  onClick={cycleTheme}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors"
+                  style={{ color: 'var(--text-secondary)' }}
+                  title={`Theme: ${theme}`}
+                >
+                  <span className="scale-90">{themeIcon}</span>
+                  <span className="capitalize">System</span>
+                </button>
               </div>
+
+              <div className="mt-2 px-1">
+                <div className="flex items-center gap-2">
+                  <span className="status-dot status-dot-success status-pulse" />
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>v1.0.0</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <button
+                onClick={togglePanelMode}
+                className="flex w-full items-center justify-center rounded-md px-2 py-1.5 transition-colors"
+                style={{ color: 'var(--text-secondary)' }}
+                title={panelMode === "sidebar" ? "Switch to AI panel" : "Switch to navigation panel"}
+              >
+                <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  {panelMode === "sidebar" ? (
+                    <path d="M4 4h10v10H4zM7 7h4M7 10h4" strokeLinecap="round" strokeLinejoin="round" />
+                  ) : (
+                    <path d="M3 4h12M3 9h12M3 14h12" strokeLinecap="round" />
+                  )}
+                </svg>
+              </button>
+              <button
+                onClick={cycleTheme}
+                className="flex w-full items-center justify-center rounded-md px-2 py-1.5 transition-colors"
+                style={{ color: 'var(--text-secondary)' }}
+                title={`Theme: ${theme}`}
+              >
+                {themeIcon}
+              </button>
             </div>
           )}
         </div>

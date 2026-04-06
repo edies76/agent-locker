@@ -243,6 +243,31 @@ export async function updateRuntimeControls(body: {
   return (await res.json()) as RuntimeControlsUpdateResponse
 }
 
+export async function updateSettingsEnv(body: {
+  telegram_bot_token?: string
+  telegram_chat_id?: string
+  gemini_api_key?: string
+  auth0_domain?: string
+  auth0_client_id?: string
+  auth0_client_secret?: string
+  auth0_audience?: string
+  auth0_callback_url?: string
+  auth0_scope?: string
+  backend_url?: string
+  public_base_url?: string
+  auth_success_redirect_url?: string
+  secret_key?: string
+}) {
+  const base = await buildUrl("")
+  const res = await fetch(`${base}/settings/env`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  apiCache.invalidatePattern("/settings")
+  return res.json()
+}
+
 export async function fetchCLICatalog(options?: { refresh?: boolean }) {
   return cachedFromPath<CLICatalogResponse>(`/dashboard/cli/catalog`, {
     ttl: 10000,
