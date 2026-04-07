@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { fetchStats, fetchActivity, fetchHealth, fetchTrends } from "@/lib/api"
 import { Stats, Action } from "@/types"
 import { Card, CardHeader, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmpty, Button } from "../components/ui"
+import Sidebar from "../components/Sidebar"
 
 function StatCard({ label, value, trend, icon }: { label: string; value: number; trend?: string; icon: React.ReactNode }) {
   return (
@@ -118,7 +119,11 @@ export default function OverviewPage() {
     : 0
 
   return (
-    <div className="space-y-6">
+    <>
+      <Sidebar />
+      <main className="min-h-screen transition-all duration-200 md:ml-[15.4rem]">
+        <div className="app-shell-container mx-auto max-w-screen-xl animate-fade-in px-4 pb-6 pt-16 md:p-6">
+          <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
@@ -303,6 +308,9 @@ export default function OverviewPage() {
           </TableBody>
         </Table>
       </Card>
-    </div>
+          </div>
+        </div>
+      </main>
+    </>
   )
 }

@@ -1,13 +1,13 @@
 import Link from "next/link"
 import Image from "next/image"
 
-const dashboardRoutes = [
-  { href: "/dashboard/overview", title: "Overview", desc: "System health, risk distribution, and approvals at a glance." },
-  { href: "/dashboard/activity", title: "Activity", desc: "Execution timeline with decision metadata and outcomes." },
-  { href: "/dashboard/approvals", title: "Approvals", desc: "Review and decide sensitive actions before execution." },
-  { href: "/dashboard/mcp", title: "MCP", desc: "Gateway connectivity, server states, and diagnostics." },
-  { href: "/dashboard/settings", title: "Settings", desc: "Identity scope, integrations, and policy behavior." },
-  { href: "/dashboard/logs", title: "Logs", desc: "Audit trail for compliance and incident analysis." },
+const infoCards = [
+  { href: "/learn/problem", title: "What problem it solves", desc: "Why uncontrolled agent execution is risky and what Agent-Lock prevents." },
+  { href: "/learn/architecture", title: "How it works", desc: "Gateway interception, policy backend decisions, and audited outcomes." },
+  { href: "/learn/setup", title: "How to set it up", desc: "Install order, required config, and first-run validation path." },
+  { href: "/learn/operations", title: "How to operate it", desc: "Daily checks, scope boundaries, and runtime ownership model." },
+  { href: "/learn/troubleshooting", title: "How to fix issues", desc: "Fast diagnostics for identity, MCP, backend, and deploy problems." },
+  { href: "/learn", title: "Full knowledge center", desc: "All sections connected in one documentation hub." },
 ]
 
 const knowledgeRoutes = [
@@ -39,7 +39,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">Live</span>
-            <Link href="/dashboard/overview" className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-100">Open Dashboard</Link>
+            <Link href="https://agent-lock-dashboard.azurewebsites.net/overview" className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-100">Open Dashboard</Link>
           </div>
         </header>
 
@@ -54,19 +54,17 @@ export default function LandingPage() {
             Agent-Lock intercepts tool calls, classifies risk, pauses high-impact operations for approval, and records every decision with full traceability.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <Link href="/dashboard/overview" className="rounded-full bg-gradient-to-r from-blue-600 to-emerald-500 px-7 py-3 text-sm font-semibold text-white shadow-[0_0_30px_-12px_rgba(16,185,129,0.7)]">Enter Dashboard</Link>
-            <Link href="/dashboard/approvals" className="rounded-full border border-white/20 bg-white/10 px-7 py-3 text-sm font-semibold text-white hover:bg-white/15">Open Approvals</Link>
             <Link href="/learn" className="rounded-full border border-white/20 bg-transparent px-7 py-3 text-sm font-semibold text-gray-200 hover:bg-white/10">Read Knowledge Hub</Link>
           </div>
         </section>
 
         <section className="mb-12 rounded-3xl border border-white/10 bg-black/35 p-6 backdrop-blur-xl">
           <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-2xl font-semibold text-white">Dashboard modules</h2>
-            <span className="text-xs uppercase tracking-[0.2em] text-gray-400">Primary navigation</span>
+            <h2 className="text-2xl font-semibold text-white">Platform guides</h2>
+            <span className="text-xs uppercase tracking-[0.2em] text-gray-400">What they are + how to use</span>
           </div>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {dashboardRoutes.map((route, index) => (
+            {infoCards.map((route, index) => (
               <Link key={route.href} href={route.href} className="group rounded-2xl border border-white/10 bg-white/5 p-4 transition-all hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/10">
                 <div className="mb-2 flex items-center justify-between">
                   <p className="font-semibold text-white">{route.title}</p>
