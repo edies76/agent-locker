@@ -130,6 +130,16 @@ const navSections = [
           </svg>
         ),
       },
+      {
+        href: "/learn",
+        label: "Knowledge Hub",
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="3" y="3" width="12" height="12" rx="1.5" />
+            <path d="M6 6h6M6 9h6M6 12h4" strokeLinecap="round" />
+          </svg>
+        ),
+      },
     ],
   },
 ]
@@ -139,7 +149,15 @@ export default function Sidebar() {
   const [pendingCount, setPendingCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [panelMode, setPanelMode] = useState<"sidebar" | "ai">("sidebar")
+  const [panelMode, setPanelMode] = useState<"sidebar" | "ai">(() => {
+    if (typeof window === "undefined") return "sidebar"
+    try {
+      const raw = localStorage.getItem("agent-lock-left-panel-mode")
+      return raw === "ai" || raw === "sidebar" ? raw : "sidebar"
+    } catch {
+      return "sidebar"
+    }
+  })
   const { theme, resolvedTheme, setTheme } = useTheme()
 
   useEffect(() => {
@@ -180,17 +198,6 @@ export default function Sidebar() {
       window.removeEventListener("keydown", handleEsc)
     }
   }, [mobileOpen])
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("agent-lock-left-panel-mode")
-      if (raw === "sidebar" || raw === "ai") {
-        setPanelMode(raw)
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, [])
 
   useEffect(() => {
     try {
