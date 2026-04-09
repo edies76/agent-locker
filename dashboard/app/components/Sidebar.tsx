@@ -12,7 +12,7 @@ const navSections = [
     title: "Dashboard",
     items: [
       {
-        href: "/dashboard/overview",
+        href: "/overview",
         label: "Dashboard",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -24,7 +24,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/activity",
+        href: "/activity",
         label: "Activity",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -33,7 +33,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/approvals",
+        href: "/approvals",
         label: "Approvals",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -43,7 +43,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/logs",
+        href: "/logs",
         label: "Logs",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -57,7 +57,7 @@ const navSections = [
     title: "Integrations",
     items: [
       {
-        href: "/dashboard/plugin",
+        href: "/plugin",
         label: "Plugin",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -66,7 +66,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/chat",
+        href: "/chat",
         label: "Channel Chat",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -75,7 +75,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/mcp",
+        href: "/mcp",
         label: "MCP",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -87,7 +87,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/mcp/setup",
+        href: "/mcp/setup",
         label: "Setup",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -112,7 +112,7 @@ const navSections = [
     title: "Admin",
     items: [
       {
-        href: "/dashboard/analytics",
+        href: "/analytics",
         label: "Analytics",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -121,7 +121,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/settings",
+        href: "/settings",
         label: "Settings",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -253,7 +253,7 @@ export default function Sidebar() {
           <div className="space-y-0.5">
             {section.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
-              const showBadge = item.href === "/dashboard/approvals" && pendingCount > 0
+              const showBadge = item.href === "/approvals" && pendingCount > 0
 
               return (
                 <Link

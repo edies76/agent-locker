@@ -490,13 +490,6 @@ export default function AIAssistantWidget({ embedded = false }: AIAssistantWidge
   if (embedded) {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.16em] text-zinc-300">Agent-Lock AI</p>
-            <p className="text-[10px] text-zinc-500">Persistent single chat</p>
-          </div>
-        </div>
-
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-2">
           {messages.map((m, idx) => (
             m.role === "user" ? (
@@ -521,27 +514,28 @@ export default function AIAssistantWidget({ embedded = false }: AIAssistantWidge
         </div>
 
         <div className="mt-auto px-4 pb-2 pt-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-            placeholder="Describe the issue..."
-            className="min-h-[52px] w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
-          />
-          <div className="mt-2 flex items-center justify-between">
-            <p className="text-[10px] text-zinc-500">Enter sends · Shift+Enter newline</p>
+          <div className="relative">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
+              placeholder="Describe the issue..."
+              className="min-h-[52px] w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 pr-12 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+            />
             <button
               type="button"
               onClick={() => void send()}
               disabled={sending || !input.trim()}
-              className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+              className="absolute bottom-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+              aria-label="Send"
+              title="Send"
             >
-              Send
+              ↗
             </button>
           </div>
         </div>
@@ -616,27 +610,28 @@ export default function AIAssistantWidget({ embedded = false }: AIAssistantWidge
           </div>
 
           <div className="p-4">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault()
-                  void send()
-                }
-              }}
-              placeholder="Describe the issue... (e.g. why is vscode MCP shown as disconnected?)"
-              className="min-h-[52px] w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
-            />
-            <div className="mt-2 flex items-center justify-between">
-              <p className="text-[10px] text-zinc-500">Enter sends · Shift+Enter newline</p>
+            <div className="relative">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault()
+                    void send()
+                  }
+                }}
+                placeholder="Describe the issue... (e.g. why is vscode MCP shown as disconnected?)"
+                className="min-h-[52px] w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 pr-12 text-[13px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-zinc-500"
+              />
               <button
                 type="button"
                 onClick={() => void send()}
                 disabled={sending || !input.trim()}
-                className="rounded-md border border-zinc-600 bg-zinc-800 px-3 py-1.5 text-[11px] font-medium text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+                className="absolute bottom-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+                aria-label="Send"
+                title="Send"
               >
-                Send
+                ↗
               </button>
             </div>
           </div>
