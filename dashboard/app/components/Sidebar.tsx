@@ -12,7 +12,7 @@ const navSections = [
     title: "Dashboard",
     items: [
       {
-        href: "/dashboard/overview",
+        href: "/overview",
         label: "Dashboard",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -24,7 +24,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/activity",
+        href: "/activity",
         label: "Activity",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -33,7 +33,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/approvals",
+        href: "/approvals",
         label: "Approvals",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -43,7 +43,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/logs",
+        href: "/logs",
         label: "Logs",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -57,7 +57,7 @@ const navSections = [
     title: "Integrations",
     items: [
       {
-        href: "/dashboard/plugin",
+        href: "/plugin",
         label: "Plugin",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -66,7 +66,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/chat",
+        href: "/chat",
         label: "Channel Chat",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -75,7 +75,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/mcp",
+        href: "/mcp",
         label: "MCP",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -87,7 +87,7 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/mcp/setup",
+        href: "/mcp/setup",
         label: "Setup",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -112,7 +112,7 @@ const navSections = [
     title: "Admin",
     items: [
       {
-        href: "/dashboard/analytics",
+        href: "/analytics",
         label: "Analytics",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -121,12 +121,22 @@ const navSections = [
         ),
       },
       {
-        href: "/dashboard/settings",
+        href: "/settings",
         label: "Settings",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
             <circle cx="9" cy="9" r="2.5" />
             <path d="M9 2v2M9 14v2M2 9h2M14 9h2M4.2 4.2l1.4 1.4M12.4 12.4l1.4 1.4M4.2 13.8l1.4-1.4M12.4 5.6l1.4-1.4" />
+          </svg>
+        ),
+      },
+      {
+        href: "/learn",
+        label: "Knowledge Hub",
+        icon: (
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="3" y="3" width="12" height="12" rx="1.5" />
+            <path d="M6 6h6M6 9h6M6 12h4" strokeLinecap="round" />
           </svg>
         ),
       },
@@ -139,7 +149,15 @@ export default function Sidebar() {
   const [pendingCount, setPendingCount] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [panelMode, setPanelMode] = useState<"sidebar" | "ai">("sidebar")
+  const [panelMode, setPanelMode] = useState<"sidebar" | "ai">(() => {
+    if (typeof window === "undefined") return "sidebar"
+    try {
+      const raw = localStorage.getItem("agent-lock-left-panel-mode")
+      return raw === "ai" || raw === "sidebar" ? raw : "sidebar"
+    } catch {
+      return "sidebar"
+    }
+  })
   const { theme, resolvedTheme, setTheme } = useTheme()
 
   useEffect(() => {
@@ -180,17 +198,6 @@ export default function Sidebar() {
       window.removeEventListener("keydown", handleEsc)
     }
   }, [mobileOpen])
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("agent-lock-left-panel-mode")
-      if (raw === "sidebar" || raw === "ai") {
-        setPanelMode(raw)
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }, [])
 
   useEffect(() => {
     try {
@@ -246,7 +253,7 @@ export default function Sidebar() {
           <div className="space-y-0.5">
             {section.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
-              const showBadge = item.href === "/dashboard/approvals" && pendingCount > 0
+              const showBadge = item.href === "/approvals" && pendingCount > 0
 
               return (
                 <Link

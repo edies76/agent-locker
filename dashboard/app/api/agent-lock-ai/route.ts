@@ -67,11 +67,11 @@ function readBackendGeminiKeyFromEnvFile(): string | null {
 function resolveGeminiKeyCandidates(): KeyCandidate[] {
   const candidates: KeyCandidate[] = []
 
-  if (process.env.AGENT_LOCK_GEMINI_API_KEY) {
-    candidates.push({ key: process.env.AGENT_LOCK_GEMINI_API_KEY, source: "AGENT_LOCK_GEMINI_API_KEY" })
-  }
   if (process.env.GEMINI_API_KEY) {
     candidates.push({ key: process.env.GEMINI_API_KEY, source: "GEMINI_API_KEY" })
+  }
+  if (process.env.AGENT_LOCK_GEMINI_API_KEY) {
+    candidates.push({ key: process.env.AGENT_LOCK_GEMINI_API_KEY, source: "AGENT_LOCK_GEMINI_API_KEY" })
   }
   if (process.env.GOOGLE_API_KEY) {
     candidates.push({ key: process.env.GOOGLE_API_KEY, source: "GOOGLE_API_KEY" })

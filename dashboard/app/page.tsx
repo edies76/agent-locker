@@ -2,414 +2,615 @@
 
 import Link from "next/link"
 import type { ReactNode } from "react"
-import { Badge, Card } from "./components/ui"
 
-const surfaces = [
-  {
-    href: "/dashboard/overview",
-    title: "Dashboard",
-    desc: "System health, activity, risk distribution, and approval flow in one place.",
-    badge: "Operations",
-  },
-  {
-    href: "/dashboard/approvals",
-    title: "Approvals",
-    desc: "Review pending actions, inspect arguments, and approve or reject with context.",
-    badge: "Human review",
-  },
-  {
-    href: "/dashboard/settings",
-    title: "Settings",
-    desc: "Define what stays automatic, what pauses for approval, and which scopes are active.",
-    badge: "Policy",
-  },
-  {
-    href: "/dashboard/mcp",
-    title: "MCP",
-    desc: "Check connected servers, timings, and diagnostics before shipping changes.",
-    badge: "Gateway",
-  },
-  {
-    href: "/dashboard/plugin",
-    title: "Plugin",
-    desc: "Manage pairing, chat, and bridge state for governed execution.",
-    badge: "Bridge",
-  },
-  {
-    href: "/dashboard/logs",
-    title: "Logs",
-    desc: "Filter audit events and trace exactly how each action was handled.",
-    badge: "Audit",
-  },
-]
-
-const controlPoints = [
-  {
-    title: "Automatic lane",
-    text: "Safe, low-risk calls move through cleanly when policy allows it.",
-  },
-  {
-    title: "Approval lane",
-    text: "Sensitive actions pause with enough context for a human decision.",
-  },
-  {
-    title: "Audit trail",
-    text: "Every decision is recorded for later review and policy tuning.",
-  },
-]
-
-const starterSteps = [
-  {
-    step: "01",
-    title: "Open the dashboard",
-    text: "Start with the overview to see health, pending approvals, and recent activity.",
-    href: "/dashboard/overview",
-  },
-  {
-    step: "02",
-    title: "Set the policy",
-    text: "Use Settings to define what stays automatic and what requires approval.",
-    href: "/dashboard/settings",
-  },
-  {
-    step: "03",
-    title: "Review the queue",
-    text: "Check approvals and logs when the system pauses a sensitive request.",
-    href: "/dashboard/approvals",
-  },
-]
+// ─── Design primitives ────────────────────────────────────────────────────────
 
 function GlassPanel({
   children,
   className = "",
+  noPad = false,
 }: {
   children: ReactNode
   className?: string
+  noPad?: boolean
 }) {
   return (
     <div
-      className={`rounded-[32px] border border-white/10 bg-white/[0.05] shadow-[0_24px_70px_rgba(0,0,0,0.35)] backdrop-blur-2xl ${className}`}
+      className={`relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur-xl shadow-2xl
+        ${noPad ? "" : "p-6 md:p-8"} ${className}`}
     >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       {children}
     </div>
   )
 }
 
-function SectionTitle({
-  eyebrow,
-  title,
-  description,
-  action,
-}: {
-  eyebrow: string
-  title: string
-  description: string
-  action?: ReactNode
-}) {
+function Tag({ children, color = "emerald" }: { children: ReactNode; color?: "emerald" | "blue" | "amber" | "indigo" | "purple" }) {
+  const map: Record<string, string> = {
+    emerald: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    blue: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    indigo: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
+    purple: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+  }
   return (
-    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-      <div className="max-w-3xl space-y-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--text-tertiary)]">
-          {eyebrow}
-        </p>
-        <h2 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)] md:text-3xl">{title}</h2>
-        <p className="max-w-2xl text-sm leading-6 text-[var(--text-secondary)] md:text-base">{description}</p>
-      </div>
-      {action}
-    </div>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-widest ${map[color]}`}>
+      {children}
+    </span>
   )
 }
 
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">{children}</p>
+  )
+}
+
+function SectionHeading({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <h2 className={`text-4xl font-semibold text-white tracking-tight leading-tight ${className}`}>
+      {children}
+    </h2>
+  )
+}
+
+// ─── Data ─────────────────────────────────────────────────────────────────────
+
+const features = [
+  {
+    icon: "⚡",
+    color: "emerald" as const,
+    title: "Automatic Lane",
+    desc: "Safe, scoped actions move through cleanly without human intervention when policy allows it. Low-risk ops execute at full agent speed.",
+  },
+  {
+    icon: "🛡️",
+    color: "amber" as const,
+    title: "Approval Lane",
+    desc: "Sensitive operations pause automatically. A Telegram card is sent requesting explicit human confirmation before any action is taken.",
+  },
+  {
+    icon: "📋",
+    color: "blue" as const,
+    title: "Immutable Audit Trail",
+    desc: "Every execution is cryptographically logged in structured JSON. Filter, query, and trace exactly how each action was decided and handled.",
+  },
+  {
+    icon: "🧠",
+    color: "purple" as const,
+    title: "Intent Validation",
+    desc: "Gemini Flash semantically compares the agent's action against the original user instruction. Drift is detected before it becomes a breach.",
+  },
+  {
+    icon: "🔑",
+    color: "indigo" as const,
+    title: "Ephemeral Token Vault",
+    desc: "Auth0-backed M2M tokens are minted at execution time with minimum-required scopes. Long-lived credentials never reach the agent.",
+  },
+  {
+    icon: "⚖️",
+    color: "emerald" as const,
+    title: "Hybrid Risk Classifier",
+    desc: "Static regex rules catch obvious threats instantly. AI escalation layers on top for nuanced semantic risk — without hallucinating false positives.",
+  },
+]
+
+const surfaces = [
+  { href: "/dashboard/overview", title: "Overview", desc: "System health, activity, risk distribution, and approval workflows in one place.", badge: "Operations", n: "01" },
+  { href: "/dashboard/approvals", title: "Approvals", desc: "Review pending actions, inspect arguments, and approve or reject with full context.", badge: "Human Review", n: "02" },
+  { href: "/dashboard/settings", title: "Settings", desc: "Define what stays automatic, what pauses for approval, and which tool scopes are active.", badge: "Policy", n: "03" },
+  { href: "/dashboard/mcp", title: "MCP Gateway", desc: "Monitor connected MCP servers, check timings, and inspect diagnostics live.", badge: "Gateway", n: "04" },
+  { href: "/dashboard/plugin", title: "Plugin Bridge", desc: "Manage OpenClaw pairing, chat relay, and bridge state for governed execution.", badge: "Bridge", n: "05" },
+  { href: "/dashboard/logs", title: "Audit Logs", desc: "Filter immutable audit events and trace exactly how each action was handled.", badge: "Audit", n: "06" },
+]
+
+const testimonials = [
+  { author: "yash (@yashns1)", text: "The mental model shift is what makes this interesting. Agents aren't tools you prompt — they're workers operating inside a controlled boundary. That's architecturally correct." },
+  { author: "Resolver Vicky (@resolvervicky)", text: "OpenClaw is the employee. Agent-Lock is the compliance department. Finally someone built the layer between the two." },
+  { author: "Logan (@logansaether)", text: "When I first started working with autonomous agents, this was the governance vision I had. Nobody else built it this way. This is the right model." },
+]
+
+const howItWorks = [
+  { step: "01", title: "Agent makes a tool call", body: "The OpenClaw plugin intercepts the call before it touches any external API or system." },
+  { step: "02", title: "Context is extracted", body: "The original user instruction is captured via onMessage hook and compared against the agent's attempted action." },
+  { step: "03", title: "Risk is classified", body: "Static rules run first. If the action is ambiguous, Gemini Flash performs semantic intent validation." },
+  { step: "04", title: "Auto-execute or pause", body: "LOW risk? A scoped token is minted and execution proceeds. HIGH/CRITICAL? The flow pauses and you receive a Telegram approval card." },
+  { step: "05", title: "Audit log is written", body: "Every outcome — approved, blocked, or automatic — is appended to the immutable audit log in structured JSON." },
+]
+
+const faqs = [
+  {
+    q: "Which AI agents does Agent-Lock support?",
+    a: "Agent-Lock currently ships a first-class plugin for OpenClaw. The backend API contract is agent-agnostic — any agent that makes HTTP tool calls can be intercepted via the /intercept endpoint.",
+  },
+  {
+    q: "What happens when the AI service is unavailable?",
+    a: "If Gemini Flash is unreachable, Agent-Lock falls back to keyword-based static rules. No tool call is allowed to proceed without a classification decision.",
+  },
+  {
+    q: "How does the Token Vault keep credentials secure?",
+    a: "Agent-Lock integrates with Auth0 using the M2M client_credentials flow or a federated token exchange. Scoped tokens are minted per-execution and are never stored long-term.",
+  },
+  {
+    q: "Can I customise which actions require approval?",
+    a: "Yes. The Settings dashboard lets you configure approval thresholds per tool, per scope, and per risk level. Custom business rules are supported via policies.json.",
+  },
+  {
+    q: "Is this open source?",
+    a: "The project is open source and self-hosted. Your agents, your infrastructure, your audit logs. No data leaves your environment unless you configure it to.",
+  },
+]
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function LandingPage() {
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-6 md:px-6 lg:px-8">
-      <div className="pointer-events-none absolute inset-0 bg-[#05070c]" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(16,185,129,0.12),transparent_22%),radial-gradient(circle_at_82%_12%,rgba(59,130,246,0.14),transparent_24%),radial-gradient(circle_at_50%_92%,rgba(245,158,11,0.08),transparent_28%)]" />
-      <div className="pointer-events-none absolute left-0 top-24 h-[68vh] w-24 bg-gradient-to-r from-emerald-500/10 to-transparent blur-3xl" />
-      <div className="pointer-events-none absolute right-0 top-24 h-[68vh] w-24 bg-gradient-to-l from-amber-500/10 to-transparent blur-3xl" />
-      <div className="pointer-events-none absolute -left-16 top-0 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
-      <div className="pointer-events-none absolute -right-16 top-20 h-80 w-80 rounded-full bg-cyan-500/10 blur-3xl" />
+    <main className="relative min-h-screen overflow-x-hidden selection:bg-emerald-500/30 selection:text-white">
+      {/* ── Background ─────────────────────────────────────────────────── */}
+      <div className="fixed inset-0 z-[-2] bg-[#030712]" />
+      <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
+        <div className="absolute left-[-5%] top-[-15%] h-[700px] w-[700px] rounded-full bg-emerald-600/[0.07] blur-[140px]" />
+        <div className="absolute right-[-5%] top-[15%] h-[600px] w-[600px] rounded-full bg-blue-600/[0.07] blur-[130px]" />
+        <div className="absolute left-[35%] bottom-[-10%] h-[500px] w-[500px] rounded-full bg-indigo-600/[0.06] blur-[120px]" />
+      </div>
+      {/* Subtle grid */}
+      <div className="fixed inset-0 z-[-1] pointer-events-none opacity-[0.025]"
+        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }}
+      />
 
-      <div className="relative mx-auto flex max-w-7xl flex-col gap-7">
-        <header className="flex flex-wrap items-center justify-between gap-3 rounded-full border border-white/10 bg-white/[0.05] px-4 py-3 backdrop-blur-2xl">
+      <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+
+        {/* ── Navigation ─────────────────────────────────────────────────── */}
+        <nav className="sticky top-4 z-50 mt-4 flex items-center justify-between rounded-2xl border border-white/10 bg-[#030712]/80 px-5 py-3 backdrop-blur-xl shadow-xl shadow-black/40">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--accent-primary)] text-sm font-bold text-white shadow-md shadow-black/20">
-              A
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-emerald-400 text-white text-xs font-black shadow-lg shadow-blue-500/30">
+              AL
             </div>
             <div>
-              <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                Production AI security middleware
-              </p>
-              <p className="text-sm font-semibold text-[var(--text-primary)]">Agent-Lock</p>
+              <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold leading-none">Security Middleware</p>
+              <p className="text-sm font-semibold tracking-wide text-white leading-tight mt-0.5">Agent-Lock</p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Badge variant="success">Live</Badge>
-            <Link href="/dashboard/overview" className="btn btn-primary rounded-full px-4 py-2 text-sm font-semibold">
-              Open Dashboard
+          <div className="hidden md:flex items-center gap-6">
+            <a href="#how-it-works" className="text-sm text-gray-400 hover:text-white transition-colors">How it works</a>
+            <a href="#features" className="text-sm text-gray-400 hover:text-white transition-colors">Features</a>
+            <a href="#architecture" className="text-sm text-gray-400 hover:text-white transition-colors">Architecture</a>
+            <a href="#faq" className="text-sm text-gray-400 hover:text-white transition-colors">FAQ</a>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[11px] font-semibold text-emerald-400">Live</span>
+            </div>
+            <Link
+              href="/dashboard/overview"
+              className="rounded-xl bg-white px-5 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-100 transition-colors shadow-lg"
+            >
+              Open Dashboard →
             </Link>
           </div>
-        </header>
+        </nav>
 
-        <section className="grid gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)] lg:items-stretch">
-          <GlassPanel className="relative overflow-hidden p-6 md:p-8 lg:p-10">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
-            <div className="pointer-events-none absolute right-0 top-0 h-40 w-40 rounded-full bg-emerald-500/10 blur-3xl" />
-            <div className="pointer-events-none absolute bottom-0 left-0 h-40 w-40 rounded-full bg-amber-500/10 blur-3xl" />
+        {/* ── Hero ───────────────────────────────────────────────────────── */}
+        <section className="relative pt-28 pb-20 text-center flex flex-col items-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 backdrop-blur-sm mb-8">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-xs font-medium text-gray-300">Zero Trust | Human in the Loop | Open Source</span>
+          </div>
 
-            <div className="relative flex h-full flex-col justify-between gap-8">
-              <div className="space-y-5">
-                <Badge variant="accent">Govern AI actions with real controls</Badge>
-                <div className="space-y-5">
-                  <h1 className="max-w-3xl text-4xl font-extrabold tracking-tight text-[var(--text-primary)] md:text-6xl">
-                    Govern AI actions with real controls.
-                  </h1>
-                  <p className="max-w-2xl text-base leading-7 text-[var(--text-secondary)] md:text-lg">
-                    Agent-Lock sits between AI agents and tools, classifies risk, enforces approvals, and gives
-                    operators one clean control plane for policy, gateway health, and execution history.
-                  </p>
-                </div>
+          <h1 className="max-w-5xl text-5xl sm:text-6xl md:text-[5.5rem] font-extrabold tracking-tight text-white mb-8 leading-[1.05]">
+            The security layer<br className="hidden md:block" />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400">
+              {" "}AI agents are missing.
+            </span>
+          </h1>
+
+          <p className="max-w-2xl text-lg md:text-xl text-gray-400 leading-relaxed mb-12">
+            Agent-Lock sits between AI agents and tools. It classifies risk, enforces approval policies, mints ephemeral scoped tokens, and gives operators a single control plane — without slowing down safe operations.
+          </p>
+
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <Link
+              href="/dashboard/overview"
+              className="rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(16,185,129,0.6)] transition-all hover:scale-105 hover:shadow-[0_0_60px_-12px_rgba(16,185,129,0.7)]"
+            >
+              Open Dashboard
+            </Link>
+            <a
+              href="#how-it-works"
+              className="rounded-xl border border-white/10 bg-white/5 px-8 py-4 text-sm font-semibold text-white backdrop-blur-md transition-all hover:bg-white/10"
+            >
+              See how it works ↓
+            </a>
+          </div>
+
+          {/* Stats row */}
+          <div className="mt-20 flex flex-wrap items-center justify-center gap-8 text-center">
+            {[
+              { value: "< 10ms", label: "Classification overhead" },
+              { value: "3-tier", label: "LOW / HIGH / CRITICAL risk" },
+              { value: "100%", label: "Audit coverage" },
+              { value: "Auth0", label: "Token vault backing" },
+            ].map((s) => (
+              <div key={s.label} className="flex flex-col items-center">
+                <span className="text-3xl font-extrabold text-white tracking-tight">{s.value}</span>
+                <span className="text-xs text-gray-500 mt-1 uppercase tracking-wider">{s.label}</span>
               </div>
+            ))}
+          </div>
+        </section>
 
-              <div className="flex flex-wrap gap-3">
-                <Link href="/dashboard/overview" className="btn btn-primary rounded-full px-5 py-3 text-sm font-semibold">
-                  Open Dashboard
-                </Link>
-                <Link
-                  href="/dashboard/settings"
-                  className="btn btn-secondary rounded-full px-5 py-3 text-sm font-semibold"
+        {/* ── Social proof ───────────────────────────────────────────────── */}
+        <section className="mb-28 overflow-hidden">
+          <div className="grid md:grid-cols-3 gap-5">
+            {testimonials.map((t, i) => (
+              <GlassPanel key={i}>
+                <p className="text-gray-300 text-sm leading-relaxed mb-5">&ldquo;{t.text}&rdquo;</p>
+                <p className="text-xs text-gray-500 font-medium">{t.author}</p>
+              </GlassPanel>
+            ))}
+          </div>
+        </section>
+
+        {/* ── How it works ───────────────────────────────────────────────── */}
+        <section id="how-it-works" className="mb-32 scroll-mt-24">
+          <div className="text-center mb-16">
+            <SectionLabel>How it works</SectionLabel>
+            <SectionHeading>Five steps from intent to execution.</SectionHeading>
+            <p className="mt-4 text-gray-400 max-w-2xl mx-auto text-base leading-relaxed">
+              Every tool call passes through a deterministic pipeline. Nothing executes without a classification decision. Nothing is classified without a risk score.
+            </p>
+          </div>
+
+          <div className="relative">
+            {/* Connecting line */}
+            <div className="absolute left-[calc(50%-1px)] top-0 bottom-0 hidden lg:block w-px bg-gradient-to-b from-emerald-500/0 via-emerald-500/30 to-emerald-500/0" />
+
+            <div className="flex flex-col gap-8">
+              {howItWorks.map((item, i) => (
+                <div
+                  key={i}
+                  className={`flex flex-col lg:flex-row items-center gap-8 ${i % 2 === 1 ? "lg:flex-row-reverse" : ""}`}
                 >
-                  Review Settings
-                </Link>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="success">Automatic + approval lanes</Badge>
-                <Badge variant="warning">Risk-based controls</Badge>
-                <Badge variant="accent">Central audit trail</Badge>
-              </div>
-            </div>
-          </GlassPanel>
-
-          <GlassPanel className="overflow-hidden p-0">
-            <div className="border-b border-white/10 bg-white/[0.04] px-6 py-5 md:px-7">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                    Control snapshot
-                  </p>
-                  <h2 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
-                    Built for operators
-                  </h2>
-                  <p className="max-w-md text-sm leading-6 text-[var(--text-secondary)]">
-                    The homepage is arranged like a product landing page, with the control story first and the route
-                    map below it.
-                  </p>
-                </div>
-                <Badge variant="success">Ready</Badge>
-              </div>
-            </div>
-
-            <div className="grid gap-3 p-6 md:p-7">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                      Automatic tools
-                    </p>
-                    <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
-                      Fast lane
-                    </span>
+                  <GlassPanel className="flex-1">
+                    <div className="flex items-start gap-4">
+                      <span className="text-4xl font-black text-white/10 leading-none tabular-nums">{item.step}</span>
+                      <div>
+                        <h3 className="text-lg font-semibold text-white mb-2">{item.title}</h3>
+                        <p className="text-sm text-gray-400 leading-relaxed">{item.body}</p>
+                      </div>
+                    </div>
+                  </GlassPanel>
+                  <div className="hidden lg:flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-sm font-bold shrink-0 z-10">
+                    {i + 1}
                   </div>
-                  <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                    Safe, scoped actions can move through without human intervention when policy allows it.
-                  </p>
+                  <div className="flex-1 hidden lg:block" />
                 </div>
-                <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                      Approval-required tools
-                    </p>
-                    <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-tertiary)]">
-                      Review lane
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-                    Sensitive actions pause until a reviewer confirms the intent, arguments, and risk.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                    Policy
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">Enforced</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                    Approvals
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">Realtime</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                    Audit
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-[var(--text-primary)]">Complete</p>
-                </div>
-              </div>
+              ))}
             </div>
-          </GlassPanel>
+          </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          {controlPoints.map((item) => (
-            <Card key={item.title} className="h-full border-white/10 bg-white/[0.04]" padding="lg">
-              <div className="flex h-full flex-col gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-sm font-bold text-[var(--text-primary)]">
-                    •
+        {/* ── Features bento ─────────────────────────────────────────────── */}
+        <section id="features" className="mb-32 scroll-mt-24">
+          <div className="text-center mb-16">
+            <SectionLabel>Core capabilities</SectionLabel>
+            <SectionHeading>Everything a governed AI deployment needs.</SectionHeading>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {features.map((f, i) => (
+              <GlassPanel key={i} className="group hover:-translate-y-1 transition-transform duration-300">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-2xl">
+                    {f.icon}
                   </div>
-                  <h2 className="text-base font-semibold text-[var(--text-primary)]">{item.title}</h2>
+                  <Tag color={f.color}>{f.title}</Tag>
                 </div>
-                <p className="text-sm leading-6 text-[var(--text-secondary)]">{item.text}</p>
-              </div>
-            </Card>
-          ))}
+                <p className="text-sm text-gray-400 leading-relaxed">{f.desc}</p>
+              </GlassPanel>
+            ))}
+          </div>
         </section>
 
-        <section>
-          <SectionTitle
-            eyebrow="Where it lives"
-            title="Direct routes into the product"
-            description="The homepage uses a wide, even three-column grid for the primary entry points so the cards read clearly across the page."
-            action={<Badge variant="neutral">Functional entry points</Badge>}
-          />
+        {/* ── Architecture ───────────────────────────────────────────────── */}
+        <section id="architecture" className="mb-32 scroll-mt-24">
+          <div className="grid lg:grid-cols-2 gap-8 items-center">
+            <div>
+              <SectionLabel>Architecture</SectionLabel>
+              <SectionHeading className="mb-6">Semantic firewall,<br />not a proxy.</SectionHeading>
+              <p className="text-gray-400 leading-relaxed mb-8">
+                Agent-Lock is not a plain reverse proxy. The pipeline runs an intent validation check against the user&apos;s original instruction, a hybrid static+AI risk classifier, and an Auth0-backed token vault — all before a single tool is touched.
+              </p>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-4">
+                {[
+                  { label: "Intent Validator", detail: "Gemini Flash — semantic drift detection", color: "bg-purple-500" },
+                  { label: "Risk Classifier", detail: "Hybrid: static regex rules + AI escalation", color: "bg-amber-500" },
+                  { label: "Token Vault", detail: "Auth0 M2M — ephemeral, minimum-scope tokens", color: "bg-blue-500" },
+                  { label: "HITL Approval", detail: "Telegram bot — real-time approve / block cards", color: "bg-emerald-500" },
+                  { label: "Audit Logger", detail: "Immutable structured JSON — append-only", color: "bg-indigo-500" },
+                ].map((row) => (
+                  <div key={row.label} className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.03] px-5 py-4">
+                    <div className={`h-2.5 w-2.5 rounded-full ${row.color} shrink-0`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white">{row.label}</p>
+                      <p className="text-xs text-gray-500">{row.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Architecture diagram */}
+            <GlassPanel noPad className="overflow-hidden min-h-[420px] flex items-center justify-center">
+              <div className="w-full p-6 font-mono text-xs leading-relaxed">
+                {/* Inline SVG architecture diagram */}
+                <svg viewBox="0 0 380 420" className="w-full h-full" style={{ maxHeight: "420px" }}>
+                  {/* Background */}
+                  <defs>
+                    <linearGradient id="gEmerald" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="#34d399" stopOpacity="0.8" />
+                    </linearGradient>
+                    <linearGradient id="gBlue" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="#60a5fa" stopOpacity="0.8" />
+                    </linearGradient>
+                    <linearGradient id="gAmber" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="#fbbf24" stopOpacity="0.8" />
+                    </linearGradient>
+                    <linearGradient id="gIndigo" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#6366f1" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="#818cf8" stopOpacity="0.8" />
+                    </linearGradient>
+                    <filter id="glow">
+                      <feGaussianBlur stdDeviation="2" result="blur" />
+                      <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                    </filter>
+                  </defs>
+
+                  {/* AI Agent box */}
+                  <rect x="130" y="10" width="120" height="40" rx="8" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+                  <text x="190" y="34" textAnchor="middle" fill="#d1d5db" fontSize="11" fontFamily="monospace">🤖  AI Agent</text>
+
+                  {/* Arrow down */}
+                  <line x1="190" y1="50" x2="190" y2="78" stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="3,2"/>
+                  <polygon points="186,76 190,84 194,76" fill="rgba(255,255,255,0.2)"/>
+
+                  {/* Agent-Lock Gateway */}
+                  <rect x="80" y="84" width="220" height="44" rx="10" fill="url(#gBlue)" fillOpacity="0.15" stroke="#3b82f6" strokeWidth="1.5" filter="url(#glow)"/>
+                  <text x="190" y="106" textAnchor="middle" fill="#60a5fa" fontSize="12" fontWeight="bold" fontFamily="monospace">Agent-Lock Gateway</text>
+                  <text x="190" y="120" textAnchor="middle" fill="#60a5fa" fontSize="9" fontFamily="monospace">/intercept  →  Plugin</text>
+
+                  {/* Arrow down to Risk Engine */}
+                  <line x1="190" y1="128" x2="190" y2="156" stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="3,2"/>
+                  <polygon points="186,154 190,162 194,154" fill="rgba(255,255,255,0.2)"/>
+
+                  {/* Risk Engine */}
+                  <rect x="90" y="162" width="200" height="44" rx="10" fill="rgba(139,92,246,0.15)" stroke="#8b5cf6" strokeWidth="1.5" filter="url(#glow)"/>
+                  <text x="190" y="184" textAnchor="middle" fill="#a78bfa" fontSize="12" fontWeight="bold" fontFamily="monospace">Risk Engine</text>
+                  <text x="190" y="198" textAnchor="middle" fill="#a78bfa" fontSize="9" fontFamily="monospace">Intent Validator + Classifier</text>
+
+                  {/* Branch lines */}
+                  <line x1="190" y1="206" x2="190" y2="226" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/>
+                  <line x1="80" y1="226" x2="300" y2="226" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/>
+                  <line x1="80" y1="226" x2="80" y2="254" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/>
+                  <polygon points="76,252 80,260 84,252" fill="rgba(255,255,255,0.2)"/>
+                  <line x1="300" y1="226" x2="300" y2="254" stroke="rgba(255,255,255,0.2)" strokeWidth="1"/>
+                  <polygon points="296,252 300,260 304,252" fill="rgba(255,255,255,0.2)"/>
+
+                  {/* LOW box */}
+                  <rect x="20" y="260" width="120" height="44" rx="10" fill="url(#gEmerald)" fillOpacity="0.15" stroke="#10b981" strokeWidth="1.5"/>
+                  <text x="80" y="282" textAnchor="middle" fill="#34d399" fontSize="11" fontWeight="bold" fontFamily="monospace">AUTO EXECUTE</text>
+                  <text x="80" y="296" textAnchor="middle" fill="#34d399" fontSize="9" fontFamily="monospace">LOW risk · Token minted</text>
+
+                  {/* HIGH box */}
+                  <rect x="240" y="260" width="120" height="44" rx="10" fill="url(#gAmber)" fillOpacity="0.15" stroke="#f59e0b" strokeWidth="1.5"/>
+                  <text x="300" y="282" textAnchor="middle" fill="#fbbf24" fontSize="11" fontWeight="bold" fontFamily="monospace">PAUSE → APPROVE</text>
+                  <text x="300" y="296" textAnchor="middle" fill="#fbbf24" fontSize="9" fontFamily="monospace">HIGH/CRIT · Telegram card</text>
+
+                  {/* Merge lines to audit */}
+                  <line x1="80" y1="304" x2="80" y2="330" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+                  <line x1="300" y1="304" x2="300" y2="330" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+                  <line x1="80" y1="330" x2="300" y2="330" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+                  <line x1="190" y1="330" x2="190" y2="356" stroke="rgba(255,255,255,0.15)" strokeWidth="1"/>
+                  <polygon points="186,354 190,362 194,354" fill="rgba(255,255,255,0.15)"/>
+
+                  {/* Audit log */}
+                  <rect x="90" y="362" width="200" height="44" rx="10" fill="url(#gIndigo)" fillOpacity="0.15" stroke="#6366f1" strokeWidth="1.5"/>
+                  <text x="190" y="384" textAnchor="middle" fill="#818cf8" fontSize="12" fontWeight="bold" fontFamily="monospace">Immutable Audit Log</text>
+                  <text x="190" y="398" textAnchor="middle" fill="#818cf8" fontSize="9" fontFamily="monospace">Structured JSON · append-only</text>
+                </svg>
+              </div>
+            </GlassPanel>
+          </div>
+        </section>
+
+        {/* ── Before / After comparison ──────────────────────────────────── */}
+        <section className="mb-32">
+          <div className="text-center mb-16">
+            <SectionLabel>Before vs After</SectionLabel>
+            <SectionHeading>What changes when agents operate under governance.</SectionHeading>
+          </div>
+
+          <div className="overflow-hidden rounded-3xl border border-white/10">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10">
+                  <th className="px-6 py-4 text-left text-xs uppercase tracking-widest text-gray-500 font-semibold bg-white/[0.02] w-[35%]">Scenario</th>
+                  <th className="px-6 py-4 text-left text-xs uppercase tracking-widest text-red-400/80 font-semibold bg-red-500/[0.04] w-[32.5%]">Without Agent-Lock</th>
+                  <th className="px-6 py-4 text-left text-xs uppercase tracking-widest text-emerald-400/80 font-semibold bg-emerald-500/[0.04] w-[32.5%]">With Agent-Lock</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Agent tries to delete files", "Executes immediately with long-lived creds", "Flagged CRITICAL → paused → Telegram alert"],
+                  ["Credential management", "Hardcoded API keys passed to agent", "Ephemeral scoped token minted per-call"],
+                  ["Safe read operations", "Proceeds, but no visibility", "Classified LOW → proceeds automatically"],
+                  ["Agent goes off-script", "No detection, no record", "Intent mismatch caught → escalated"],
+                  ["Audit requirements", "Log may or may not exist", "Every action logged in immutable JSON"],
+                  ["Custom policies", "Hand-written in agent system prompt", "Declarative policies.json + dashboard UI"],
+                ].map(([scenario, before, after], i) => (
+                  <tr key={i} className="border-b border-white/5 last:border-0">
+                    <td className="px-6 py-4 text-gray-300 font-medium bg-white/[0.01]">{scenario}</td>
+                    <td className="px-6 py-4 text-gray-500 bg-red-500/[0.02]">{before}</td>
+                    <td className="px-6 py-4 text-emerald-400/90 bg-emerald-500/[0.02]">{after}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* ── Dashboard routes ───────────────────────────────────────────── */}
+        <section className="mb-32">
+          <div className="text-center mb-16">
+            <SectionLabel>Dashboard</SectionLabel>
+            <SectionHeading>One control plane for everything.</SectionHeading>
+            <p className="mt-4 text-gray-400 max-w-xl mx-auto text-base">
+              Every module is built for the operator — not the developer. Clear data, decisive actions, no clutter.
+            </p>
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             {surfaces.map((surface, index) => (
-              <Link key={surface.href} href={surface.href} className="group block h-full">
-                <Card
-                  variant="interactive"
-                  padding="lg"
-                  className="relative h-full overflow-hidden border-white/10 bg-white/[0.045]"
-                >
-                  <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 via-cyan-400 to-amber-300 opacity-90" />
-                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.05),transparent_40%)]" />
-
-                  <div className="relative flex h-full flex-col justify-between gap-5">
-                    <div className="space-y-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="inline-flex rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                          {surface.badge}
-                        </span>
-                        <span className="text-xs font-mono text-[var(--text-muted)]">0{index + 1}</span>
-                      </div>
-
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">
-                          {surface.title}
-                        </h3>
-                        <p className="text-sm leading-6 text-[var(--text-secondary)]">{surface.desc}</p>
-                      </div>
+              <Link href={surface.href} key={index} className="block group">
+                <GlassPanel noPad className="h-full flex flex-col transition-all duration-300 hover:border-white/20 hover:bg-white/[0.07] hover:-translate-y-1">
+                  <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-blue-500 via-indigo-400 to-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-t-3xl" />
+                  <div className="p-6 md:p-8 flex-1 flex flex-col">
+                    <div className="flex justify-between items-start mb-6">
+                      <span className="inline-block px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                        {surface.badge}
+                      </span>
+                      <span className="text-sm font-mono text-gray-700 font-semibold">{surface.n}</span>
                     </div>
-
-                    <div className="flex items-center justify-between border-t border-white/10 pt-4">
-                      <span className="text-sm font-medium text-[var(--accent-primary)] transition group-hover:translate-x-1">
-                        Open {surface.title}
-                      </span>
-                      <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-tertiary)]">
-                        View
-                      </span>
+                    <h3 className="text-xl font-semibold text-white mb-3 group-hover:text-emerald-300 transition-colors">
+                      {surface.title}
+                    </h3>
+                    <p className="text-sm text-gray-400 leading-relaxed mb-6 flex-1">{surface.desc}</p>
+                    <div className="flex items-center text-xs font-medium text-gray-600 group-hover:text-white transition-colors">
+                      Open module &rarr;
                     </div>
                   </div>
-                </Card>
+                </GlassPanel>
               </Link>
             ))}
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)]">
-          <GlassPanel className="relative overflow-hidden p-6 md:p-8">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                  Architecture snapshot
-                </p>
-                <h2 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
-                  One flow from request to audited execution
-                </h2>
-                <p className="max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-                  The flow is kept simple and readable, just like the reference style: the product does the explanation,
-                  not a lot of extra chrome.
-                </p>
-              </div>
+        {/* ── FAQ ────────────────────────────────────────────────────────── */}
+        <section id="faq" className="mb-32 scroll-mt-24">
+          <div className="text-center mb-16">
+            <SectionLabel>FAQ</SectionLabel>
+            <SectionHeading>Frequently asked questions.</SectionHeading>
+          </div>
 
-              <div className="overflow-x-auto rounded-[24px] border border-white/10 bg-black/20 p-4">
-                <pre className="min-w-[560px] text-xs leading-6 text-[var(--text-secondary)]">
-{`AI Client
-   |
-   v
-Agent-Lock policy gate
-   |
-   +--> Low risk -> automatic lane
-   |
-   +--> High risk -> approval queue
-   |
-   v
-Scoped execution + audit trail`}
-                </pre>
-              </div>
-            </div>
-          </GlassPanel>
+          <div className="max-w-3xl mx-auto space-y-4">
+            {faqs.map((faq, i) => (
+              <GlassPanel key={i}>
+                <p className="text-base font-semibold text-white mb-3">{faq.q}</p>
+                <p className="text-sm text-gray-400 leading-relaxed">{faq.a}</p>
+              </GlassPanel>
+            ))}
+          </div>
+        </section>
 
-          <GlassPanel className="relative overflow-hidden p-6 md:p-8">
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
-                  Start here
-                </p>
-                <h2 className="text-2xl font-semibold tracking-tight text-[var(--text-primary)]">
-                  A smoother path from visit to setup.
-                </h2>
-              </div>
-
-              <div className="space-y-3">
-                {starterSteps.map((step) => (
-                  <div key={step.title} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-sm font-bold text-[var(--accent-primary)]">
-                        {step.step}
-                      </div>
-                      <div className="min-w-0">
-                        <h3 className="text-base font-semibold text-[var(--text-primary)]">{step.title}</h3>
-                        <p className="text-sm leading-6 text-[var(--text-secondary)]">{step.text}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap gap-3 pt-1">
-                <Link href="/dashboard/overview" className="btn btn-primary rounded-full px-5 py-3 text-sm font-semibold">
-                  Start with Overview
-                </Link>
-                <Link href="/dashboard/logs" className="btn btn-secondary rounded-full px-5 py-3 text-sm font-semibold">
-                  View Logs
-                </Link>
-              </div>
+        {/* ── CTA ────────────────────────────────────────────────────────── */}
+        <section className="mb-16">
+          <GlassPanel className="text-center py-20">
+            <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-600/10 via-transparent to-emerald-600/10 pointer-events-none" />
+            <SectionLabel>Get started</SectionLabel>
+            <h2 className="text-4xl md:text-5xl font-extrabold text-white mb-6 tracking-tight">
+              Secure your agents.<br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-400">Ship with confidence.</span>
+            </h2>
+            <p className="text-gray-400 mb-10 max-w-xl mx-auto text-base leading-relaxed">
+              Open source, self-hosted, no vendor lock-in. Your agents, your infrastructure, your audit logs.
+            </p>
+            <div className="flex flex-wrap justify-center gap-4">
+              <Link
+                href="/dashboard/overview"
+                className="rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(16,185,129,0.6)] transition-all hover:scale-105"
+              >
+                Open Dashboard
+              </Link>
+              <Link
+                href="/dashboard/logs"
+                className="rounded-xl border border-white/10 bg-white/5 px-8 py-4 text-sm font-semibold text-white hover:bg-white/10 transition-all"
+              >
+                View Audit Logs
+              </Link>
             </div>
           </GlassPanel>
         </section>
 
-        <footer className="pb-2 pt-1 text-sm text-[var(--text-tertiary)]">
-          Agent-Lock | Governance and approvals for AI tool execution
+        {/* ── Footer ─────────────────────────────────────────────────────── */}
+        <footer className="border-t border-white/10 pt-16 pb-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+            <div className="col-span-2 md:col-span-1">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-600 to-emerald-400 text-white text-[10px] font-black">AL</div>
+                <span className="text-sm font-semibold text-white">Agent-Lock</span>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed max-w-[200px]">
+                The governance and security layer for AI agent tool calls.
+              </p>
+            </div>
+
+            {[
+              {
+                head: "Platform",
+                links: [
+                  { label: "Overview", href: "/dashboard/overview" },
+                  { label: "Approvals", href: "/dashboard/approvals" },
+                  { label: "Settings", href: "/dashboard/settings" },
+                  { label: "Audit Logs", href: "/dashboard/logs" },
+                ],
+              },
+              {
+                head: "Gateway",
+                links: [
+                  { label: "MCP Status", href: "/dashboard/mcp" },
+                  { label: "Plugin Bridge", href: "/dashboard/plugin" },
+                ],
+              },
+              {
+                head: "Resources",
+                links: [
+                  { label: "Architecture", href: "#architecture" },
+                  { label: "How it works", href: "#how-it-works" },
+                  { label: "FAQ", href: "#faq" },
+                ],
+              },
+            ].map((col) => (
+              <div key={col.head}>
+                <p className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-4">{col.head}</p>
+                <ul className="space-y-2.5">
+                  {col.links.map((l) => (
+                    <li key={l.label}>
+                      <Link href={l.href} className="text-sm text-gray-400 hover:text-white transition-colors">
+                        {l.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-gray-600">
+              Agent-Lock &copy; {new Date().getFullYear()} | Open source security middleware for AI agents.
+            </p>
+            <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[11px] font-semibold text-emerald-400">System Operational</span>
+            </div>
+          </div>
         </footer>
+
       </div>
     </main>
   )
