@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
 import { fetchPending } from "@/lib/api"
@@ -12,7 +13,7 @@ const navSections = [
     title: "Dashboard",
     items: [
       {
-        href: "/overview",
+        href: "/dashboard/overview",
         label: "Dashboard",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -24,7 +25,7 @@ const navSections = [
         ),
       },
       {
-        href: "/activity",
+        href: "/dashboard/activity",
         label: "Activity",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -33,7 +34,7 @@ const navSections = [
         ),
       },
       {
-        href: "/approvals",
+        href: "/dashboard/approvals",
         label: "Approvals",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -43,7 +44,7 @@ const navSections = [
         ),
       },
       {
-        href: "/logs",
+        href: "/dashboard/logs",
         label: "Logs",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -57,7 +58,7 @@ const navSections = [
     title: "Integrations",
     items: [
       {
-        href: "/plugin",
+        href: "/dashboard/plugin",
         label: "Plugin",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -66,7 +67,7 @@ const navSections = [
         ),
       },
       {
-        href: "/chat",
+        href: "/dashboard/chat",
         label: "Channel Chat",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -75,7 +76,7 @@ const navSections = [
         ),
       },
       {
-        href: "/mcp",
+        href: "/dashboard/mcp",
         label: "MCP",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -87,7 +88,7 @@ const navSections = [
         ),
       },
       {
-        href: "/mcp/setup",
+        href: "/dashboard/mcp/setup",
         label: "Setup",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -112,7 +113,7 @@ const navSections = [
     title: "Admin",
     items: [
       {
-        href: "/analytics",
+        href: "/dashboard/analytics",
         label: "Analytics",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -121,7 +122,7 @@ const navSections = [
         ),
       },
       {
-        href: "/settings",
+        href: "/dashboard/settings",
         label: "Settings",
         icon: (
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -159,6 +160,11 @@ export default function Sidebar() {
     }
   })
   const { theme, resolvedTheme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -224,22 +230,23 @@ export default function Sidebar() {
     })
   }
 
-  const themeIcon =
-    theme === 'system' ? (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <rect x="3" y="4" width="12" height="9" rx="1" />
-        <path d="M6 16h6M9 13v3" />
-      </svg>
-    ) : resolvedTheme === 'dark' ? (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <path d="M15 10.5A6 6 0 017.5 3a6 6 0 108 7.5z" />
-      </svg>
-    ) : (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
-        <circle cx="9" cy="9" r="3" />
-        <path d="M9 2v2M9 14v2M2 9h2M14 9h2M4.2 4.2l1.4 1.4M12.4 12.4l1.4 1.4M4.2 13.8l1.4-1.4M12.4 5.6l1.4-1.4" />
-      </svg>
-    )
+  const themeIcon = !mounted ? (
+    <div className="w-[18px] h-[18px]"></div>
+  ) : theme === 'system' ? (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <rect x="3" y="4" width="12" height="9" rx="1" />
+      <path d="M6 16h6M9 13v3" />
+    </svg>
+  ) : resolvedTheme === 'dark' ? (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path d="M15 10.5A6 6 0 017.5 3a6 6 0 108 7.5z" />
+    </svg>
+  ) : (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5">
+      <circle cx="9" cy="9" r="3" />
+      <path d="M9 2v2M9 14v2M2 9h2M14 9h2M4.2 4.2l1.4 1.4M12.4 12.4l1.4 1.4M4.2 13.8l1.4-1.4M12.4 5.6l1.4-1.4" />
+    </svg>
+  )
 
   const nav = (mobile = false) => (
     <div className="px-2 space-y-4">
@@ -306,9 +313,7 @@ export default function Sidebar() {
             </svg>
           </button>
           <div className="flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded bg-[var(--accent-primary)] text-xs font-bold text-white">
-              A
-            </div>
+            <Image src="/logo.jpeg" alt="Agent-Lock" width={26} height={26} className="rounded-lg object-cover" />
             <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               Agent-Lock
             </span>
@@ -318,7 +323,7 @@ export default function Sidebar() {
             aria-label="Switch theme"
             className="rounded-md p-2"
             style={{ color: 'var(--text-secondary)' }}
-            title={`Theme: ${theme}`}
+            title={mounted ? `Theme: ${theme}` : 'Theme'}
           >
             {themeIcon}
           </button>
@@ -339,9 +344,7 @@ export default function Sidebar() {
           >
             <div className="flex h-14 items-center justify-between px-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
               <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded bg-[var(--accent-primary)] text-sm font-bold text-white">
-                  A
-                </div>
+                <Image src="/logo.jpeg" alt="Agent-Lock" width={28} height={28} className="rounded-lg object-cover" />
                 <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   Agent-Lock
                 </span>
@@ -372,9 +375,7 @@ export default function Sidebar() {
         >
           {!collapsed && (
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded bg-[var(--accent-primary)] text-sm font-bold text-white">
-                A
-              </div>
+              <Image src="/logo.jpeg" alt="Agent-Lock" width={28} height={28} className="rounded-lg object-cover" />
               <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 Agent-Lock
               </span>
@@ -430,10 +431,10 @@ export default function Sidebar() {
                   onClick={cycleTheme}
                   className="flex flex-1 items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors"
                   style={{ color: 'var(--text-secondary)' }}
-                  title={`Theme: ${theme}`}
+                  title={mounted ? `Theme: ${theme}` : 'Theme'}
                 >
                   <span className="scale-90">{themeIcon}</span>
-                  <span className="capitalize">System</span>
+                  <span className="capitalize">{mounted ? theme : 'System'}</span>
                 </button>
               </div>
 
@@ -464,7 +465,7 @@ export default function Sidebar() {
                 onClick={cycleTheme}
                 className="flex w-full items-center justify-center rounded-md px-2 py-1.5 transition-colors"
                 style={{ color: 'var(--text-secondary)' }}
-                title={`Theme: ${theme}`}
+                title={mounted ? `Theme: ${theme}` : 'Theme'}
               >
                 {themeIcon}
               </button>

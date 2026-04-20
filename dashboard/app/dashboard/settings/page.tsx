@@ -1,5 +1,1437 @@
-import { redirect } from "next/navigation"
+"use client"
 
-export default function DashboardSettingsAliasPage() {
-  redirect("/settings")
+import { useEffect, useState, useCallback } from "react"
+import {
+  fetchSettings,
+  fetchPolicies,
+  updatePolicies,
+  testTelegram,
+  fetchTokenVaultStatus,
+  fetchRuntimeControls,
+  updateRuntimeControls,
+  getAuthFlowLinks,
+  updateSettingsEnv,
+} from "@/lib/api"
+import { Settings, PoliciesResponse, RuntimeControls } from "@/types"
+import Card, { CardHeader, CardContent } from "@/app/components/ui/Card"
+import Button from "@/app/components/ui/Button"
+import Input from "@/app/components/ui/Input"
+import Badge from "@/app/components/ui/Badge"
+import { useToast } from "../../components/Toast"
+
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-[var(--bg-tertiary)] rounded-lg ${className ?? ""}`} />
+}
+
+// ─── Plugin Bridge Section ─────────────────────────────────────────────────────
+interface PluginBridgeConfig {
+  telegramBotToken: string
+  telegramPhone: string
+  isConfigured: boolean
+  isConnected: boolean
+  lastConnection?: string
+}
+
+function OpenClawSection() {
+  const [config, setConfig] = useState<PluginBridgeConfig>({
+    telegramBotToken: "",
+    telegramPhone: "",
+    isConfigured: false,
+    isConnected: false,
+  })
+  const [isLoading, setIsLoading] = useState(false)
+  const [isTesting, setIsTesting] = useState(false)
+  const { showToast } = useToast()
+
+  useEffect(() => {
+    const saved = localStorage.getItem("openclaw_config")
+    if (saved) {
+      try {
+        setConfig(JSON.parse(saved))
+      } catch (e) {
+        console.error("Failed to parse config:", e)
+      }
+    }
+  }, [])
+
+  const handleSave = async () => {
+    if (!config.telegramBotToken || !config.telegramPhone) {
+      showToast({
+        type: "error",
+        title: "Missing configuration",
+        message: "Please fill in all fields",
+      })
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      const newConfig = {
+        ...config,
+        isConfigured: true,
+      }
+      localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+      setConfig(newConfig)
+      
+      window.dispatchEvent(new Event("openclaw_config_changed"))
+      
+      showToast({
+        type: "success",
+        title: "Configuration saved",
+        message: "Plugin bridge settings have been saved",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Save failed",
+        message: String(error),
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleTestConnection = async () => {
+    if (!config.telegramBotToken || !config.telegramPhone) {
+      showToast({
+        type: "error",
+        title: "Missing configuration",
+        message: "Please save your configuration first",
+      })
+      return
+    }
+
+    setIsTesting(true)
+    try {
+      const res = await testTelegram()
+      if (!res?.ok) {
+        throw new Error(res?.message ?? "Telegram test failed")
+      }
+      
+      const newConfig = {
+        ...config,
+        isConnected: true,
+        lastConnection: new Date().toISOString(),
+      }
+      localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+      setConfig(newConfig)
+      
+      window.dispatchEvent(new Event("openclaw_config_changed"))
+      
+      showToast({
+        type: "success",
+        title: "Connection successful",
+        message: "Plugin bridge is now connected - the Plugin page is available",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Connection failed",
+        message: String(error),
+      })
+    } finally {
+      setIsTesting(false)
+    }
+  }
+
+  const handleDisconnect = () => {
+    const newConfig = {
+      ...config,
+      isConnected: false,
+    }
+    localStorage.setItem("openclaw_config", JSON.stringify(newConfig))
+    setConfig(newConfig)
+    
+    window.dispatchEvent(new Event("openclaw_config_changed"))
+    
+    showToast({
+      type: "info",
+      title: "Disconnected",
+      message: "Plugin bridge has been disconnected",
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="🤖 Plugin Bridge"
+        subtitle="Configure and connect the plugin bridge via Telegram"
+        action={
+          config.isConnected ? (
+            <Badge variant="success" dot>Connected</Badge>
+          ) : config.isConfigured ? (
+            <Badge variant="warning" dot>Configured</Badge>
+          ) : (
+            <Badge variant="neutral" dot>Not Configured</Badge>
+          )
+        }
+      />
+      <CardContent className="space-y-6">
+        {/* Connection Status */}
+        <div className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg p-4 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-[var(--text-secondary)]">Status:</span>
+            <span className="text-[var(--text-primary)] font-medium">
+              {config.isConnected ? "Connected & Ready" : config.isConfigured ? "Configured, Not Connected" : "Not Configured"}
+            </span>
+          </div>
+          {config.lastConnection && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--text-secondary)]">Last Connection:</span>
+              <span className="text-[var(--text-primary)]">
+                {new Date(config.lastConnection).toLocaleString()}
+              </span>
+            </div>
+          )}
+          
+          <div className="flex gap-3 pt-3">
+            <Button
+              onClick={handleTestConnection}
+              loading={isTesting}
+              disabled={!config.isConfigured || config.isConnected}
+              size="sm"
+            >
+              Test Connection
+            </Button>
+            {config.isConnected && (
+              <Button onClick={handleDisconnect} variant="danger" size="sm">
+                Disconnect
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Configuration Form */}
+        <div className="space-y-4">
+          <Input
+            label="Telegram Bot Token"
+            type="password"
+            placeholder="1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+            value={config.telegramBotToken}
+            onChange={(e) => setConfig({ ...config, telegramBotToken: e.target.value })}
+            hint="Get your bot token from @BotFather on Telegram"
+            disabled={config.isConnected}
+          />
+
+          <Input
+            label="Telegram Phone Number"
+            type="tel"
+            placeholder="+1234567890"
+            value={config.telegramPhone}
+            onChange={(e) => setConfig({ ...config, telegramPhone: e.target.value })}
+            hint="Your phone number registered with Telegram (with country code)"
+            disabled={config.isConnected}
+          />
+
+          <div className="pt-2">
+            <Button onClick={handleSave} loading={isLoading} disabled={config.isConnected}>
+              Save Configuration
+            </Button>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <details className="bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-lg overflow-hidden">
+          <summary className="px-4 py-3 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors text-sm text-[var(--text-secondary)] font-medium">
+            📖 How to Configure the Plugin Bridge
+          </summary>
+          <div className="px-4 py-4 border-t border-[var(--border-color)]">
+            <ol className="list-decimal list-inside space-y-2 text-sm text-[var(--text-secondary)]">
+              <li>Open Telegram and search for <strong>@BotFather</strong></li>
+              <li>Send <code className="px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--text-primary)]">/newbot</code> to create a new bot</li>
+              <li>Follow the instructions and copy your bot token</li>
+              <li>Paste the token in the field above</li>
+              <li>Enter your Telegram phone number (with country code, e.g., +1234567890)</li>
+              <li>Click &quot;Save Configuration&quot; to store your settings</li>
+              <li>Click &quot;Test Connection&quot; to verify the bridge can connect</li>
+              <li>Once connected, the Plugin page will appear in the sidebar</li>
+            </ol>
+          </div>
+        </details>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SectionCard({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <Card>
+      <CardHeader title={title} />
+      <CardContent className="space-y-4">{children}</CardContent>
+    </Card>
+  )
+}
+
+function ConfigRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string
+  value: string | null | undefined
+  mono?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-brand-border/50 last:border-0">
+      <span className="text-xs text-slate-500 uppercase tracking-wider">{label}</span>
+      <span
+        className={`text-sm text-slate-300 ${mono ? "font-mono" : ""} max-w-[280px] truncate text-right`}
+      >
+        {value ?? <span className="text-slate-600 italic">Not set</span>}
+      </span>
+    </div>
+  )
+}
+
+function StatusPill({ configured }: { configured: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border ${
+        configured
+          ? "bg-emerald-900/50 text-emerald-300 border-emerald-700/50"
+          : "bg-amber-900/50 text-amber-300 border-amber-700/50"
+      }`}
+    >
+      <span className="text-[0.6rem]">{configured ? "●" : "○"}</span>
+      {configured ? "Configured" : "Not configured"}
+    </span>
+  )
+}
+
+function InstructionBox({
+  title,
+  steps,
+}: {
+  title?: string
+  steps: (string | React.ReactNode)[]
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border border-brand-border rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-brand-bg/40 hover:bg-brand-bg/70 transition-colors text-sm text-slate-400 hover:text-slate-200"
+      >
+        <span className="flex items-center gap-2">
+          <span>📖</span>
+          <span>{title ?? "Setup Instructions"}</span>
+        </span>
+        <span className="text-xs text-slate-600">{open ? "▲ Hide" : "▼ Show"}</span>
+      </button>
+      {open && (
+        <div className="px-4 py-4 bg-brand-bg/20 border-t border-brand-border">
+          <ol className="space-y-2">
+            {steps.map((step, i) => (
+              <li key={i} className="flex items-start gap-3 text-sm text-slate-400">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 text-xs font-bold flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <span className="leading-relaxed">{step}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Telegram Section ──────────────────────────────────────────────────────────
+function TelegramSection({ settings }: { settings: Settings | null }) {
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await testTelegram()
+      setTestResult(res)
+    } catch {
+      setTestResult({ ok: false, message: "Network error — could not reach backend" })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const tg = settings?.telegram
+
+  return (
+    <SectionCard title="📱 Telegram Notifications">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <p className="text-sm text-slate-400">
+          Receive approval requests directly in your Telegram chat
+        </p>
+        {tg ? <StatusPill configured={tg.configured} /> : <Skeleton className="h-6 w-28" />}
+      </div>
+
+      {tg ? (
+        <div className="space-y-1">
+          <ConfigRow label="Bot Token" value={tg.bot_token_preview} mono />
+          <ConfigRow label="Chat ID" value={tg.chat_id} mono />
+        </div>
+      ) : (
+        <Skeleton className="h-16" />
+      )}
+
+      {/* Test button */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleTest}
+          disabled={testing || !tg?.configured}
+          className={`
+            flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium
+            border transition-all duration-150
+            ${
+              tg?.configured
+                ? "bg-indigo-700 hover:bg-indigo-600 text-white border-indigo-600/50 shadow-lg shadow-indigo-900/30"
+                : "bg-slate-800 text-slate-600 border-slate-700 cursor-not-allowed"
+            }
+            disabled:opacity-60
+          `}
+        >
+          {testing ? (
+            <>
+              <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Sending...
+            </>
+          ) : (
+            <>📨 Send Test Message</>
+          )}
+        </button>
+
+        {!tg?.configured && (
+          <span className="text-xs text-slate-600 italic">Configure Telegram first</span>
+        )}
+      </div>
+
+      {/* Test result */}
+      {testResult && (
+        <div
+          className={`flex items-start gap-2 px-4 py-3 rounded-lg border text-sm ${
+            testResult.ok
+              ? "bg-emerald-900/20 border-emerald-700/40 text-emerald-300"
+              : "bg-red-900/20 border-red-700/40 text-red-300"
+          }`}
+        >
+          <span>{testResult.ok ? "✅" : "❌"}</span>
+          <span>{testResult.message}</span>
+        </div>
+      )}
+
+      <InstructionBox
+        steps={[
+          "Open Telegram and search for @BotFather",
+          'Send /newbot and follow the instructions to create your bot',
+          <span key="3">
+            Copy the bot token and add it to{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              backend/.env
+            </code>{" "}
+            as{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              TELEGRAM_BOT_TOKEN=your_token
+            </code>
+          </span>,
+          "Start a chat with your newly created bot and send any message",
+          <span key="5">
+            Visit{" "}
+            <code className="bg-brand-bg text-blue-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              https://api.telegram.org/bot{"TOKEN"}/getUpdates
+            </code>{" "}
+            (replace TOKEN) to find your chat_id in the response
+          </span>,
+          <span key="6">
+            Add it to{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              .env
+            </code>{" "}
+            as{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              TELEGRAM_CHAT_ID=your_chat_id
+            </code>
+          </span>,
+          "Restart the backend server for changes to take effect",
+        ]}
+      />
+    </SectionCard>
+  )
+}
+
+// ─── Gemini Section ────────────────────────────────────────────────────────────
+function GeminiSection({ settings }: { settings: Settings | null }) {
+  const { showToast } = useToast()
+  const [apiKey, setApiKey] = useState("")
+  const [saving, setSaving] = useState(false)
+  const gm = settings?.gemini
+
+  async function handleSaveGeminiKey() {
+    const trimmed = apiKey.trim()
+    if (!trimmed) return
+
+    setSaving(true)
+    try {
+      const res = await updateSettingsEnv({ gemini_api_key: trimmed })
+      if (!res?.ok) {
+        throw new Error(String(res?.detail || res?.error || "Could not update Gemini API key"))
+      }
+      setApiKey("")
+      showToast({
+        type: "success",
+        title: "Gemini key updated",
+        message: "Global Gemini API key has been replaced.",
+      })
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Failed to update Gemini key",
+        message: error instanceof Error ? error.message : "Unexpected error",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard title="🧠 Gemini AI Analysis">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-400">
+          Powers the risk classification engine using Gemini 2.0 Flash
+        </p>
+        {gm ? <StatusPill configured={gm.configured} /> : <Skeleton className="h-6 w-28" />}
+      </div>
+
+      {gm ? (
+        <ConfigRow label="API Key" value={gm.configured ? "Configured (hidden)" : "Not configured"} />
+      ) : (
+        <Skeleton className="h-10" />
+      )}
+
+      <div className="rounded-lg border border-brand-border bg-brand-bg/40 p-4 space-y-3">
+        <label className="block text-xs uppercase tracking-wide text-slate-500">Replace global Gemini API key</label>
+        <Input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder="Paste new Gemini key (AIza...)"
+        />
+        <div className="flex justify-end">
+          <Button
+            onClick={handleSaveGeminiKey}
+            disabled={saving || !apiKey.trim()}
+            className="bg-indigo-700 hover:bg-indigo-600 text-white"
+          >
+            {saving ? "Saving..." : "Save Global Key"}
+          </Button>
+        </div>
+      </div>
+
+      <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-sm text-slate-400 leading-relaxed">
+        <p>
+          Gemini analyzes tool calls that pass static rule checks and are classified as{" "}
+          <span className="text-amber-300 font-medium">HIGH</span> or{" "}
+          <span className="text-red-300 font-medium">CRITICAL</span> risk. It evaluates intent,
+          potential impact, and assigns a confidence score before routing for human approval.
+        </p>
+      </div>
+
+      <InstructionBox
+        steps={[
+          <span key="1">
+            Go to{" "}
+            <a
+              href="https://aistudio.google.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              https://aistudio.google.com/
+            </a>
+          </span>,
+          'Click "Get API Key" in the left sidebar',
+          "Create a new API key for your project",
+          <span key="4">
+            Copy the key and add it to{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              backend/.env
+            </code>{" "}
+            as{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              GEMINI_API_KEY=your_key
+            </code>
+          </span>,
+          "Restart the backend server",
+        ]}
+      />
+    </SectionCard>
+  )
+}
+
+// ─── Auth0 Section ─────────────────────────────────────────────────────────────
+function Auth0Section({ settings }: { settings: Settings | null }) {
+  const au = settings?.auth0
+  const [vault, setVault] = useState<{
+    enabled?: boolean
+    auth0_configured?: boolean
+    authenticated?: boolean
+    login_url?: string
+  } | null>(null)
+  const [authLinks, setAuthLinks] = useState<{
+    backend_url: string
+    account_login_url: string
+    account_logout_url: string
+    provider_login_urls: { google: string; github: string; slack: string }
+  } | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      try {
+        const data = await fetchTokenVaultStatus()
+        if (mounted) setVault(data)
+      } catch {
+        if (mounted) setVault(null)
+      }
+      try {
+        const links = await getAuthFlowLinks()
+        if (mounted) setAuthLinks(links)
+      } catch {
+        if (mounted) setAuthLinks(null)
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  return (
+    <SectionCard title="🔐 Auth0 Token Vault">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-400">
+          Issues short-lived, scoped tokens for each approved tool call
+        </p>
+        {au ? <StatusPill configured={au.configured} /> : <Skeleton className="h-6 w-28" />}
+      </div>
+
+      {au ? (
+        <div className="space-y-1">
+          <ConfigRow label="Domain" value={au.domain} mono />
+          <ConfigRow label="Audience" value={au.audience} mono />
+          <ConfigRow label="Client ID" value={au.client_id_preview} mono />
+          <ConfigRow label="Callback URL" value={au.callback_url} mono />
+          <ConfigRow label="Scope" value={au.scope} mono />
+          <ConfigRow label="Token Vault Enabled" value={au.token_vault_enabled ? "Yes" : "No"} />
+          <ConfigRow label="Google Connection" value={au.google_connection_name} mono />
+          <ConfigRow label="Google Audience" value={au.google_audience} mono />
+          <ConfigRow label="Google Scopes" value={au.google_scopes} mono />
+          <ConfigRow label="GitHub Connection" value={au.github_connection_name} mono />
+          <ConfigRow label="Slack Connection" value={au.slack_connection_name} mono />
+        </div>
+      ) : (
+        <Skeleton className="h-32" />
+      )}
+
+      {vault && (
+        <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-xs text-slate-300 space-y-1">
+          <p>
+            Vault runtime:{" "}
+            <span className={vault.enabled ? "text-emerald-300" : "text-red-300"}>
+              {vault.enabled ? "enabled" : "disabled"}
+            </span>
+          </p>
+          <p>
+            User session for connected accounts:{" "}
+            <span className={vault.authenticated ? "text-emerald-300" : "text-amber-300"}>
+              {vault.authenticated ? "authenticated" : "missing"}
+            </span>
+          </p>
+          {!vault.authenticated && vault.login_url && (
+            <a
+              href={vault.login_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              Connect account (Auth0 login)
+            </a>
+          )}
+        </div>
+      )}
+
+      {authLinks && (
+        <div className="bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3 text-xs text-slate-300 space-y-3">
+          <p className="text-sm font-semibold text-indigo-300">🔑 Account vs Provider login flow</p>
+          <div className="space-y-1">
+            <p>
+              <span className="text-slate-400">Backend:</span>{" "}
+              <code className="text-blue-300">{authLinks.backend_url}</code>
+            </p>
+            <p>
+              <span className="text-slate-400">1) Agent-Lock account login:</span>{" "}
+              <a href={authLinks.account_login_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">2) Connect Google provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.google} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">3) Connect GitHub provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.github} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">4) Connect Slack provider:</span>{" "}
+              <a href={authLinks.provider_login_urls.slack} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+            <p>
+              <span className="text-slate-400">Account logout:</span>{" "}
+              <a href={authLinks.account_logout_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">
+                Open
+              </a>
+            </p>
+          </div>
+          <p className="text-slate-400">
+            Professional flow: login account once, then connect providers independently using provider links.
+          </p>
+        </div>
+      )}
+
+      {/* Explanation box */}
+      <div className="bg-indigo-900/20 border border-indigo-800/40 rounded-xl p-4 space-y-3">
+        <p className="text-sm font-semibold text-indigo-300">🛡️ Why Auth0 Token Vault?</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-3">
+            <p className="text-xs font-bold text-red-400 mb-2">❌ Before Agent-Lock</p>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              The AI agent holds your real API keys and credentials permanently. Any compromised
+              agent or prompt injection can exfiltrate them and access all your services.
+            </p>
+          </div>
+          <div className="bg-emerald-900/20 border border-emerald-800/30 rounded-lg px-3 py-3">
+            <p className="text-xs font-bold text-emerald-400 mb-2">✅ After Agent-Lock</p>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              For connected providers (Google/GitHub/Slack), Agent-Lock now uses Auth0 Token Vault
+              token exchange and can broker API calls server-side so the agent does not need to
+              hold provider tokens.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <InstructionBox
+        steps={[
+          <span key="1">
+            Create a free account at{" "}
+            <a
+              href="https://auth0.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 underline"
+            >
+              auth0.com
+            </a>
+          </span>,
+          <span key="2">
+            Create an <strong className="text-slate-300">API</strong> with audience{" "}
+            <code className="bg-brand-bg text-blue-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              https://agent-lock-api
+            </code>
+          </span>,
+          "Create a Machine-to-Machine application and authorize it against your API",
+          "Enable Token Vault and configure Connected Accounts for your provider connection (for demo: google-oauth2)",
+          <span key="4">
+            Copy the <strong className="text-slate-300">Domain</strong>,{" "}
+            <strong className="text-slate-300">Client ID</strong>, and{" "}
+            <strong className="text-slate-300">Client Secret</strong> into{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              backend/.env
+            </code>{" "}
+            as{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              AUTH0_DOMAIN
+            </code>
+            ,{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              AUTH0_CLIENT_ID
+            </code>
+            ,{" "}
+            <code className="bg-brand-bg text-emerald-300 px-1.5 py-0.5 rounded font-mono text-xs">
+              AUTH0_CLIENT_SECRET
+            </code>
+          </span>,
+          "Restart the backend server",
+          "For brokered Gmail demo, call POST /vault/google/gmail/send after authenticating with /auth/provider-login/google",
+        ]}
+      />
+    </SectionCard>
+  )
+}
+
+const DEFAULT_RUNTIME_CONTROLS: RuntimeControls = {
+  gemini_analysis_enabled: true,
+  auto_approve_enabled: true,
+  auto_approve_tool_allowlist: [
+    "agent_lock_respond",
+    "agent_lock_auth_status",
+    "agent_lock_auth_logout",
+    "agent_lock_account_delete",
+    "agent_lock_services",
+    "agent_lock_provider_status",
+    "agent_lock_provider_login",
+    "agent_lock_provider_logout",
+    "agent_lock_scopes",
+    "agent_lock_policy",
+    "agent_lock_gmail",
+    "agent_lock_github",
+    "agent_lock_slack",
+    "agent_lock_calendar",
+    "agent_lock_drive",
+    "agent_lock_youtube",
+    "mcp__filesystem__*",
+    "mcp__github__*",
+    "mcp__slack__*",
+    "powershell.*",
+  ],
+  ws_bridge_enabled: true,
+  first_time_manual_approval_enabled: true,
+  notify_auto_approved_actions: true,
+  integration_modes: {
+    gmail: "auto",
+    calendar: "auto",
+    drive: "auto",
+    youtube: "auto",
+    github: "auto",
+    slack: "auto",
+  },
+}
+
+// ─── Runtime Controls Section ───────────────────────────────────────────────────
+function RuntimeControlsSection() {
+  const { showToast } = useToast()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [controls, setControls] = useState<RuntimeControls>(DEFAULT_RUNTIME_CONTROLS)
+  const [allowlistItems, setAllowlistItems] = useState<Array<{ pattern: string; enabled: boolean }>>([
+    { pattern: "*", enabled: true },
+  ])
+  const [newAllowPattern, setNewAllowPattern] = useState("")
+  const [envWsEnabled, setEnvWsEnabled] = useState(false)
+  const [effectiveWsEnabled, setEffectiveWsEnabled] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const QUICK_ALLOW_PATTERNS = [
+    "agent_lock_*",
+    "agent_lock_auth_*",
+    "agent_lock_account_delete",
+    "agent_lock_services",
+    "agent_lock_provider_*",
+    "agent_lock_scopes",
+    "agent_lock_policy",
+    "agent_lock_gmail",
+    "agent_lock_github",
+    "agent_lock_slack",
+    "agent_lock_calendar",
+    "agent_lock_drive",
+    "agent_lock_youtube",
+    "mcp__filesystem__*",
+    "mcp__github__*",
+    "mcp__slack__*",
+    "powershell.*",
+  ]
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchRuntimeControls({ refresh: true })
+      const runtime = data?.runtime_controls
+      if (runtime && Array.isArray(runtime.auto_approve_tool_allowlist)) {
+        const items = (runtime.auto_approve_tool_allowlist ?? ["*"])
+          .map((p) => String(p).trim())
+          .filter(Boolean)
+          .map((pattern) => ({ pattern, enabled: true }))
+        setControls(runtime)
+        setAllowlistItems(items.length ? items : [{ pattern: "*", enabled: true }])
+        setLoadError(null)
+      } else {
+        setControls(DEFAULT_RUNTIME_CONTROLS)
+        setAllowlistItems([{ pattern: "*", enabled: true }])
+        setLoadError("Runtime controls endpoint is unavailable on the connected backend.")
+      }
+      setEnvWsEnabled(Boolean(data?.env_ws_bridge_enabled))
+      setEffectiveWsEnabled(Boolean(data?.effective_ws_bridge_enabled))
+    } catch {
+      setControls(DEFAULT_RUNTIME_CONTROLS)
+      setAllowlistItems([{ pattern: "*", enabled: true }])
+      setLoadError("Could not fetch runtime controls from backend.")
+      showToast({
+        type: "error",
+        title: "Could not load runtime controls",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [showToast])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const updateControl = <K extends keyof RuntimeControls>(key: K, value: RuntimeControls[K]) => {
+    setControls((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const setAllowItemEnabled = (index: number, enabled: boolean) => {
+    setAllowlistItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, enabled } : item))
+    )
+  }
+
+  const setAllowItemPattern = (index: number, pattern: string) => {
+    setAllowlistItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, pattern } : item))
+    )
+  }
+
+  const removeAllowItem = (index: number) => {
+    setAllowlistItems((prev) => {
+      const next = prev.filter((_, i) => i !== index)
+      return next.length ? next : [{ pattern: "*", enabled: true }]
+    })
+  }
+
+  const addAllowItem = () => {
+    const pattern = newAllowPattern.trim()
+    if (!pattern) return
+    setAllowlistItems((prev) => {
+      const idx = prev.findIndex((i) => i.pattern.toLowerCase() === pattern.toLowerCase())
+      if (idx >= 0) {
+        return prev.map((item, i) => (i === idx ? { ...item, enabled: true } : item))
+      }
+      return [...prev, { pattern, enabled: true }]
+    })
+    setNewAllowPattern("")
+  }
+
+  const addQuickPattern = (pattern: string) => {
+    setAllowlistItems((prev) => {
+      const idx = prev.findIndex((i) => i.pattern.toLowerCase() === pattern.toLowerCase())
+      if (idx >= 0) {
+        return prev.map((item, i) => (i === idx ? { ...item, enabled: true } : item))
+      }
+      return [...prev, { pattern, enabled: true }]
+    })
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const allowlist = allowlistItems
+        .filter((item) => item.enabled)
+        .map((item) => item.pattern.trim())
+        .filter(Boolean)
+      const allowlistDeduped = Array.from(new Set(allowlist))
+      const payload = {
+        gemini_analysis_enabled: controls.gemini_analysis_enabled,
+        auto_approve_enabled: controls.auto_approve_enabled,
+        auto_approve_tool_allowlist: allowlistDeduped.length ? allowlistDeduped : ["*"],
+        ws_bridge_enabled: controls.ws_bridge_enabled,
+        first_time_manual_approval_enabled: controls.first_time_manual_approval_enabled,
+        notify_auto_approved_actions: controls.notify_auto_approved_actions,
+        integration_modes: controls.integration_modes,
+      }
+      const res = await updateRuntimeControls(payload)
+      setControls(res.runtime_controls)
+      const synced = (res.runtime_controls.auto_approve_tool_allowlist ?? ["*"])
+        .map((pattern) => ({ pattern: String(pattern), enabled: true }))
+      setAllowlistItems(synced.length ? synced : [{ pattern: "*", enabled: true }])
+      setEnvWsEnabled(Boolean(res.env_ws_bridge_enabled))
+      setEffectiveWsEnabled(Boolean(res.effective_ws_bridge_enabled))
+      showToast({ type: "success", title: "Runtime controls updated" })
+    } catch {
+      showToast({
+        type: "error",
+        title: "Failed to update runtime controls",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <SectionCard title="⚙️ Runtime Controls">
+      {loading ? (
+        <Skeleton className="h-24" />
+      ) : (
+        <div className="space-y-4">
+          {loadError && (
+            <div className="rounded-lg border border-amber-700/40 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
+              {loadError}
+            </div>
+          )}
+          <div className="space-y-3 rounded-lg border border-brand-border bg-brand-bg/40 p-4">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable Gemini analysis</span>
+              <button
+                type="button"
+                className={`switch ${controls.gemini_analysis_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("gemini_analysis_enabled", !controls.gemini_analysis_enabled)}
+                aria-label="Toggle Gemini analysis"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              If disabled, Agent-Lock skips Gemini calls and uses rules-only fallback.
+            </p>
+
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable auto-approve for LOW risk</span>
+              <button
+                type="button"
+                className={`switch ${controls.auto_approve_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("auto_approve_enabled", !controls.auto_approve_enabled)}
+                aria-label="Toggle auto approve"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              If disabled, LOW risk actions are routed to manual approval.
+            </p>
+
+            <div className="space-y-2">
+              <p className="text-sm text-slate-300">Auto-approve allowlist (one by one)</p>
+              {allowlistItems.map((item, index) => (
+                <div key={`${index}-${item.pattern}`} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={`switch ${item.enabled ? "switch-on" : "switch-off"}`}
+                    onClick={() => setAllowItemEnabled(index, !item.enabled)}
+                    aria-label={`Toggle allowlist item ${index + 1}`}
+                  >
+                    <span className="switch-knob" />
+                  </button>
+                  <input
+                    className="input flex-1"
+                    value={item.pattern}
+                    onChange={(e) => setAllowItemPattern(index, e.target.value)}
+                    placeholder="mcp__filesystem__*"
+                  />
+                  <Button size="sm" variant="danger" onClick={() => removeAllowItem(index)}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <input
+                  className="input flex-1"
+                  value={newAllowPattern}
+                  onChange={(e) => setNewAllowPattern(e.target.value)}
+                  placeholder="Add new pattern, e.g. agent_lock_*"
+                />
+                <Button size="sm" variant="secondary" onClick={addAllowItem}>
+                  Add
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_ALLOW_PATTERNS.map((pattern) => (
+                  <button
+                    key={pattern}
+                    type="button"
+                    className="rounded-full border border-brand-border bg-brand-bg/60 px-2.5 py-1 text-xs text-slate-300 hover:bg-brand-bg"
+                    onClick={() => addQuickPattern(pattern)}
+                  >
+                    + {pattern}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                Enabled rows are applied. Disabled rows are ignored until you enable them.
+              </p>
+              <p className="text-xs text-amber-300">
+                Agent-Lock core tools are enforced by backend and will always be present.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-slate-300">Enable backend WS bridge at runtime</span>
+              <button
+                type="button"
+                className={`switch ${controls.ws_bridge_enabled ? "switch-on" : "switch-off"}`}
+                onClick={() => updateControl("ws_bridge_enabled", !controls.ws_bridge_enabled)}
+                aria-label="Toggle WS bridge"
+              >
+                <span className="switch-knob" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              Requires backend env var <code>WS_BRIDGE_ENABLED=true</code> to be effective.
+            </p>
+            <div className="text-xs text-slate-400">
+              <p>Env WS_BRIDGE_ENABLED: {envWsEnabled ? "enabled" : "disabled"}</p>
+              <p>Effective bridge state: {effectiveWsEnabled ? "enabled" : "disabled"}</p>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-brand-border bg-brand-bg/30 p-3">
+              <p className="text-sm text-slate-200">Integrations mode (auto / manual / disabled)</p>
+              {(["gmail", "calendar", "drive", "youtube", "github", "slack"] as const).map((key) => (
+                <div key={key} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-300 capitalize">{key}</span>
+                  <select
+                    className="input !h-9 !py-1 !text-sm"
+                    value={controls.integration_modes?.[key] ?? "auto"}
+                    onChange={(e) =>
+                      updateControl("integration_modes", {
+                        ...(controls.integration_modes ?? DEFAULT_RUNTIME_CONTROLS.integration_modes!),
+                        [key]: (e.target.value as "auto" | "manual" | "disabled"),
+                      })
+                    }
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="manual">Manual</option>
+                    <option value="disabled">Disabled</option>
+                  </select>
+                </div>
+              ))}
+              <p className="text-xs text-slate-500">
+                Auto: ejecuta directo. Manual: siempre pide aprobación. Disabled: bloquea la integración.
+              </p>
+            </div>
+          </div>
+
+          <Button onClick={handleSave} loading={saving}>
+            Save Runtime Controls
+          </Button>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+// ─── Policies Section ──────────────────────────────────────────────────────────
+function PoliciesSection() {
+  const [policies, setPolicies] = useState<PoliciesResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [jsonText, setJsonText] = useState("")
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "success" | "error">("idle")
+  const [saveMessage, setSaveMessage] = useState("")
+
+  const loadPolicies = useCallback(async () => {
+    try {
+      const data = await fetchPolicies()
+      setPolicies(data as PoliciesResponse)
+      setJsonText(JSON.stringify(data, null, 2))
+      setError(false)
+    } catch {
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadPolicies()
+  }, [loadPolicies])
+
+  async function handleSave() {
+    setSaveStatus("saving")
+    setSaveMessage("")
+    try {
+      const parsed = JSON.parse(jsonText)
+      await updatePolicies(parsed)
+      setSaveStatus("success")
+      setSaveMessage("Policies saved successfully!")
+      setEditing(false)
+      await loadPolicies()
+    } catch (e) {
+      setSaveStatus("error")
+      setSaveMessage(
+        e instanceof SyntaxError
+          ? "Invalid JSON — please check your syntax"
+          : "Failed to save policies — check backend connection"
+      )
+    }
+    setTimeout(() => setSaveStatus("idle"), 4000)
+  }
+
+  const actionColor: Record<string, string> = {
+    APPROVE: "bg-emerald-900/50 text-emerald-300 border-emerald-700/50",
+    BLOCK: "bg-red-900/50 text-red-300 border-red-700/50",
+    REQUIRE_APPROVAL: "bg-amber-900/50 text-amber-300 border-amber-700/50",
+    MONITOR: "bg-blue-900/50 text-blue-300 border-blue-700/50",
+  }
+
+  return (
+    <SectionCard title="📋 Security Policies">
+      <p className="text-sm text-slate-400">
+        Rules that govern how tool calls are classified and handled. Evaluated before AI analysis.
+      </p>
+
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-12" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="text-center py-6">
+          <p className="text-red-400 text-sm">⚠️ Error loading policies</p>
+          <button
+            onClick={loadPolicies}
+            className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 underline"
+          >
+            Retry
+          </button>
+        </div>
+      ) : !editing ? (
+        <>
+          {/* Policy list */}
+          {policies?.policies && policies.policies.length > 0 ? (
+            <div className="space-y-2">
+              {policies.policies.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-start justify-between gap-3 bg-brand-bg/40 border border-brand-border rounded-lg px-4 py-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <code className="text-xs text-indigo-300 font-mono bg-indigo-900/30 px-1.5 py-0.5 rounded">
+                        {p.id}
+                      </code>
+                      <code className="text-xs text-slate-400 font-mono truncate max-w-[180px]">
+                        {p.tool_pattern}
+                      </code>
+                    </div>
+                    {p.description && (
+                      <p className="text-xs text-slate-500 mt-0.5">{p.description}</p>
+                    )}
+                  </div>
+                  <span
+                    className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border ${
+                      actionColor[p.action] ?? "bg-slate-800 text-slate-400 border-slate-700"
+                    }`}
+                  >
+                    {p.action}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-6 text-center text-slate-600 text-sm">
+              No policies configured yet
+            </div>
+          )}
+
+          <button
+            onClick={() => {
+              setEditing(true)
+              setSaveStatus("idle")
+            }}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-brand-bg border border-brand-border text-slate-300 hover:text-white hover:border-slate-500 transition-all"
+          >
+            ✏️ Edit as JSON
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500 uppercase tracking-wider">
+                Edit Policies JSON
+              </span>
+              <span className="text-xs text-slate-600">
+                PUT /settings/policies
+              </span>
+            </div>
+            <textarea
+              value={jsonText}
+              onChange={(e) => setJsonText(e.target.value)}
+              rows={18}
+              className="w-full bg-brand-bg border border-brand-border rounded-lg px-3 py-3 text-xs text-emerald-300 font-mono focus:outline-none focus:border-indigo-600 transition-colors resize-y leading-relaxed"
+              spellCheck={false}
+            />
+          </div>
+
+          {saveStatus !== "idle" && (
+            <div
+              className={`flex items-center gap-2 px-4 py-3 rounded-lg border text-sm ${
+                saveStatus === "success"
+                  ? "bg-emerald-900/20 border-emerald-700/40 text-emerald-300"
+                  : saveStatus === "error"
+                  ? "bg-red-900/20 border-red-700/40 text-red-300"
+                  : "bg-brand-bg border-brand-border text-slate-400"
+              }`}
+            >
+              {saveStatus === "saving" && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-slate-400/30 border-t-slate-300 rounded-full animate-spin" />
+              )}
+              <span>
+                {saveStatus === "saving" ? "Saving policies..." : saveMessage}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSave}
+              disabled={saveStatus === "saving"}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-indigo-700 hover:bg-indigo-600 text-white border border-indigo-600/50 disabled:opacity-60 transition-all shadow-lg shadow-indigo-900/30"
+            >
+              {saveStatus === "saving" ? (
+                <>
+                  <span className="inline-block w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "💾 Save Policies"
+              )}
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false)
+                setJsonText(JSON.stringify(policies, null, 2))
+                setSaveStatus("idle")
+              }}
+              className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 bg-brand-bg border border-brand-border transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+    </SectionCard>
+  )
+}
+
+// ─── Server Info Section ───────────────────────────────────────────────────────
+function ServerSection({ settings }: { settings: Settings | null }) {
+  const sv = settings?.server
+  const sec = settings?.security
+
+  return (
+    <SectionCard title="🖥️ Server Configuration">
+      {sv ? (
+        <div className="space-y-1">
+          <ConfigRow label="Backend URL" value={sv.backend_url} mono />
+          <ConfigRow label="Port" value={String(sv.port)} mono />
+          <ConfigRow label="Audit Log" value={sv.audit_log_path} mono />
+        </div>
+      ) : (
+        <Skeleton className="h-24" />
+      )}
+
+      {sec?.secret_key_is_default && (
+        <div className="bg-red-900/20 border border-red-700/40 rounded-lg px-4 py-3 flex items-start gap-3">
+          <span className="text-red-400 text-lg flex-shrink-0">⚠️</span>
+          <div>
+            <p className="text-sm font-semibold text-red-300">Default secret key detected</p>
+            <p className="text-xs text-red-400 mt-0.5">
+              You are using the default HMAC secret key. Set a strong random{" "}
+              <code className="font-mono bg-red-900/40 px-1 rounded">SECRET_KEY</code> in your{" "}
+              <code className="font-mono bg-red-900/40 px-1 rounded">backend/.env</code> before
+              going to production.
+            </p>
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
+export default function SettingsPage() {
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const data = await fetchSettings()
+      setSettings(data as Settings)
+      setError(false)
+    } catch {
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadSettings()
+  }, [loadSettings])
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Settings</h1>
+          <p className="text-slate-500 text-sm mt-0.5">
+            Configure integrations, policies, and server options
+          </p>
+        </div>
+        <button
+          onClick={loadSettings}
+          className="text-xs text-indigo-400 hover:text-indigo-300 bg-brand-card border border-brand-border rounded-lg px-3 py-2 transition-colors"
+        >
+          ↻ Refresh
+        </button>
+      </div>
+
+      {/* Global error */}
+      {error && !loading && (
+        <div className="bg-red-900/20 border border-red-700/40 rounded-xl px-5 py-4 flex items-center gap-3 text-red-300 text-sm">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <p className="font-semibold">Error loading settings</p>
+            <p className="text-red-400 text-xs mt-0.5">
+              Make sure the backend is running at http://localhost:8000
+            </p>
+          </div>
+          <button
+            onClick={loadSettings}
+            className="ml-auto text-xs bg-red-800/40 hover:bg-red-700/40 border border-red-700/40 rounded-lg px-3 py-1.5 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading skeleton for entire settings */}
+      {loading && (
+        <div className="space-y-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-48 rounded-xl" />
+          ))}
+        </div>
+      )}
+
+      {/* Settings sections */}
+      {!loading && (
+        <div className="space-y-6">
+          <OpenClawSection />
+          <TelegramSection settings={settings} />
+          <GeminiSection settings={settings} />
+          <Auth0Section settings={settings} />
+          <RuntimeControlsSection />
+          <PoliciesSection />
+          <ServerSection settings={settings} />
+        </div>
+      )}
+    </div>
+  )
 }

@@ -1,7 +1,158 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import type { ReactNode } from "react"
+import { useEffect, useRef, useCallback } from "react"
+import InstallWidget from "./components/InstallWidget"
+
+// ─── Interactive Particle Canvas ──────────────────────────────────────────────
+function ParticleCanvas() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const mouseRef = useRef({ x: -9999, y: -9999 })
+  const animRef = useRef<number>(0)
+
+  const init = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return
+
+    let W = (canvas.width = window.innerWidth)
+    let H = (canvas.height = window.innerHeight)
+
+    const COUNT = Math.min(Math.floor((W * H) / 12000), 90)
+    const CONNECT_DIST = 140
+    const MOUSE_PUSH = 110
+    const COLORS = ["#e11d48", "#be123c", "#f43f5e", "#fb7185", "#9f1239"]
+
+    type Particle = {
+      x: number; y: number
+      vx: number; vy: number
+      r: number; color: string
+      opacity: number; opDir: number
+    }
+
+    const particles: Particle[] = Array.from({ length: COUNT }, () => ({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: (Math.random() - 0.5) * 0.35,
+      r: Math.random() * 1.8 + 0.8,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      opacity: Math.random() * 0.5 + 0.2,
+      opDir: Math.random() > 0.5 ? 1 : -1,
+    }))
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H)
+      const mx = mouseRef.current.x
+      const my = mouseRef.current.y
+
+      for (const p of particles) {
+        // Move
+        p.x += p.vx
+        p.y += p.vy
+        // Drift opacity
+        p.opacity += p.opDir * 0.003
+        if (p.opacity > 0.75 || p.opacity < 0.12) p.opDir *= -1
+
+        // Wall bounce
+        if (p.x < 0 || p.x > W) p.vx *= -1
+        if (p.y < 0 || p.y > H) p.vy *= -1
+
+        // Mouse repulsion
+        const dx = p.x - mx
+        const dy = p.y - my
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < MOUSE_PUSH && dist > 0) {
+          const force = (MOUSE_PUSH - dist) / MOUSE_PUSH
+          p.x += (dx / dist) * force * 2.2
+          p.y += (dy / dist) * force * 2.2
+        }
+
+        // Draw dot
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.fillStyle = p.color
+        ctx.globalAlpha = p.opacity
+        ctx.fill()
+      }
+
+      // Connections
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i], b = particles[j]
+          const dx = a.x - b.x
+          const dy = a.y - b.y
+          const d = Math.sqrt(dx * dx + dy * dy)
+          if (d < CONNECT_DIST) {
+            ctx.beginPath()
+            ctx.moveTo(a.x, a.y)
+            ctx.lineTo(b.x, b.y)
+            const alpha = (1 - d / CONNECT_DIST) * 0.12
+            ctx.globalAlpha = alpha
+            ctx.strokeStyle = "#e11d48"
+            ctx.lineWidth = 0.6
+            ctx.stroke()
+          }
+        }
+      }
+
+      // Mouse proximity glow on nearest particles
+      for (const p of particles) {
+        const dx = p.x - mx
+        const dy = p.y - my
+        const d = Math.sqrt(dx * dx + dy * dy)
+        if (d < 80) {
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, p.r + 2, 0, Math.PI * 2)
+          ctx.fillStyle = p.color
+          ctx.globalAlpha = (1 - d / 80) * 0.4
+          ctx.fill()
+        }
+      }
+
+      ctx.globalAlpha = 1
+      animRef.current = requestAnimationFrame(draw)
+    }
+
+    animRef.current = requestAnimationFrame(draw)
+
+    const onResize = () => {
+      W = canvas.width = window.innerWidth
+      H = canvas.height = window.innerHeight
+    }
+    window.addEventListener("resize", onResize)
+    return () => window.removeEventListener("resize", onResize)
+  }, [])
+
+  useEffect(() => {
+    const cleanup = init()
+    const onMove = (e: MouseEvent) => {
+      mouseRef.current = { x: e.clientX, y: e.clientY }
+    }
+    const onLeave = () => {
+      mouseRef.current = { x: -9999, y: -9999 }
+    }
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseleave", onLeave)
+    return () => {
+      cancelAnimationFrame(animRef.current)
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseleave", onLeave)
+      cleanup?.()
+    }
+  }, [init])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className="fixed inset-0 z-[-1] pointer-events-none"
+      style={{ opacity: 0.55 }}
+    />
+  )
+}
 
 // ─── Design primitives ────────────────────────────────────────────────────────
 
@@ -27,11 +178,11 @@ function GlassPanel({
 
 function Tag({ children, color = "emerald" }: { children: ReactNode; color?: "emerald" | "blue" | "amber" | "indigo" | "purple" }) {
   const map: Record<string, string> = {
-    emerald: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    blue: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-    amber: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    indigo: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20",
-    purple: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    emerald: "bg-rose-500/10 text-rose-400 border-rose-500/20",
+    blue: "bg-red-500/10 text-red-400 border-red-500/20",
+    amber: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+    indigo: "bg-rose-600/10 text-rose-300 border-rose-600/20",
+    purple: "bg-pink-600/10 text-pink-400 border-pink-600/20",
   }
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-widest ${map[color]}`}>
@@ -42,7 +193,7 @@ function Tag({ children, color = "emerald" }: { children: ReactNode; color?: "em
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-emerald-400">{children}</p>
+    <p className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-rose-400">{children}</p>
   )
 }
 
@@ -147,72 +298,71 @@ export default function LandingPage() {
   return (
     <main className="relative min-h-screen overflow-x-hidden selection:bg-emerald-500/30 selection:text-white">
       {/* ── Background ─────────────────────────────────────────────────── */}
-      <div className="fixed inset-0 z-[-2] bg-[#030712]" />
+      <div className="fixed inset-0 z-[-3] bg-[#030712]" />
+      <ParticleCanvas />
       <div className="fixed inset-0 z-[-1] overflow-hidden pointer-events-none">
-        <div className="absolute left-[-5%] top-[-15%] h-[700px] w-[700px] rounded-full bg-emerald-600/[0.07] blur-[140px]" />
-        <div className="absolute right-[-5%] top-[15%] h-[600px] w-[600px] rounded-full bg-blue-600/[0.07] blur-[130px]" />
-        <div className="absolute left-[35%] bottom-[-10%] h-[500px] w-[500px] rounded-full bg-indigo-600/[0.06] blur-[120px]" />
+        <div className="absolute left-[-5%] top-[-15%] h-[700px] w-[700px] rounded-full bg-rose-700/[0.08] blur-[140px]" />
+        <div className="absolute right-[-5%] top-[15%] h-[600px] w-[600px] rounded-full bg-red-700/[0.06] blur-[130px]" />
+        <div className="absolute left-[35%] bottom-[-10%] h-[500px] w-[500px] rounded-full bg-rose-900/[0.07] blur-[120px]" />
       </div>
-      {/* Subtle grid */}
-      <div className="fixed inset-0 z-[-1] pointer-events-none opacity-[0.025]"
-        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }}
-      />
 
       <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
 
         {/* ── Navigation ─────────────────────────────────────────────────── */}
-        <nav className="sticky top-4 z-50 mt-4 flex items-center justify-between rounded-2xl border border-white/10 bg-[#030712]/80 px-5 py-3 backdrop-blur-xl shadow-xl shadow-black/40">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-emerald-400 text-white text-xs font-black shadow-lg shadow-blue-500/30">
-              AL
+        <nav className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-[#030712]/85 px-5 py-3 backdrop-blur-xl shadow-xl shadow-black/40">
+            <div className="flex items-center gap-3">
+              <Image src="/logo.jpeg" alt="Agent-Lock" width={36} height={36} className="rounded-xl object-cover shadow-lg shadow-rose-900/40" />
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-rose-400 font-semibold leading-none">Security Middleware</p>
+                <p className="text-sm font-semibold tracking-wide text-white leading-tight mt-0.5">Agent-Lock</p>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold leading-none">Security Middleware</p>
-              <p className="text-sm font-semibold tracking-wide text-white leading-tight mt-0.5">Agent-Lock</p>
+            <div className="hidden md:flex items-center gap-6">
+              <a href="#how-it-works" className="text-sm text-gray-400 hover:text-white transition-colors">How it works</a>
+              <a href="#features" className="text-sm text-gray-400 hover:text-white transition-colors">Features</a>
+              <a href="#architecture" className="text-sm text-gray-400 hover:text-white transition-colors">Architecture</a>
+              <a href="#faq" className="text-sm text-gray-400 hover:text-white transition-colors">FAQ</a>
             </div>
-          </div>
-          <div className="hidden md:flex items-center gap-6">
-            <a href="#how-it-works" className="text-sm text-gray-400 hover:text-white transition-colors">How it works</a>
-            <a href="#features" className="text-sm text-gray-400 hover:text-white transition-colors">Features</a>
-            <a href="#architecture" className="text-sm text-gray-400 hover:text-white transition-colors">Architecture</a>
-            <a href="#faq" className="text-sm text-gray-400 hover:text-white transition-colors">FAQ</a>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[11px] font-semibold text-emerald-400">Live</span>
+            <div className="flex items-center gap-3">
+              <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
+                <span className="text-[11px] font-semibold text-rose-400">Live</span>
+              </div>
+              <Link
+                href="/dashboard/overview"
+                className="rounded-xl bg-white px-5 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-100 transition-colors shadow-lg"
+              >
+                Open Dashboard →
+              </Link>
             </div>
-            <Link
-              href="/dashboard/overview"
-              className="rounded-xl bg-white px-5 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-100 transition-colors shadow-lg"
-            >
-              Open Dashboard →
-            </Link>
           </div>
         </nav>
 
         {/* ── Hero ───────────────────────────────────────────────────────── */}
-        <section className="relative pt-28 pb-20 text-center flex flex-col items-center">
+        <section className="relative pt-36 pb-20 text-center flex flex-col items-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 backdrop-blur-sm mb-8">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
             <span className="text-xs font-medium text-gray-300">Zero Trust | Human in the Loop | Open Source</span>
           </div>
 
           <h1 className="max-w-5xl text-5xl sm:text-6xl md:text-[5.5rem] font-extrabold tracking-tight text-white mb-8 leading-[1.05]">
             The security layer<br className="hidden md:block" />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-400 to-blue-400">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 via-red-400 to-rose-300">
               {" "}AI agents are missing.
             </span>
           </h1>
 
-          <p className="max-w-2xl text-lg md:text-xl text-gray-400 leading-relaxed mb-12">
+          <p className="max-w-2xl text-lg text-gray-400 mb-6 leading-relaxed">
             Agent-Lock sits between AI agents and tools. It classifies risk, enforces approval policies, mints ephemeral scoped tokens, and gives operators a single control plane — without slowing down safe operations.
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-4">
+          <InstallWidget showDocumentationLink={true} />
+
+          <div className="flex flex-wrap items-center justify-center gap-4 mt-4">
             <Link
               href="/dashboard/overview"
-              className="rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(16,185,129,0.6)] transition-all hover:scale-105 hover:shadow-[0_0_60px_-12px_rgba(16,185,129,0.7)]"
+              className="rounded-xl bg-gradient-to-r from-rose-700 to-red-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(225,29,72,0.5)] transition-all hover:scale-105 hover:shadow-[0_0_60px_-12px_rgba(225,29,72,0.65)]"
             >
               Open Dashboard
             </Link>
@@ -264,7 +414,7 @@ export default function LandingPage() {
 
           <div className="relative">
             {/* Connecting line */}
-            <div className="absolute left-[calc(50%-1px)] top-0 bottom-0 hidden lg:block w-px bg-gradient-to-b from-emerald-500/0 via-emerald-500/30 to-emerald-500/0" />
+            <div className="absolute left-[calc(50%-1px)] top-0 bottom-0 hidden lg:block w-px bg-gradient-to-b from-rose-500/0 via-rose-500/30 to-rose-500/0" />
 
             <div className="flex flex-col gap-8">
               {howItWorks.map((item, i) => (
@@ -281,7 +431,7 @@ export default function LandingPage() {
                       </div>
                     </div>
                   </GlassPanel>
-                  <div className="hidden lg:flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-sm font-bold shrink-0 z-10">
+                  <div className="hidden lg:flex h-10 w-10 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-400 text-sm font-bold shrink-0 z-10">
                     {i + 1}
                   </div>
                   <div className="flex-1 hidden lg:block" />
@@ -325,11 +475,11 @@ export default function LandingPage() {
 
               <div className="space-y-4">
                 {[
-                  { label: "Intent Validator", detail: "Gemini Flash — semantic drift detection", color: "bg-purple-500" },
-                  { label: "Risk Classifier", detail: "Hybrid: static regex rules + AI escalation", color: "bg-amber-500" },
-                  { label: "Token Vault", detail: "Auth0 M2M — ephemeral, minimum-scope tokens", color: "bg-blue-500" },
-                  { label: "HITL Approval", detail: "Telegram bot — real-time approve / block cards", color: "bg-emerald-500" },
-                  { label: "Audit Logger", detail: "Immutable structured JSON — append-only", color: "bg-indigo-500" },
+                  { label: "Intent Validator", detail: "Gemini Flash — semantic drift detection", color: "bg-rose-500" },
+                  { label: "Risk Classifier", detail: "Hybrid: static regex rules + AI escalation", color: "bg-red-400" },
+                  { label: "Token Vault", detail: "Auth0 M2M — ephemeral, minimum-scope tokens", color: "bg-rose-700" },
+                  { label: "HITL Approval", detail: "Telegram bot — real-time approve / block cards", color: "bg-red-500" },
+                  { label: "Audit Logger", detail: "Immutable structured JSON — append-only", color: "bg-pink-600" },
                 ].map((row) => (
                   <div key={row.label} className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/[0.03] px-5 py-4">
                     <div className={`h-2.5 w-2.5 rounded-full ${row.color} shrink-0`} />
@@ -478,7 +628,7 @@ export default function LandingPage() {
             {surfaces.map((surface, index) => (
               <Link href={surface.href} key={index} className="block group">
                 <GlassPanel noPad className="h-full flex flex-col transition-all duration-300 hover:border-white/20 hover:bg-white/[0.07] hover:-translate-y-1">
-                  <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-blue-500 via-indigo-400 to-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-t-3xl" />
+                  <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-rose-700 via-red-500 to-rose-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-t-3xl" />
                   <div className="p-6 md:p-8 flex-1 flex flex-col">
                     <div className="flex justify-between items-start mb-6">
                       <span className="inline-block px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] font-bold uppercase tracking-wider text-gray-400">
@@ -520,11 +670,11 @@ export default function LandingPage() {
         {/* ── CTA ────────────────────────────────────────────────────────── */}
         <section className="mb-16">
           <GlassPanel className="text-center py-20">
-            <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-blue-600/10 via-transparent to-emerald-600/10 pointer-events-none" />
+            <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-rose-700/10 via-transparent to-red-600/10 pointer-events-none" />
             <SectionLabel>Get started</SectionLabel>
             <h2 className="text-4xl md:text-5xl font-extrabold text-white mb-6 tracking-tight">
               Secure your agents.<br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-400">Ship with confidence.</span>
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-rose-400 to-red-300">Ship with confidence.</span>
             </h2>
             <p className="text-gray-400 mb-10 max-w-xl mx-auto text-base leading-relaxed">
               Open source, self-hosted, no vendor lock-in. Your agents, your infrastructure, your audit logs.
@@ -532,7 +682,7 @@ export default function LandingPage() {
             <div className="flex flex-wrap justify-center gap-4">
               <Link
                 href="/dashboard/overview"
-                className="rounded-xl bg-gradient-to-r from-blue-600 to-emerald-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(16,185,129,0.6)] transition-all hover:scale-105"
+                className="rounded-xl bg-gradient-to-r from-rose-700 to-red-500 px-8 py-4 text-sm font-semibold text-white shadow-[0_0_40px_-12px_rgba(225,29,72,0.5)] transition-all hover:scale-105"
               >
                 Open Dashboard
               </Link>
@@ -551,7 +701,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div className="col-span-2 md:col-span-1">
               <div className="flex items-center gap-2 mb-4">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-600 to-emerald-400 text-white text-[10px] font-black">AL</div>
+                <Image src="/logo.jpeg" alt="Agent-Lock" width={32} height={32} className="rounded-lg object-cover" />
                 <span className="text-sm font-semibold text-white">Agent-Lock</span>
               </div>
               <p className="text-xs text-gray-500 leading-relaxed max-w-[200px]">
@@ -604,9 +754,9 @@ export default function LandingPage() {
             <p className="text-xs text-gray-600">
               Agent-Lock &copy; {new Date().getFullYear()} | Open source security middleware for AI agents.
             </p>
-            <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[11px] font-semibold text-emerald-400">System Operational</span>
+            <div className="flex items-center gap-1.5 rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
+              <span className="text-[11px] font-semibold text-rose-400">System Operational</span>
             </div>
           </div>
         </footer>

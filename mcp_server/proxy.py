@@ -85,6 +85,8 @@ class MCPClient:
         self._process: asyncio.subprocess.Process | None = None
         self._tools: list[dict[str, Any]] = []
         self._req_id: int = 0
+        self._pending_responses: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._reader_task: asyncio.Task | None = None
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -146,8 +148,9 @@ class MCPClient:
             logger.error(f"[{self.server.name}] failed to launch: {exc}")
             return
 
-        # Drain stderr in the background so the pipe buffer never fills up.
+        # Process background outputs and responses concurrently
         asyncio.ensure_future(self._drain_stderr())
+        self._reader_task = asyncio.ensure_future(self._read_responses())
 
         # MCP handshake
         try:
@@ -175,6 +178,14 @@ class MCPClient:
             pass
         finally:
             self._process = None
+            if self._reader_task:
+                self._reader_task.cancel()
+                self._reader_task = None
+            # Abort all pending futures to unblock any waiting tasks
+            for fut in self._pending_responses.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError(f"[{self.server.name}] disconnected."))
+            self._pending_responses.clear()
 
     async def call_tool(
         self,
@@ -241,7 +252,8 @@ class MCPClient:
     ) -> dict[str, Any]:
         """
         Send a JSON-RPC 2.0 request and return the result dict.
-
+        Supports full concurrency: multiple _send calls can wait simultaneously
+        without racing on stdout.
         Raises RuntimeError on error responses, timeouts, or closed pipes.
         """
         if not self._process or not self._process.stdin or not self._process.stdout:
@@ -255,72 +267,71 @@ class MCPClient:
             "params": params,
         }
 
+        # Create a future to await the out-of-order response
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._pending_responses[req_id] = future
+
         # Write request
         line = (json.dumps(request, ensure_ascii=False) + "\n").encode()
         self._process.stdin.write(line)
         await self._process.stdin.drain()
 
-        # Read responses until we get the matching id.
-        # MCP servers may emit notifications/interleaved messages between requests.
-        deadline = asyncio.get_event_loop().time() + _REQUEST_TIMEOUT
+        # Wait for the background reader to resolve our future
+        try:
+            return await asyncio.wait_for(future, timeout=_REQUEST_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"[{self.server.name}] timeout waiting for response "
+                f"(method={method}, id={req_id})"
+            )
+        finally:
+            self._pending_responses.pop(req_id, None)
 
-        while True:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                raise RuntimeError(
-                    f"[{self.server.name}] timeout waiting for response "
-                    f"(method={method}, id={req_id})"
-                )
+    async def _read_responses(self) -> None:
+        """
+        Background task: reads stdout continuously, parses JSON-RPC,
+        and resolves the matching pending Future.
+        """
+        if not self._process or not self._process.stdout:
+            return
 
-            try:
-                raw = await asyncio.wait_for(
-                    self._process.stdout.readline(),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                raise RuntimeError(
-                    f"[{self.server.name}] timeout waiting for response "
-                    f"(method={method}, id={req_id})"
-                )
+        try:
+            async for line in self._process.stdout:
+                raw = line.decode(errors="replace").strip()
+                if not raw:
+                    continue
 
-            if not raw:
-                raise RuntimeError(
-                    f"[{self.server.name}] subprocess closed stdout "
-                    f"(method={method}, id={req_id})"
-                )
+                try:
+                    response = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
 
-            try:
-                response = json.loads(raw.decode())
-            except json.JSONDecodeError:
-                logger.debug(
-                    f"[{self.server.name}] ignoring non-JSON stdout line while "
-                    f"waiting for id={req_id}"
-                )
-                continue
+                # Ignore notifications
+                if "id" not in response:
+                    continue
 
-            # Ignore notifications or unrelated responses.
-            if "id" not in response:
-                logger.debug(
-                    f"[{self.server.name}] received notification while waiting "
-                    f"for id={req_id}: {response.get('method', '(unknown)')}"
-                )
-                continue
-
-            if response.get("id") != req_id:
-                logger.debug(
-                    f"[{self.server.name}] received out-of-order response id="
-                    f"{response.get('id')} while waiting for id={req_id}"
-                )
-                continue
-
-            if "error" in response:
-                err = response["error"]
-                raise RuntimeError(
-                    f"[{self.server.name}] JSON-RPC error "
-                    f"{err.get('code')}: {err.get('message')}"
-                )
-
-            return response.get("result", {})
+                req_id = response["id"]
+                if req_id in self._pending_responses:
+                    future = self._pending_responses[req_id]
+                    if not future.done():
+                        if "error" in response:
+                            err = response["error"]
+                            future.set_exception(
+                                RuntimeError(
+                                    f"[{self.server.name}] JSON-RPC error "
+                                    f"{err.get('code')}: {err.get('message')}"
+                                )
+                            )
+                        else:
+                            future.set_result(response.get("result", {}))
+        except Exception as exc:
+            logger.debug(f"[{self.server.name}] stdout reader closed: {exc}")
+            # Cancel all pending futures
+            for fut in self._pending_responses.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError(f"[{self.server.name}] stdout reader closed."))
+            self._pending_responses.clear()
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
         """
