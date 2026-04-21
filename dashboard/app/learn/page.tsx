@@ -278,7 +278,6 @@ export default function LearnPage() {
               </GlassPanel>
             </div>
           </section>
-        </div>
           <section>
             <div className="flex items-center gap-3 mb-6">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-rose-600 to-red-400 text-white font-bold shadow-lg shadow-rose-500/30">
